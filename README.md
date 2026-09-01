@@ -42,6 +42,16 @@ cmake -S . -B build
 cmake --build build --config Release
 ```
 
+### Atalho de desenvolvimento no Windows
+
+Depois de instalar CMake, Qt, vcpkg e FFmpeg conforme a documentação de build, use o mesmo comando familiar do Studio:
+
+```bash
+npm start
+```
+
+Ele usa CMake para reconstruir somente o que mudou e abre o Nardoto Editor. Como é um aplicativo C++/Qt nativo, não há servidor web nem recarga instantânea: uma alteração é aplicada na próxima build incremental. Para apenas compilar, sem abrir a janela, execute `npm run build:dev`.
+
 O primeiro fork sai com o catálogo online de complementos e a verificação de atualizações desativados por padrão. Assim, o aplicativo não depende da infraestrutura da CutWire. Eles podem ser ligados futuramente por uma infraestrutura pública do próprio Nardoto.
 
 ## Licença e contribuição

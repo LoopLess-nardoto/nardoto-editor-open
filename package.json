@@ -1,0 +1,13 @@
+{
+  "name": "nardoto-editor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Atalhos de desenvolvimento do Nardoto Editor no Windows.",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "start": "npm run start:win",
+    "dev": "npm run start:win",
+    "start:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\start-dev-windows.ps1",
+    "build:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\start-dev-windows.ps1 -NoLaunch"
+  }
+}
