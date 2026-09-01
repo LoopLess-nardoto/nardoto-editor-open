@@ -9,7 +9,7 @@ on:
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
-      - 'Drift_icon.png'
+      - 'resources/nardoto-editor.png'
       - '.gitignore'
   workflow_dispatch:
 
@@ -118,8 +118,8 @@ jobs:
       # installable beside a release APK.
       - name: Compile (no APK)
         env:
-          DRIFT_ANDROID_PACKAGE_NAME: org.cutwire.drift.ci
-          DRIFT_ANDROID_APP_NAME: Drift CI
+          DRIFT_ANDROID_PACKAGE_NAME: com.nardoto.editor.ci
+          DRIFT_ANDROID_APP_NAME: Nardoto Editor CI
           SKIP_APK: '1'
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache

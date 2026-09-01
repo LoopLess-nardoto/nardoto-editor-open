@@ -6,18 +6,17 @@
   #define MyAppSource "dist\\bin"
 #endif
 
-#define MyAppName "Drift"
-#define MyAppPublisher "CutWire Studios"
-#define MyAppExeName "drift.exe"
+#define MyAppName "Nardoto Editor"
+#define MyAppPublisher "Nardoto"
+#define MyAppExeName "nardoto-editor.exe"
 
 [Setup]
-; Never change AppId: it is what lets an installer upgrade an existing install
-; in place instead of leaving two copies behind.
-AppId={{1FC80696-7700-464A-8E35-CCBB3239EDFB}
+; Identificador próprio do fork para não sobrescrever instalações do Drift.
+AppId={{5FDF76A0-8563-4EB7-B609-5A0505FE9BC3}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppSupportURL=https://github.com/CutWire-Studios/Drift/issues
+AppSupportURL=https://github.com/LoopLess-nardoto/nardoto-editor-open/issues
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 ArchitecturesAllowed=x64compatible
@@ -27,11 +26,11 @@ SolidCompression=yes
 WizardStyle=modern
 ; Path is relative to this script. Without these two, setup runs under the stock
 ; Inno icon and the Apps & Features entry falls back to a generic one.
-SetupIconFile=..\..\resources\windows\drift.ico
+SetupIconFile=..\..\resources\windows\nardoto-editor.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ChangesAssociations=yes
 OutputDir=output
-OutputBaseFilename=Drift-Setup-x64
+OutputBaseFilename=NardotoEditor-Setup-x64
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -50,10 +49,10 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-Root: HKCR; Subkey: ".drift"; ValueType: string; ValueName: ""; ValueData: "CutWire.Drift.Project"; Flags: uninsdeletevalue
-Root: HKCR; Subkey: "CutWire.Drift.Project"; ValueType: string; ValueName: ""; ValueData: "Drift Project"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "CutWire.Drift.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
-Root: HKCR; Subkey: "CutWire.Drift.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKCR; Subkey: ".drift"; ValueType: string; ValueName: ""; ValueData: "Nardoto.Editor.Project"; Flags: uninsdeletevalue
+Root: HKCR; Subkey: "Nardoto.Editor.Project"; ValueType: string; ValueName: ""; ValueData: "Projeto do Nardoto Editor"; Flags: uninsdeletekey
+Root: HKCR; Subkey: "Nardoto.Editor.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKCR; Subkey: "Nardoto.Editor.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

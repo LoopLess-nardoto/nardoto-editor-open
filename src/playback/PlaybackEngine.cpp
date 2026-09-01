@@ -22,7 +22,7 @@ namespace {
 
 #ifdef Q_OS_ANDROID
 
-constexpr const char *kAudioFocusClass = "org/cutwire/drift/AudioFocus";
+constexpr const char *kAudioFocusClass = "com/nardoto/editor/AudioFocus";
 
 // The engine that owns preview audio. Focus loss and the headphone-unplug broadcast are dispatched
 // on the Android UI thread, so the pause cannot be run there: it is posted to the engine's own

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Drift.app and wrap it in a self-contained, signed .dmg.
+# Compila Nardoto Editor.app e cria uma imagem .dmg assinada e independente.
 #
 #   scripts/package-macos.sh
 #   scripts/package-macos.sh --identity "Developer ID Application: ..." --notarize
@@ -66,10 +66,10 @@ if [[ ! -x "$MACDEPLOYQT" ]]; then
   exit 1
 fi
 
-VERSION="$(sed -n 's/^project(Drift VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
+VERSION="$(sed -n 's/^project(NardotoEditor VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
 ARCH="$(uname -m)"
-APP="$BUILD_DIR/Drift.app"
-DMG="$DIST_DIR/Drift-$VERSION-$ARCH.dmg"
+APP="$BUILD_DIR/Nardoto Editor.app"
+DMG="$DIST_DIR/NardotoEditor-$VERSION-$ARCH.dmg"
 
 if [[ $SKIP_BUILD -eq 0 ]]; then
   # No inference runtime ships, as on Linux and Windows; the user installs an Acceleration addon.
@@ -90,7 +90,7 @@ fi
 
 # macdeployqt leaves the build tree's rpaths in place, and dyld searches those before the
 # @loader_path entries in the frameworks, so the host's Qt would win over the bundled one.
-EXE="$APP/Contents/MacOS/Drift"
+EXE="$APP/Contents/MacOS/Nardoto Editor"
 rpaths() { otool -l "$EXE" | awk '/LC_RPATH/{f=1} f&&/ path /{print $2; f=0}'; }
 
 while IFS= read -r RPATH; do
@@ -170,19 +170,19 @@ notarize() {
 # carries its own ticket and validates with no network. Stapling only the .dmg leaves the app
 # relying on an online check.
 if [[ $NOTARIZE -eq 1 ]]; then
-  ditto -c -k --keepParent "$APP" "$STAGING/Drift.zip"
-  notarize "$STAGING/Drift.zip"
+  ditto -c -k --keepParent "$APP" "$STAGING/NardotoEditor.zip"
+  notarize "$STAGING/NardotoEditor.zip"
   xcrun stapler staple "$APP"
 fi
 
 mkdir -p "$DIST_DIR"
 rm -f "$DMG"
 
-cp -R "$APP" "$STAGING/Drift.app"
+cp -R "$APP" "$STAGING/Nardoto Editor.app"
 ln -s /Applications "$STAGING/Applications"
-rm -f "$STAGING/Drift.zip"
+rm -f "$STAGING/NardotoEditor.zip"
 
-hdiutil create -volname "Drift $VERSION" -srcfolder "$STAGING" \
+hdiutil create -volname "Nardoto Editor $VERSION" -srcfolder "$STAGING" \
   -ov -format UDZO -quiet "$DMG"
 
 if [[ -n "$IDENTITY" ]]; then

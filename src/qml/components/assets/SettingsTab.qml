@@ -229,7 +229,7 @@ Item {
                 ThemedLabel {
                     width: parent.width
                     visible: EditorState.uiScaleNeedsRestart
-                    text: qsTr("Restart Drift to apply this size.")
+                    text: qsTr("Reinicie o Nardoto Editor para aplicar este tamanho.")
                     color: Theme.panelSecondaryForeground
                 }
 
@@ -305,7 +305,7 @@ Item {
                     ThemedSwitch {
                         checked: Updates.enabled
                         text: qsTr("Check on startup")
-                        tooltip: qsTr("Ask GitHub once a day whether a newer Drift has been released")
+                        tooltip: qsTr("Verificar no GitHub uma vez por dia se há nova versão do Nardoto Editor")
                         onToggled: Updates.enabled = checked
                     }
 
@@ -327,7 +327,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: Updates.status.length > 0
                                   ? Updates.status
-                                  : qsTr("Drift %1").arg(Updates.currentVersion)
+                                  : qsTr("Nardoto Editor %1").arg(Updates.currentVersion)
                         }
                     }
                 }

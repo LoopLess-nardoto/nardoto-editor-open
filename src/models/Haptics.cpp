@@ -27,7 +27,7 @@ QString settingsKey(const char *name)
 
 #ifdef Q_OS_ANDROID
 
-constexpr const char *kHapticsClass = "org/cutwire/drift/Haptics";
+constexpr const char *kHapticsClass = "com/nardoto/editor/Haptics";
 
 bool deviceHasVibrator()
 {

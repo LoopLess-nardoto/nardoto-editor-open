@@ -181,8 +181,8 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--mcp-stdio") == 0) {
             QCoreApplication app(argc, argv);
-            QCoreApplication::setApplicationName("CutWire Drift");
-            QCoreApplication::setOrganizationName("CutWire Drift");
+            QCoreApplication::setApplicationName("Nardoto Editor");
+            QCoreApplication::setOrganizationName("Nardoto");
             return drift::mcp::runStdioAttach();
         }
     }
@@ -224,8 +224,8 @@ int main(int argc, char *argv[])
 
     // Names must be set before reading QSettings for ui/scale, and QT_SCALE_FACTOR
     // must be in the environment before QApplication is constructed.
-    QCoreApplication::setApplicationName("CutWire Drift");
-    QCoreApplication::setOrganizationName("CutWire Drift");
+    QCoreApplication::setApplicationName("Nardoto Editor");
+    QCoreApplication::setOrganizationName("Nardoto");
     AppController::applyStoredUiScale();
     // Qt's xcb plugin defaults to GLX, so eglGetCurrentDisplay() is null and
     // zero-copy sticky-disables. Only force EGL when the user opted in — default
@@ -240,11 +240,11 @@ int main(int argc, char *argv[])
     }
     // Associates the window with the installed .desktop entry so shells (notably
     // Wayland) can find its icon and app metadata.
-    QGuiApplication::setDesktopFileName(QStringLiteral("org.cutwire.Drift"));
+    QGuiApplication::setDesktopFileName(QStringLiteral("com.nardoto.Editor"));
     // Title bar / taskbar icon when no desktop entry is available (Windows, and
     // Linux runs from the build tree). The .exe still needs the Windows .rc icon
     // for Explorer and pinned-taskbar identity.
-    QApplication::setWindowIcon(QIcon(QStringLiteral(":/app/drift.png")));
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/app/nardoto-editor.png")));
 
     // qsTr/tr resolve when the QML engine loads, so translators must be installed first.
     // Protocol strings under src/mcp/ are excluded from the catalog; they stay English.

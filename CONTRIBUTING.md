@@ -1,6 +1,6 @@
-# Contributing to Drift
+# Como contribuir com o Nardoto Editor
 
-Thanks for taking the time to help. This is a short guide — the rules that matter are all here.
+Obrigado por dedicar seu tempo. Este é um guia curto com as regras que realmente importam.
 
 ## Before you start
 
@@ -34,10 +34,9 @@ If a test is already broken on `main`, say so in the PR rather than working arou
 
 ## Effects and transitions
 
-**Changes to effects and transitions are not accepted in this repository.** Although they are
-bundled here so the editor works out of the box, they are maintained as addons — submit new or
-updated effects, transitions, templates, and audio effects to
-[CutWire-Studios/Drift-Addons](https://github.com/CutWire-Studios/Drift-Addons) instead.
+Efeitos, transições, modelos e efeitos de áudio podem ser propostos diretamente neste repositório.
+O catálogo online de complementos começa desativado neste fork até existir uma infraestrutura
+pública do Nardoto para distribuí-los.
 
 This applies to the `effects/`, `transitions/`, `effect-templates/`, and `audio-effects/` trees.
 Changes to the *engine* that runs them — `src/engine/`, the shader host, the catalog loader — do
@@ -94,6 +93,6 @@ write the message yourself.
 
 ## Licence
 
-Drift is GPL-3.0. By contributing, you agree that your contributions are licensed under the same
+Nardoto Editor é GPL-3.0-or-later. Ao contribuir, você concorda que suas contribuições são licenciadas nos mesmos
 terms. Do not submit code you do not have the right to relicense — including code copied from
 projects under an incompatible licence.

@@ -1,14 +1,14 @@
 name: Other
-description: Questions, packaging help, docs, or anything that isn't a bug or feature request
+description: Dúvidas, ajuda de instalação, documentação ou outro assunto
 title: "[Other]: "
 labels: ["question"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this for anything that doesn't fit Bug report or Feature request.
+        Use este formulário para assuntos que não se encaixam como problema ou sugestão.
 
-        If this is about a bug or missing feature, check the [unreleased changelog](https://github.com/CutWire-Studios/Drift/blob/main/CHANGELOG.md) first — it may already be fixed or added on `main`.
+        Se isto for sobre um problema ou funcionalidade ausente, consulte o [changelog não lançado](https://github.com/LoopLess-nardoto/nardoto-editor-open/blob/main/CHANGELOG.md); ele pode já ter sido corrigido ou adicionado à `main`.
 
   - type: dropdown
     id: topic

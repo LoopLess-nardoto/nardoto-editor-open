@@ -23,7 +23,7 @@ Column {
         function onUserEffectPresetsChanged() { root.presetsTick++ }
     }
 
-    readonly property string stackFileFilter: qsTr("Drift effect stack (*.drifteffects)")
+    readonly property string stackFileFilter: qsTr("Pilha de efeitos do Nardoto Editor (*.drifteffects)")
 
     function importStack() {
         const url = FileDialogs.openFile(qsTr("Import effect stack"), [root.stackFileFilter])

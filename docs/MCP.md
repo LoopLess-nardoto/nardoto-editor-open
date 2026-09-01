@@ -1,6 +1,6 @@
-# Agent access (Drift MCP)
+# Acesso de agentes (MCP do Nardoto Editor)
 
-Drift can expose a localhost MCP server so Cursor, Claude Code, or other agents can edit the open project. Enable it in **Settings → Agent access** (off at every launch).
+O Nardoto Editor pode expor um servidor MCP local para que Cursor, Claude Code ou outros agentes editem o projeto aberto. Habilite em **Configurações → Acesso de agentes**; ele inicia desativado a cada abertura.
 
 ## Connect
 
@@ -11,15 +11,15 @@ Drift can expose a localhost MCP server so Cursor, Claude Code, or other agents 
 ```json
 {
   "mcpServers": {
-    "drift": {
-      "command": "/path/to/drift",
+    "nardoto-editor": {
+      "command": "/caminho/para/nardoto-editor",
       "args": ["--mcp-stdio"]
     }
   }
 }
 ```
 
-`drift --mcp-stdio` attaches to a running editor with Agent access enabled.
+`nardoto-editor --mcp-stdio` conecta a uma instância aberta com o Acesso de agentes habilitado.
 
 ## Workflow
 

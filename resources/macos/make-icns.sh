@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Regenerate resources/macos/Drift.icns from Drift_icon.png, then commit the result.
-# Checked in like resources/windows/drift.ico: sips and iconutil are macOS-only.
+# Regenera resources/macos/NardotoEditor.icns a partir do ícone do Nardoto Editor.
+# Mantido no Git junto do ICO do Windows; sips e iconutil são exclusivos do macOS.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SRC="$ROOT/Drift_icon.png"
-OUT="$ROOT/resources/macos/Drift.icns"
+SRC="$ROOT/resources/nardoto-editor.png"
+OUT="$ROOT/resources/macos/NardotoEditor.icns"
 
 if [[ ! -f "$SRC" ]]; then
   echo "Icon source not found at: $SRC" >&2
@@ -14,7 +14,7 @@ fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-ICONSET="$WORK/Drift.iconset"
+ICONSET="$WORK/NardotoEditor.iconset"
 mkdir -p "$ICONSET"
 
 # Each size needs a 2x file too, or Finder upscales the 1x on Retina.

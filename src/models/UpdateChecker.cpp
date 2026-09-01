@@ -165,7 +165,7 @@ void UpdateChecker::check(bool manual)
     // GitHub's API rejects requests that send no User-Agent, and pins response shape to an API
     // version so a future default cannot change the fields parsed below.
     request.setHeader(QNetworkRequest::UserAgentHeader,
-                      QLatin1String("Drift/") + kCurrentVersion);
+                      QLatin1String("NardotoEditor/") + kCurrentVersion);
     request.setRawHeader("Accept", "application/vnd.github+json");
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
@@ -214,7 +214,7 @@ void UpdateChecker::applyRelease(const QByteArray &json, bool manual)
         m_releaseUrl.clear();
         emit resultChanged();
         if (manual)
-            setStatus(tr("Drift %1 is the latest version.").arg(kCurrentVersion));
+            setStatus(tr("Nardoto Editor %1 é a versão mais recente.").arg(kCurrentVersion));
         return;
     }
 
@@ -223,5 +223,5 @@ void UpdateChecker::applyRelease(const QByteArray &json, bool manual)
     m_releaseUrl = release.value(QStringLiteral("html_url")).toString();
     emit resultChanged();
     if (manual)
-        setStatus(tr("Drift %1 is available.").arg(version));
+        setStatus(tr("Nardoto Editor %1 está disponível.").arg(version));
 }

@@ -13,7 +13,7 @@ Usage: extract_release_notes.py <version> <output-file>
 import sys
 import xml.etree.ElementTree as ET
 
-METAINFO_PATH = "flatpak/org.cutwire.Drift.metainfo.xml"
+METAINFO_PATH = "flatpak/com.nardoto.Editor.metainfo.xml"
 
 
 def render(description: ET.Element) -> str:

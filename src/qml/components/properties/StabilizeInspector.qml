@@ -56,7 +56,7 @@ Item {
             wrapMode: Text.WordWrap
             text: root.keyframeMode
                   ? qsTr("Smooths camera shake by writing position keyframes. Linear pans stay as two keys far apart; only direction changes get extra keys. Changing smoothness or tripod does not update the preview until you apply.")
-                  : qsTr("Smooths camera shake. Drift scans the clip once, then renders a new video. Changing smoothness or tripod does not update the preview until you apply.")
+                  : qsTr("Suaviza a tremulação da câmera. O Nardoto Editor analisa o clipe uma vez e renderiza um novo vídeo. Alterar a suavização ou o tripé não atualiza a prévia até você aplicar.")
             color: Theme.mutedForeground
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs

@@ -254,7 +254,7 @@ ThemedDialog {
                 visible: accelerationPanel.restartRequired
                 color: Theme.destructive
                 tone: "default"
-                text: qsTr("Restart Drift for this to take effect.")
+                text: qsTr("Reinicie o Nardoto Editor para aplicar esta alteração.")
             }
         }
 

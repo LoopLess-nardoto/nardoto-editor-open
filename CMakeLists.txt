@@ -2,11 +2,11 @@ cmake_minimum_required(VERSION 3.21)
 
 # Must be set before project(). Left unset, the binary is stamped with the build machine's OS
 # version and will not launch on anything older.
-set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Oldest macOS release Drift runs on")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Versão mais antiga do macOS suportada pelo Nardoto Editor")
 
 # C is enabled for JUCE only: its modules compile a handful of C sources (zlib, flac, oggvorbis)
 # and its CMake refuses to configure without it.
-project(Drift VERSION 0.5.1 LANGUAGES CXX C)
+project(NardotoEditor VERSION 0.1.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -57,9 +57,9 @@ option(DRIFT_AUTO_UPDATE_TRANSLATIONS "Run lupdate as part of the default build"
 # The token is NOT a secret. It ships inside every binary and is trivially extractable; it exists
 # so the bucket cannot be crawled or hotlinked, which would cost operations for someone else's
 # benefit. That is also why it is fine in CMakeCache.txt.
-set(DRIFT_ADDON_INDEX_URL "https://drift-addons.cutwire.org/v1/index"
+set(DRIFT_ADDON_INDEX_URL ""
     CACHE STRING "Addon index endpoint; empty disables the addon service")
-set(DRIFT_ADDON_CLIENT_TOKEN "79a388bba9301cacc81cc6eb0724c81e948e1b27c69aee1b"
+set(DRIFT_ADDON_CLIENT_TOKEN ""
     CACHE STRING "Client token sent to the addon service as X-Drift-Client")
 
 # --- Update check -----------------------------------------------------------
@@ -70,7 +70,7 @@ set(DRIFT_ADDON_CLIENT_TOKEN "79a388bba9301cacc81cc6eb0724c81e948e1b27c69aee1b"
 # Set it to an empty string for builds a package manager owns — the Flatpak manifests and the Arch
 # PKGBUILD all do. There, pacman or flatpak fetches the update on its own schedule and an in-app
 # nag is noise the user cannot act on (Flathub's quality guidelines say as much).
-set(DRIFT_UPDATE_FEED_URL "https://api.github.com/repos/CutWire-Studios/Drift/releases/latest"
+set(DRIFT_UPDATE_FEED_URL ""
     CACHE STRING "Release feed polled for updates; empty disables the update check")
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Test Concurrent Widgets OpenGL Network QuickEffects Svg)
@@ -269,7 +269,7 @@ endif()
 #
 # Acquisition mirrors ONNX Runtime above: a local tree wins, otherwise fetch. flatpak-builder runs
 # offline, so packaged builds set DRIFT_JUCE_DIR at a source it vendored itself and turn the fetch
-# off (see flatpak/org.cutwire.Drift.yml).
+# off (veja flatpak/com.nardoto.Editor.yml).
 # Drift links exactly one JUCE module and calls none of JUCE's project helpers, so everything past
 # add_subdirectory(modules) is dead weight: it configures and builds juceaide, and — the part that
 # actually leaks — adds install() rules that drop JUCE's headers, its LV2 helper binary and its
@@ -625,6 +625,10 @@ if(NOT ANDROID)
     )
 endif()
 
+if((WIN32 OR (UNIX AND NOT APPLE)) AND NOT ANDROID)
+    set_target_properties(drift PROPERTIES OUTPUT_NAME "nardoto-editor")
+endif()
+
 # Windows needs the icon embedded in the PE resource section for Explorer and
 # the taskbar; setWindowIcon alone is not enough for the .exe identity.
 if(WIN32)
@@ -632,18 +636,18 @@ if(WIN32)
     # console subsystem and Windows opens a console window before the GUI comes up. Qt6::EntryPoint
     # (linked in by Qt6::Core) supplies the WinMain that forwards to main().
     set_target_properties(drift PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_sources(drift PRIVATE resources/windows/drift.rc)
-    set_source_files_properties(resources/windows/drift.rc PROPERTIES
-        OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/resources/windows/drift.ico")
+    target_sources(drift PRIVATE resources/windows/nardoto-editor.rc)
+    set_source_files_properties(resources/windows/nardoto-editor.rc PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/resources/windows/nardoto-editor.ico")
 endif()
 
 # Without a bundle macOS runs the app as a background process, with no Dock tile or menu bar.
 # It also collides with the <build>/Drift/ directory qt_add_qml_module(URI Drift) writes, which
 # on case-insensitive APFS fails the link with EISDIR.
 if(APPLE)
-    set(DRIFT_MACOS_EXECUTABLE "Drift")
-    set(DRIFT_MACOS_BUNDLE_ID "org.cutwire.Drift")
-    set(DRIFT_MACOS_ICON_FILE "Drift.icns")
+    set(DRIFT_MACOS_EXECUTABLE "Nardoto Editor")
+    set(DRIFT_MACOS_BUNDLE_ID "com.nardoto.Editor")
+    set(DRIFT_MACOS_ICON_FILE "NardotoEditor.icns")
 
     # Not CMake's MACOSX_BUNDLE_* properties: the NS* and LSMinimumSystemVersion keys have none.
     configure_file(
@@ -662,12 +666,12 @@ if(APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist")
 endif()
 
-# App icon for QApplication::setWindowIcon (all platforms). Rendered from Drift_icon.png,
-# as is resources/windows/drift.ico — keep the two in sync when the branding changes.
+# Ícone do aplicativo em todas as plataformas. O PNG, ICO e ICNS vêm da mesma
+# arte do Nardoto Editor para manter a identidade consistente.
 qt_add_resources(drift "drift_app_icon"
     PREFIX "/app"
     BASE resources
-    FILES resources/drift.png
+    FILES resources/nardoto-editor.png
 )
 
 set_source_files_properties(src/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
@@ -876,9 +880,9 @@ if(ANDROID)
             "ssl_3/${ANDROID_ABI}/*.so files from https://github.com/KDAB/android_openssl.")
     endif()
 
-    set(DRIFT_ANDROID_PACKAGE_NAME "org.cutwire.drift" CACHE STRING
-        "Android application id (use org.cutwire.drift.ci for side-by-side test builds)")
-    set(DRIFT_ANDROID_APP_NAME "Drift" CACHE STRING
+    set(DRIFT_ANDROID_PACKAGE_NAME "com.nardoto.editor" CACHE STRING
+        "Identificador do aplicativo Android")
+    set(DRIFT_ANDROID_APP_NAME "Nardoto Editor" CACHE STRING
         "Launcher label")
     # versionName is PROJECT_VERSION — same string the desktop binary embeds as DRIFT_VERSION.
     # versionCode is the Play-Store integer; default tracks that semver so a desktop bump is an
@@ -1086,17 +1090,17 @@ else()
     endforeach()
 
     # Desktop integration for Flatpak / freedesktop.
-    install(FILES flatpak/org.cutwire.Drift.desktop
+    install(FILES flatpak/com.nardoto.Editor.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications COMPONENT drift)
-    install(FILES flatpak/org.cutwire.Drift.metainfo.xml
+    install(FILES flatpak/com.nardoto.Editor.metainfo.xml
             DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo COMPONENT drift)
-    install(FILES flatpak/org.cutwire.Drift.xml
+    install(FILES flatpak/com.nardoto.Editor.xml
             DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages COMPONENT drift)
     # 1024px source is intentionally skipped: flatpak build-export rejects icons
     # larger than 512x512.
     foreach(_size 64 128 256 512)
         install(FILES
-            flatpak/share/icons/hicolor/${_size}x${_size}/apps/org.cutwire.Drift.png
+            flatpak/share/icons/hicolor/${_size}x${_size}/apps/com.nardoto.Editor.png
             DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}x${_size}/apps COMPONENT drift)
     endforeach()
 endif()

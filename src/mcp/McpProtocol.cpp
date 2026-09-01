@@ -30,7 +30,7 @@ QJsonObject initializeResult()
         {QStringLiteral("protocolVersion"), QStringLiteral("2025-03-26")},
         {QStringLiteral("capabilities"), QJsonObject{{QStringLiteral("tools"), QJsonObject{}}}},
         {QStringLiteral("serverInfo"),
-         QJsonObject{{QStringLiteral("name"), QStringLiteral("drift")},
+         QJsonObject{{QStringLiteral("name"), QStringLiteral("nardoto-editor")},
                      {QStringLiteral("version"), QStringLiteral(DRIFT_VERSION)}}},
         {QStringLiteral("instructions"),
          QStringLiteral(

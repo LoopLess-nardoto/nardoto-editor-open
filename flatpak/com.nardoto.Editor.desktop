@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Nardoto Editor
+GenericName=Editor de vídeo
+Comment=Edite e exporte vídeos com liberdade
+Exec=nardoto-editor %u
+Icon=com.nardoto.Editor
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=video;editor;movie;clip;ffmpeg;subtitles;
+MimeType=application/x-nardoto-editor-project;
+StartupWMClass=nardoto-editor

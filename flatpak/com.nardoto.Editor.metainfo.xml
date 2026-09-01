@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Nardoto. Trabalho derivado do Drift, GPL-3.0-or-later. -->
+<component type="desktop-application">
+  <id>com.nardoto.Editor</id>
+  <name>Nardoto Editor</name>
+  <summary>Editor de vídeo gratuito e de código aberto</summary>
+  <description>
+    <p>
+      Nardoto Editor é um editor de vídeo desktop gratuito, de código aberto e
+      sem marca-d'água. Importe mídias, monte uma linha do tempo com várias faixas,
+      crie legendas, aplique efeitos e exporte o vídeo final no seu computador.
+    </p>
+    <p>
+      Esta primeira versão preserva o motor de edição maduro do Drift e inaugura
+      uma identidade visual inspirada no Nardoto Studio.
+    </p>
+    <ul>
+      <li>Linha do tempo com múltiplas faixas, cortes e transições</li>
+      <li>Textos, legendas, efeitos, áudio e exportação local</li>
+      <li>Projetos portáteis que mantêm as mídias reunidas</li>
+      <li>Acesso opcional por MCP para agentes locais</li>
+    </ul>
+  </description>
+  <branding>
+    <color type="primary" scheme_preference="light">#E85A2A</color>
+    <color type="primary" scheme_preference="dark">#E85A2A</color>
+  </branding>
+  <launchable type="desktop-id">com.nardoto.Editor.desktop</launchable>
+  <provides>
+    <mediatype>application/x-nardoto-editor-project</mediatype>
+  </provides>
+  <developer id="com.nardoto">
+    <name>Nardoto</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <content_rating type="oars-1.1" />
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>AudioVideoEditing</category>
+  </categories>
+  <url type="homepage">https://github.com/LoopLess-nardoto/nardoto-editor-open</url>
+  <url type="bugtracker">https://github.com/LoopLess-nardoto/nardoto-editor-open/issues</url>
+  <url type="vcs-browser">https://github.com/LoopLess-nardoto/nardoto-editor-open</url>
+  <releases>
+    <release version="0.1.0" date="2026-09-01">
+      <description>
+        <p>Primeira versão pública do fork Nardoto Editor.</p>
+      </description>
+    </release>
+  </releases>
+</component>

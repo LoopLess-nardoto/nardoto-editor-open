@@ -1,15 +1,15 @@
 name: Bug report
-description: Something in Drift isn't working as expected
+description: Algo no Nardoto Editor não funcionou como esperado
 title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Drift. Fill in the fields below.
-        You can attach screenshots or screen recordings on any text box.
+        Obrigado por ajudar a melhorar o Nardoto Editor. Preencha os campos abaixo.
+        Você pode anexar capturas ou gravações de tela em qualquer campo de texto.
 
-        **Before filing:** check the [unreleased changelog](https://github.com/CutWire-Studios/Drift/blob/main/CHANGELOG.md) — the bug may already be fixed on `main` since the last release.
+        **Antes de abrir:** consulte o [changelog não lançado](https://github.com/LoopLess-nardoto/nardoto-editor-open/blob/main/CHANGELOG.md); o problema pode já estar corrigido na `main`.
 
   - type: dropdown
     id: os

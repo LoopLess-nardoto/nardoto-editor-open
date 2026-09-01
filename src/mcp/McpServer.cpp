@@ -40,7 +40,7 @@ QString McpServer::cursorSnippet() const
     return QStringLiteral(
                "{\n"
                "  \"mcpServers\": {\n"
-               "    \"drift\": {\n"
+               "    \"nardoto-editor\": {\n"
                "      \"url\": \"%1\",\n"
                "      \"headers\": {\n"
                "        \"Authorization\": \"Bearer %2\"\n"
@@ -56,7 +56,7 @@ QString McpServer::claudeCommand() const
     if (!m_running)
         return {};
     return QStringLiteral(
-               "claude mcp add --transport http drift %1 --header \"Authorization: Bearer %2\"")
+               "claude mcp add --transport http nardoto-editor %1 --header \"Authorization: Bearer %2\"")
         .arg(url(), m_token);
 }
 

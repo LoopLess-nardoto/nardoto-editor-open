@@ -68,7 +68,7 @@ Item {
                     spacing: 2
 
                     Text {
-                        text: "Drift"
+                        text: "Nardoto Editor"
                         color: Theme.foreground
                         font.family: Theme.fontFamily
                         font.pixelSize: 22
@@ -76,7 +76,7 @@ Item {
                     }
 
                     Text {
-                        text: qsTr("Create polished videos fast")
+                        text: qsTr("Crie vídeos bem-acabados em poucos passos")
                         color: Theme.mutedForeground
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSizeSm

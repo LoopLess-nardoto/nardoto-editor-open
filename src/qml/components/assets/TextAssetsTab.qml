@@ -28,7 +28,7 @@ Item {
         function onUserTextPresetsChanged() { root.userPresetsTick++ }
     }
 
-    readonly property string styleFileFilter: qsTr("Drift text style (*.drifttextstyle)")
+    readonly property string styleFileFilter: qsTr("Estilo de texto do Nardoto Editor (*.drifttextstyle)")
 
     function importStyle() {
         const url = FileDialogs.openFile(qsTr("Import text style"), [root.styleFileFilter])

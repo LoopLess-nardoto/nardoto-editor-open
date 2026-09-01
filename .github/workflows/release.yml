@@ -78,17 +78,15 @@ jobs:
 
           ## Installing
 
-          - **AppImage** (Linux, any distro): `chmod +x Drift-*.AppImage && ./Drift-*.AppImage`
-          - **Windows installer**: run `Drift-Setup-*.exe`
-          - **Windows portable**: extract `Drift-Portable-*.zip` anywhere and run `drift.exe` from
-            the `Drift` folder inside it. Nothing is installed, but settings and addons are still
-            stored per-user under `%APPDATA%\Drift`.
-          - **macOS** (Apple Silicon): open `Drift-*-arm64.dmg` and drag Drift to Applications. The
+          - **AppImage** (Linux, any distro): `chmod +x NardotoEditor-*.AppImage && ./NardotoEditor-*.AppImage`
+          - **Windows installer**: run `NardotoEditor-Setup-*.exe`
+          - **Windows portable**: extract `NardotoEditor-Portable-*.zip` e execute `nardoto-editor.exe`.
+          - **macOS** (Apple Silicon): abra `NardotoEditor-*-arm64.dmg` e arraste Nardoto Editor para Aplicativos. O
             app is signed ad-hoc rather than notarised, so the first launch needs right-click →
-            Open, or `xattr -dr com.apple.quarantine /Applications/Drift.app`.
-          - **Arch Linux**: `sudo pacman -U drift-*.pkg.tar.zst`
-          - **Flatpak**: requires `flatpak` with the Flathub remote added (`flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`), then `flatpak install --user Drift-*.flatpak`
-          - **Android**: install the APK for your ABI (`arm64-v8a` on virtually all phones; `x86_64` for emulators). Sideload with `adb install Drift-*-arm64-v8a.apk`.
+            Open, or `xattr -dr com.apple.quarantine "/Applications/Nardoto Editor.app"`.
+          - **Arch Linux**: `sudo pacman -U nardoto-editor-*.pkg.tar.zst`
+          - **Flatpak**: requer `flatpak`; instale com `flatpak install --user NardotoEditor-*.flatpak`.
+          - **Android**: instale o APK da sua arquitetura.
 
           Fonts, stickers, speech models and GPU/CPU acceleration runtimes are not bundled — install
           the ones you want from the Addon Manager in the app header.
@@ -133,8 +131,8 @@ jobs:
               release = json.load(f)
 
           EMBED_DESC_LIMIT = 4096
-          DRIFT_GOLD = 0xFCAD01
-          ICON = "https://raw.githubusercontent.com/CutWire-Studios/Drift/main/Drift_icon.png"
+          NARDOTO_ORANGE = 0xE85A2A
+          ICON = "https://raw.githubusercontent.com/LoopLess-nardoto/nardoto-editor-open/main/resources/nardoto-editor.png"
 
           def github_md_to_discord(text: str) -> str:
               lines = []
@@ -184,14 +182,13 @@ jobs:
               return name
 
           tag = release.get("tag_name") or ""
-          title = release.get("name") or f"Drift {tag}"
+          title = release.get("name") or f"Nardoto Editor {tag}"
           url = release["html_url"]
           notes = github_md_to_discord(release.get("body") or "")
-          description = clamp(notes or "New Drift release.", EMBED_DESC_LIMIT)
+          description = clamp(notes or "Nova versão do Nardoto Editor.", EMBED_DESC_LIMIT)
 
           downloads = [
-              "[All assets](" + url + ")",
-              "[Flathub](https://flathub.org/apps/org.cutwire.Drift)",
+              "[Todos os arquivos](" + url + ")",
           ]
           for asset in release.get("assets") or []:
               label = asset_label(asset.get("name") or "")
@@ -200,7 +197,7 @@ jobs:
               downloads.append(f"[{label}]({asset['browser_download_url']})")
 
           payload = {
-              "username": "Drift",
+              "username": "Nardoto Editor",
               "avatar_url": ICON,
               "allowed_mentions": {"parse": []},
               "embeds": [
@@ -208,11 +205,11 @@ jobs:
                       "title": title,
                       "url": url,
                       "description": description,
-                      "color": DRIFT_GOLD,
+                      "color": NARDOTO_ORANGE,
                       "timestamp": release.get("published_at"),
                       "author": {
-                          "name": "CutWire Studios",
-                          "url": "https://github.com/CutWire-Studios/Drift",
+                          "name": "Nardoto Editor",
+                          "url": "https://github.com/LoopLess-nardoto/nardoto-editor-open",
                           "icon_url": ICON,
                       },
                       "thumbnail": {"url": ICON},
@@ -232,7 +229,7 @@ jobs:
               data=json.dumps(payload).encode("utf-8"),
               headers={
                   "Content-Type": "application/json",
-                  "User-Agent": "CutWire-Drift-Release-Notify",
+              "User-Agent": "Nardoto-Editor-Release-Notify",
               },
               method="POST",
           )

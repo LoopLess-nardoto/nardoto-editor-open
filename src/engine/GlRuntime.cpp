@@ -794,7 +794,7 @@ bool GlRuntime::initGlObjects()
     const int major = context->format().majorVersion();
     const int minor = context->format().minorVersion();
     if (isEs ? major < 3 : (major < 3 || (major == 3 && minor < 3))) {
-        qCritical("GlRuntime: this device reports OpenGL%s %d.%d; Drift needs OpenGL ES 3.0 or "
+    qCritical("GlRuntime: this device reports OpenGL%s %d.%d; Nardoto Editor needs OpenGL ES 3.0 or "
                   "OpenGL 3.3. GPU rendering is unavailable. (vendor: %s, renderer: %s)",
                   isEs ? " ES" : "", major, minor,
                   reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR)),

@@ -89,7 +89,7 @@ ThemedDialog {
                   ? (EditorState.reverseRenderStatus.length > 0
                      ? EditorState.reverseRenderStatus
                      : qsTr("Working…"))
-                  : qsTr("Drift will render a reversed copy of this clip so it plays back "
+                  : qsTr("O Nardoto Editor renderizará uma cópia invertida deste clipe para que ele seja reproduzido "
                          + "smoothly. You can keep editing while it runs.")
         }
 

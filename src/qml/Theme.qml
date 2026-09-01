@@ -20,8 +20,10 @@ QtObject {
     // Once toggled, the choice lives in QSettings via EditorState and survives
     // restarts; it is app-wide, not stored per project.
     readonly property bool systemPrefersDark: Qt.styleHints.colorScheme !== Qt.Light
+    // O Nardoto Editor abre na identidade escura do Studio. Quem preferir pode
+    // selecionar o tema claro nas configurações, e a escolha continua persistida.
     readonly property bool darkMode: EditorState.darkModeOverridden ? EditorState.darkModePreferred
-                                                                    : systemPrefersDark
+                                                                    : true
 
     function toggleDarkMode() {
         EditorState.setDarkModePreference(!darkMode);
@@ -33,22 +35,22 @@ QtObject {
 
     // --- Color palettes: app shell vs. panel surfaces, light and dark ------------
     readonly property var _dark: ({
-        appBackground: "#0d0d0d",
-        foreground: "#dedede",
-        border: "#292929",
-        accent: "#242424",
-        accentForeground: "#f2f2f2",
-        mutedForeground: "#808080",
-        popoverHover: "#212121",
-        panelBackground: "#1a1a1a",
-        panelForeground: "#d9d9d9",
-        panelBorder: "#2e2e2e",
-        panelAccent: "#262626",
-        panelAccentForeground: "#ededed",
-        panelMuted: "#383838",
-        panelSecondaryBg: "#26200a",
-        panelSecondaryBorder: "#4a3d00",
-        panelSecondaryForeground: "#ffcf4a"
+        appBackground: "#0A0A0A",
+        foreground: "#FFFFFF",
+        border: "#00000000",
+        accent: "#141414",
+        accentForeground: "#FFFFFF",
+        mutedForeground: "#A3A3A3",
+        popoverHover: "#1E1E1E",
+        panelBackground: "#141414",
+        panelForeground: "#FFFFFF",
+        panelBorder: "#00000000",
+        panelAccent: "#1A1A1A",
+        panelAccentForeground: "#FFFFFF",
+        panelMuted: "#262626",
+        panelSecondaryBg: "#2A130A",
+        panelSecondaryBorder: "#00000000",
+        panelSecondaryForeground: "#FFB08F"
     })
     readonly property var _light: ({
         appBackground: "#ffffff",
@@ -87,12 +89,12 @@ QtObject {
     readonly property color panelAccentForeground: _palette.panelAccentForeground
     readonly property color panelMuted: _palette.panelMuted
     // Slider groove — lighter than panelMuted in dark mode so the track reads at rest.
-    readonly property color sliderTrack: darkMode ? "#505050" : panelMuted
+    readonly property color sliderTrack: darkMode ? "#3A3A3A" : panelMuted
     // Scrollbar track + handle (timeline horizontal bar, panel flickables).
-    readonly property color scrollbarTrack: darkMode ? "#2a2a2a" : panelBorder
-    readonly property color scrollbarHandle: darkMode ? "#6a6a6a" : panelMuted
-    readonly property color scrollbarHandleHover: darkMode ? "#888888" : mutedForeground
-    readonly property color scrollbarHandlePressed: darkMode ? "#b8b8b8" : foreground
+    readonly property color scrollbarTrack: darkMode ? "#1A1A1A" : panelBorder
+    readonly property color scrollbarHandle: darkMode ? "#4A4A4A" : panelMuted
+    readonly property color scrollbarHandleHover: darkMode ? "#737373" : mutedForeground
+    readonly property color scrollbarHandlePressed: darkMode ? "#A3A3A3" : foreground
     // Bottom-sheet drag pill. panelBorder put it at 1.28:1 against the sheet in both
     // themes, so the one affordance saying "this sheet moves" was invisible; these
     // clear the 3:1 non-text floor (3.1:1 dark, 3.0:1 light).
@@ -102,14 +104,14 @@ QtObject {
     readonly property color panelSecondaryForeground: _palette.panelSecondaryForeground
 
     // --- Colors: shared semantic (identical in both themes) -----------------------
-    readonly property color primary: "#F8B81C"
-    readonly property color primaryForeground: "#221900"
+    readonly property color primary: "#E85A2A"
+    readonly property color primaryForeground: "#FFFFFF"
     // `primary` as a *foreground* on a panel surface. The brand amber is a fill
     // colour: on the light panel it lands at 1.69:1, so a selected tab tinted with
     // it was effectively invisible. Dark mode keeps the amber (9.8:1); light mode
     // uses the darkened brand tone (5.2:1). Only for text/glyphs on panels —
     // fills, rings and progress arcs still use `primary` in both themes.
-    readonly property color accentOnPanel: darkMode ? primary : "#8a6300"
+    readonly property color accentOnPanel: darkMode ? primary : "#B63E17"
     readonly property color destructive: "#e91616"
     readonly property color constructive: "#23d160"
     readonly property color warning: "#f97316"
@@ -120,9 +122,9 @@ QtObject {
 
     // Export CTA gradient stops (the documented inline-color exception, sourced
     // from here so the button still tracks the token system).
-    readonly property color exportGradientTop: "#ffcf4a"
-    readonly property color exportGradientBottom: "#f59e0b"
-    readonly property color exportGlow: "#fbbf24"
+    readonly property color exportGradientTop: "#FF6B3D"
+    readonly property color exportGradientBottom: "#E85A2A"
+    readonly property color exportGlow: "#E85A2A"
 
     // Scrims/overlays drawn over media (clip name bands, preview letterbox,
     // thumbnail duration badges). Fixed regardless of app theme because they sit
@@ -136,7 +138,7 @@ QtObject {
     readonly property color guideWeak: "#66ffffff"
     readonly property color onMedia: "#ffffff"
     // Timeline snap indicator.
-    readonly property color snapGuide: "#f5c542"
+    readonly property color snapGuide: primary
     // Async placeholder fill for thumbnails, filmstrips and waveforms.
     readonly property color skeletonColor: darkMode ? "#242424" : "#e8e8e8"
     readonly property color skeletonHighlight: darkMode ? "#333333" : "#f5f5f5"
@@ -228,8 +230,9 @@ QtObject {
     readonly property real controlHeight: touchUi ? 44 : 30
     readonly property real controlHeightSm: touchUi ? 36 : 26   // chips, segmented toggles
     readonly property real iconButtonSize: touchUi ? 40 : 28
-    readonly property real borderWidth: 1
-    readonly property real borderWidthFocus: 2
+    // As superfícies são separadas por camadas e contraste, não por linhas.
+    readonly property real borderWidth: 0
+    readonly property real borderWidthFocus: 0
 
     // --- Icon sizes ------------------------------------------------------------
     readonly property real iconSizeSm: 12

@@ -5,7 +5,7 @@
 
 // Touch feedback, in the vocabulary of the interaction rather than of the actuator: call sites say
 // what just happened and this decides what it feels like. The mapping onto platform constants lives
-// in android/src/org/cutwire/drift/Haptics.java.
+// em android/src/com/nardoto/editor/Haptics.java.
 //
 // Two things every call site gets for free, and which are the difference between this feeling
 // deliberate and feeling broken:

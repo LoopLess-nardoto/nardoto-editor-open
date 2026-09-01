@@ -14,8 +14,8 @@
 #   ANDROID_NDK_ROOT the NDK version the Qt kit was built against, NOT simply the newest installed.
 #                    Mixing NDK majors between Qt, FFmpeg and the app produces libc++ symbol
 #                    errors and dlopen failures that get misattributed to something else.
-#   DRIFT_ANDROID_PACKAGE_NAME  application id (default org.cutwire.drift; CI uses .ci)
-#   DRIFT_ANDROID_APP_NAME      launcher label (default Drift)
+#   DRIFT_ANDROID_PACKAGE_NAME  identificador (padrão com.nardoto.editor; CI usa .ci)
+#   DRIFT_ANDROID_APP_NAME      rótulo do lançador (padrão Nardoto Editor)
 #   DRIFT_ANDROID_VERSION_CODE  optional Play-Store integer; unset → CMake derives from
 #                               PROJECT_VERSION (same semver as desktop)
 #   SKIP_APK=1                  compile the native library only (no APK packaging)
@@ -51,8 +51,8 @@ esac
 # VERSION_CODE defaults in CMake from PROJECT_VERSION (same semver as desktop); set it only when
 # you need a different integer (e.g. github.run_number for successive CI side-loads).
 # SKIP_APK=1 builds the native library only — used by the push smoke test.
-: "${DRIFT_ANDROID_PACKAGE_NAME:=org.cutwire.drift}"
-: "${DRIFT_ANDROID_APP_NAME:=Drift}"
+: "${DRIFT_ANDROID_PACKAGE_NAME:=com.nardoto.editor}"
+: "${DRIFT_ANDROID_APP_NAME:=Nardoto Editor}"
 : "${SKIP_APK:=0}"
 
 [ -d "$ANDROID_NDK_ROOT" ] || { echo "no NDK at $ANDROID_NDK_ROOT" >&2; exit 1; }

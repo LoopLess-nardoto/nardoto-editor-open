@@ -1,4 +1,4 @@
-package org.cutwire.drift;
+package com.nardoto.editor;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;

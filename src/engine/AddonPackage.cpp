@@ -143,7 +143,7 @@ bool readHeader(QFile &file, PackageInfo *info, QCryptographicHash *digest, QStr
     const quint32 version = readU32(header.constData() + 8);
     if (version != kFormatVersion) {
         return fail(error, QStringLiteral("package format version %1 is newer than this build "
-                                          "understands — update Drift")
+                                          "understands — update Nardoto Editor")
                                .arg(version));
     }
 
@@ -416,7 +416,7 @@ bool install(const QString &packagePath, const QString &destDir, const ProgressF
     if (actualDigest != expectedDigest)
         return fail(error, QStringLiteral("package contents do not match its digest"));
     if (!verifySignature(actualDigest, signature))
-        return fail(error, QStringLiteral("package signature is not valid for this build of Drift"));
+        return fail(error, QStringLiteral("a assinatura do pacote não é válida para esta versão do Nardoto Editor"));
 
     QDir existing(destDir);
     if (existing.exists() && !existing.removeRecursively())

@@ -143,9 +143,9 @@ bool readAll(const QString &path, QFile *file, BundleInfo *info, QList<BlobRecor
 
     const QByteArray header = file->read(kHeaderSize);
     if (header.size() != kHeaderSize)
-        return fail(error, QCoreApplication::translate("ProjectBundle", "file is too short to be a Drift project"));
+        return fail(error, QCoreApplication::translate("ProjectBundle", "o arquivo é curto demais para ser um projeto do Nardoto Editor"));
     if (memcmp(header.constData(), kMagic, sizeof(kMagic)) != 0)
-        return fail(error, QCoreApplication::translate("ProjectBundle", "not a Drift project (bad magic)"));
+        return fail(error, QCoreApplication::translate("ProjectBundle", "não é um projeto do Nardoto Editor (assinatura inválida)"));
     if (readU32(header.constData() + 8) != kContainerVersion)
         return fail(error, QCoreApplication::translate("ProjectBundle", "unsupported container revision"));
 
@@ -182,7 +182,7 @@ bool readAll(const QString &path, QFile *file, BundleInfo *info, QList<BlobRecor
     if (major > kFormatMajor) {
         return fail(error, QCoreApplication::translate(
                                "ProjectBundle",
-                               "this project was saved by a newer version of Drift "
+                               "este projeto foi salvo por uma versão mais recente do Nardoto Editor "
                                "(format %1) — update to open it")
                                .arg(info->formatVersion));
     }
@@ -395,7 +395,7 @@ bool write(const QString &path, const WriteRequest &request, const ProgressFn &p
         {QStringLiteral("format"),
          QJsonObject{
              {QStringLiteral("version"), formatVersionString()},
-             {QStringLiteral("app"), QStringLiteral("Drift")},
+             {QStringLiteral("app"), QStringLiteral("Nardoto Editor")},
              {QStringLiteral("appVersion"), QStringLiteral(DRIFT_VERSION)},
          }},
         {QStringLiteral("project"),

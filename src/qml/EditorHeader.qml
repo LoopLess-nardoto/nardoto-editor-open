@@ -13,8 +13,8 @@ Rectangle {
 
     property string projectName: EditorState.projectName
 
-    readonly property var projectFilter: [qsTr("Drift project (*.drift)")]
-    readonly property var projectMimeTypes: ["application/x-drift-project"]
+    readonly property var projectFilter: [qsTr("Projeto do Nardoto Editor (*.drift)")]
+    readonly property var projectMimeTypes: ["application/x-nardoto-editor-project"]
 
     // Action to run after Save or Don't Save resolves. Null when idle.
     property var _pendingAfterUnsaved: null
@@ -191,6 +191,52 @@ Rectangle {
         anchors.rightMargin: Theme.pagePadding
         anchors.verticalCenterOffset: 1
         spacing: Theme.spacingLg
+
+        // Identidade compacta: preserva a área útil da timeline e dá ao editor
+        // a mesma assinatura visual escura e laranja do Nardoto Studio.
+        Row {
+            Layout.alignment: Qt.AlignVCenter
+            spacing: Theme.spacingMd
+
+            Rectangle {
+                width: 30
+                height: 30
+                radius: Theme.radiusMd
+                color: Theme.panelAccent
+                anchors.verticalCenter: parent.verticalCenter
+
+                Image {
+                    anchors.centerIn: parent
+                    width: 24
+                    height: 24
+                    source: "qrc:/app/nardoto-editor.png"
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize.width: 48
+                    sourceSize.height: 48
+                }
+            }
+
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 0
+
+                Text {
+                    text: qsTr("Nardoto")
+                    color: Theme.foreground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeSm
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    text: qsTr("EDITOR")
+                    color: Theme.primary
+                    font.family: Theme.monoFontFamily
+                    font.pixelSize: Theme.fontSizeTiny
+                    font.letterSpacing: 1.4
+                }
+            }
+        }
 
         // --- Left: project switcher + save ------------------------------------
         Row {
@@ -514,7 +560,7 @@ Rectangle {
                     glyph: Theme.icons.download
                     variant: "ghost"
                     text: qsTr("Update")
-                    tooltip: qsTr("Drift %1 is available").arg(Updates.latestVersion)
+                    tooltip: qsTr("Nardoto Editor %1 está disponível").arg(Updates.latestVersion)
                     onClicked: root.Window.window.openUpdateDialog()
                 }
 

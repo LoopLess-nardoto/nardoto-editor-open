@@ -1,10 +1,10 @@
-app-id: org.cutwire.Drift
+app-id: com.nardoto.Editor
 runtime: org.kde.Platform
 runtime-version: "6.11"
 sdk: org.kde.Sdk
-command: drift
+command: nardoto-editor
 
-# Flathub variant of org.cutwire.Drift.yml. The only difference is the drift module's source: this
+# Variante do Flathub de com.nardoto.Editor.yml. A única diferença é a fonte do módulo:
 # one builds a tagged commit fetched from GitHub instead of the working tree, because Flathub builds
 # from its own repository and cannot see a local checkout. Everything else must stay in step with
 # the manifest next to it.
@@ -76,7 +76,7 @@ modules:
         url: https://www.surina.net/soundtouch/soundtouch-2.4.1.tar.gz
         sha256: e07abf20ce8f95850c280132e1f61ad400fc1f4011b7fac698a503de6aab6733
 
-  - name: drift
+  - name: nardoto-editor
     buildsystem: cmake-ninja
     builddir: true
     config-opts:
@@ -92,11 +92,11 @@ modules:
       # about a version flatpak will fetch on its own is noise the user cannot act on.
       - -DDRIFT_UPDATE_FEED_URL=
     sources:
-      # TODO: fill in v0.5.1's commit sha before opening the PR. flatpak-builder requires it —
+      # TODO: preencher o commit de v0.1.0 antes de abrir o PR. flatpak-builder exige uma entrada fixa.
       # a tag alone is not a fixed input.
       - type: git
-        url: https://github.com/CutWire-Studios/Drift.git
-        tag: v0.5.1
+        url: https://github.com/LoopLess-nardoto/nardoto-editor-open.git
+        tag: v0.1.0
         commit: "0000000000000000000000000000000000000000"
       # Audio effect DSP. Only juce_dsp and its dependencies are compiled; nothing GUI-facing.
       - type: git

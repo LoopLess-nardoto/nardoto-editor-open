@@ -201,7 +201,7 @@ bool stabilizeTrfIsAscii(const QString &path)
 }
 
 // ffmpeg's filtergraph parser chokes on spaces inside input=/result= even when the
-// argument is already a single QProcess token. The app data dir is "CutWire Drift",
+// argument is already a single QProcess token. The app data dir is "Nardoto Editor",
 // so detect/transform always write and read a no-space path in /tmp, then we copy
 // the analysis file into the cache for the next run.
 QString stabilizeFfmpegTrfPath(const QString &clipId)
@@ -3099,7 +3099,7 @@ void AppController::setVaapiZeroCopy(bool enabled)
     QSettings settings;
     settings.setValue(QStringLiteral("preview/vaapiZeroCopy"), m_vaapiZeroCopy);
     emit vaapiZeroCopyChanged();
-    setLastMessage(tr("Faster preview takes effect after you restart Drift."),
+    setLastMessage(tr("A prévia mais rápida entra em vigor depois de reiniciar o Nardoto Editor."),
                    QStringLiteral("info"));
 }
 
@@ -15055,7 +15055,7 @@ QString AppController::mcpStdioSnippet() const
         {QStringLiteral("args"), QJsonArray{QStringLiteral("--mcp-stdio")}},
     };
     const QJsonObject root{
-        {QStringLiteral("mcpServers"), QJsonObject{{QStringLiteral("drift"), server}}},
+        {QStringLiteral("mcpServers"), QJsonObject{{QStringLiteral("nardoto-editor"), server}}},
     };
     return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Indented));
 }

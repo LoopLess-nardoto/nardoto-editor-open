@@ -274,7 +274,7 @@ bool ensureLoaded(QString *error)
             g_apiVersion = version;
     }
     if (!api) {
-        return fail(QStringLiteral("%1 is ONNX Runtime %2, which is older than this build of Drift "
+        return fail(QStringLiteral("%1 is ONNX Runtime %2, which is older than this build of Nardoto Editor "
                                    "can drive. Update it from the Addon Manager.")
                         .arg(chosen->libPath, QString::fromUtf8(base->GetVersionString())));
     }

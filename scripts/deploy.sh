@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ABI="${1:-arm64-v8a}"
-PKG="org.cutwire.drift"
+PKG="com.nardoto.editor"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APK="$ROOT/build/android-$ABI/android-build/drift.apk"

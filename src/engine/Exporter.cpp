@@ -99,7 +99,7 @@ namespace {
 
 #ifdef Q_OS_ANDROID
 
-constexpr const char *kExportServiceClass = "org/cutwire/drift/ExportService";
+constexpr const char *kExportServiceClass = "com/nardoto/editor/ExportService";
 
 std::atomic<int> g_backgroundHolds{0};
 std::atomic<int> g_notifiedPercent{-1};
@@ -2430,8 +2430,8 @@ QUrl Exporter::publishToGallery(const QUrl &source, const QString &displayName, 
     QJniObject values("android/content/ContentValues");
     putString(values, "_display_name", displayName);
     putString(values, "mime_type", mimeType);
-    putString(values, "relative_path", audio ? QStringLiteral("Music/Drift")
-                                             : QStringLiteral("Movies/Drift"));
+    putString(values, "relative_path", audio ? QStringLiteral("Music/Nardoto Editor")
+                                             : QStringLiteral("Movies/Nardoto Editor"));
     // Pending until the bytes are there, so the gallery never shows a half-written video.
     putInt(values, "is_pending", 1);
 

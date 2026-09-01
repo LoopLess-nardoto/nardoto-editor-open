@@ -1,14 +1,14 @@
 name: Feature request
-description: Suggest an improvement or new capability for Drift
+description: Sugira uma melhoria ou capacidade nova para o Nardoto Editor
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for sharing an idea for Drift. Pick a category, then describe what you'd like.
+        Obrigado por compartilhar uma ideia para o Nardoto Editor. Escolha uma categoria e descreva o que gostaria.
 
-        **Before filing:** check the [unreleased changelog](https://github.com/CutWire-Studios/Drift/blob/main/CHANGELOG.md) — the feature may already be in progress or landed on `main` since the last release.
+        **Antes de abrir:** consulte o [changelog não lançado](https://github.com/LoopLess-nardoto/nardoto-editor-open/blob/main/CHANGELOG.md); a funcionalidade pode já estar em andamento ou ter chegado à `main`.
 
   - type: dropdown
     id: category

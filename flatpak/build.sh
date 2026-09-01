@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MANIFEST="${ROOT}/flatpak/org.cutwire.Drift.yml"
+MANIFEST="${ROOT}/flatpak/com.nardoto.Editor.yml"
 BUILD_DIR="${ROOT}/flatpak/build-dir"
 REPO_DIR="${ROOT}/flatpak/repo"
-APP_ID="org.cutwire.Drift"
+APP_ID="com.nardoto.Editor"
 
 usage() {
     cat <<EOF
@@ -39,15 +39,15 @@ build() {
 
 run_app() {
     build
-    flatpak --user remote-add --if-not-exists drift-local "file://${REPO_DIR}"
-    flatpak --user install --or-update drift-local "${APP_ID}" -y
+    flatpak --user remote-add --if-not-exists nardoto-editor-local "file://${REPO_DIR}"
+    flatpak --user install --or-update nardoto-editor-local "${APP_ID}" -y
     flatpak run "${APP_ID}" "$@"
 }
 
 install_app() {
     build
-    flatpak --user remote-add --if-not-exists drift-local "file://${REPO_DIR}"
-    flatpak --user install --or-update drift-local "${APP_ID}" -y
+    flatpak --user remote-add --if-not-exists nardoto-editor-local "file://${REPO_DIR}"
+    flatpak --user install --or-update nardoto-editor-local "${APP_ID}" -y
 }
 
 export_bundle() {

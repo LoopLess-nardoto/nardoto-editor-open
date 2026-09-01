@@ -1,10 +1,10 @@
 # Maintainer: Suhas Dissanayake <suhasdissa@gmail.com>
-pkgname=drift
-pkgver=0.5.1
+pkgname=nardoto-editor
+pkgver=0.1.0
 pkgrel=1
-pkgdesc="Beginner-friendly open-source video editor built with Qt 6, QML and FFmpeg"
+pkgdesc="Editor de vídeo de código aberto baseado em Qt 6, QML e FFmpeg"
 arch=('x86_64')
-url="https://github.com/CutWire-Studios/Drift"
+url="https://github.com/LoopLess-nardoto/nardoto-editor-open"
 license=('GPL-3.0-or-later')
 depends=(
     'qt6-base' 'qt6-declarative' 'qt6-svg' 'qt6-multimedia' 'qt6-multimedia-ffmpeg'
@@ -19,7 +19,7 @@ makedepends=('cmake' 'ninja' 'git' 'pkgconf' 'qt6-tools' 'xorg-server-xvfb')
 # Defaults to the tagged release; CI overrides _commit (e.g. to $GITHUB_SHA)
 # to build the exact commit that triggered the workflow instead.
 _commit="${_commit:-v$pkgver}"
-source=("$pkgname::git+https://github.com/CutWire-Studios/Drift.git#commit=$_commit")
+source=("$pkgname::git+https://github.com/LoopLess-nardoto/nardoto-editor-open.git#commit=$_commit")
 sha256sums=('SKIP')
 
 # ONNX Runtime is never linked and never shipped: Drift dlopens whichever build the user installs

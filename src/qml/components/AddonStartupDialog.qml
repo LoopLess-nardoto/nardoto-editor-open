@@ -159,7 +159,7 @@ ThemedDialog {
                 size: "sm"
                 visible: root.showEssential
                 text: qsTr("Install the essential packs for effects, transitions, and audio. "
-                           + "You can keep using Drift without them — installing unlocks updates "
+                           + "Você pode continuar usando o Nardoto Editor sem eles; instalar libera atualizações "
                            + "when they improve.")
             }
 

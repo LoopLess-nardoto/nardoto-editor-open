@@ -618,7 +618,7 @@ QVariantMap DebugReport::collect()
     }
 
     QVariantList system;
-    system.append(systemRow(trReport("Drift"), QStringLiteral(DRIFT_VERSION)));
+    system.append(systemRow(trReport("Nardoto Editor"), QStringLiteral(DRIFT_VERSION)));
     system.append(systemRow(trReport("Package"), package));
     if (const QString flatpakId = qEnvironmentVariable("FLATPAK_ID"); !flatpakId.isEmpty())
         system.append(systemRow(trReport("Flatpak ID"), flatpakId));
@@ -695,7 +695,7 @@ QVariantMap DebugReport::collect()
             hints.append(hintRow(
                 QStringLiteral("codecs-extra"), trReport("Missing extra codecs"),
                 trReport("H.264 and H.265 encoding is missing from this Flatpak. Install the extra "
-                         "codecs extension, then restart Drift."),
+                         "extensão de codecs e reinicie o Nardoto Editor."),
                 QStringLiteral("flatpak install org.freedesktop.Platform.codecs-extra")));
         }
         bool nvidia = false;
@@ -710,7 +710,7 @@ QVariantMap DebugReport::collect()
                 QStringLiteral("vaapi-nvidia"), trReport("NVIDIA VAAPI driver not installed"),
                 trReport("VAAPI encode on NVIDIA needs the NVIDIA VAAPI extension, and so does "
                          "hardware decode when NVDEC is unavailable. Install it, then restart "
-                         "Drift."),
+                         "Nardoto Editor."),
                     QStringLiteral("flatpak install org.freedesktop.Platform.VAAPI.nvidia")));
         }
     }
@@ -725,7 +725,7 @@ QVariantMap DebugReport::collect()
         hints.append(hintRow(
             QStringLiteral("amd-gfx6-8"), trReport("Pre-Vega AMD skips zero-copy preview"),
             trReport("GCN 1–4 GPUs (HD 7000 through Polaris / RX 500) export tiled surfaces "
-                     "without a DRM modifier, so Drift refuses zero-copy preview and copies "
+                     "without a DRM modifier, so Nardoto Editor refuses zero-copy preview and copies "
                      "each frame through system memory. Vega, Navi and newer can enable "
                      "Settings → Preview → Faster preview.")));
     }
@@ -755,7 +755,7 @@ QVariantMap DebugReport::collect()
 QString DebugReport::formatPlainText(const QVariantMap &info)
 {
     QString text;
-    text += QStringLiteral("CutWire Drift debug report\n\n");
+    text += QStringLiteral("Relatório de diagnóstico do Nardoto Editor\n\n");
 
     text += QStringLiteral("## System\n");
     const QVariantList system = info.value(QStringLiteral("system")).toList();

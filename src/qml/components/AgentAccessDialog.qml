@@ -42,7 +42,7 @@ ThemedDialog {
                 width: parent.width
                 size: "sm"
                 wrapMode: Text.WordWrap
-                text: qsTr("Let Cursor or Claude edit this project for you — add clips, change the timeline, and check how it looks. Only programs on this computer. Starts off each time you open Drift; turn it off when you finish.")
+                text: qsTr("Permita que Cursor ou Claude editem este projeto: adicionem clipes, alterem a timeline e confiram o resultado. Apenas programas deste computador podem acessar. O recurso inicia desativado a cada abertura do Nardoto Editor; desligue-o ao terminar.")
             }
 
             ThemedSwitch {

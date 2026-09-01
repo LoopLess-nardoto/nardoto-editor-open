@@ -34,7 +34,7 @@ ThemedDialog {
             width: parent.width
             size: "base"
             tone: "default"
-            text: qsTr("Drift %1 is available").arg(Updates.latestVersion)
+            text: qsTr("Nardoto Editor %1 está disponível").arg(Updates.latestVersion)
         }
 
         ThemedLabel {

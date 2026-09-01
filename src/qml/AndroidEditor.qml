@@ -23,7 +23,7 @@ Item {
         previewFullscreen = false
     }
 
-    readonly property var projectFilter: [qsTr("Drift project (*.drift)")]
+    readonly property var projectFilter: [qsTr("Projeto do Nardoto Editor (*.drift)")]
 
     function openAssetsTab(tabId) {
         sheetKind = "assets"

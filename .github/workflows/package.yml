@@ -16,7 +16,7 @@ on:
         default: all
         type: string
       android_identity:
-        description: "release (org.cutwire.drift) or ci (org.cutwire.drift.ci) package id"
+        description: "release (com.nardoto.editor) ou ci (com.nardoto.editor.ci)"
         required: false
         default: ci
         type: string
@@ -89,16 +89,16 @@ jobs:
 
       - name: Lint flatpak manifest and metadata
         run: |
-          appstreamcli validate --no-net flatpak/org.cutwire.Drift.metainfo.xml
-          desktop-file-validate flatpak/org.cutwire.Drift.desktop
-          flatpak-builder --show-manifest flatpak/org.cutwire.Drift.yml > /dev/null
-          flatpak-builder --show-manifest flatpak/org.cutwire.Drift.flathub.yml > /dev/null
+          appstreamcli validate --no-net flatpak/com.nardoto.Editor.metainfo.xml
+          desktop-file-validate flatpak/com.nardoto.Editor.desktop
+          flatpak-builder --show-manifest flatpak/com.nardoto.Editor.yml > /dev/null
+          flatpak-builder --show-manifest flatpak/com.nardoto.Editor.flathub.yml > /dev/null
 
       - name: Cache flatpak runtimes
         uses: actions/cache@v4
         with:
           path: ~/.local/share/flatpak
-          key: flatpak-runtimes-${{ hashFiles('flatpak/org.cutwire.Drift.yml') }}
+          key: flatpak-runtimes-${{ hashFiles('flatpak/com.nardoto.Editor.yml') }}
 
       # The local manifest (not the Flathub one) — it builds the working tree, so it validates the
       # commit under test rather than whatever tag the Flathub manifest is pinned to.
@@ -107,14 +107,14 @@ jobs:
           flatpak-builder --user --force-clean --install-deps-from=flathub \
             --repo="${{ runner.temp }}/flatpak-repo" \
             "${{ runner.temp }}/flatpak-build" \
-            flatpak/org.cutwire.Drift.yml
+            flatpak/com.nardoto.Editor.yml
 
       - name: Export bundle
         run: |
           mkdir -p dist
           flatpak build-bundle "${{ runner.temp }}/flatpak-repo" \
-            "dist/Drift-${{ inputs.version }}.flatpak" \
-            org.cutwire.Drift
+            "dist/NardotoEditor-${{ inputs.version }}.flatpak" \
+            com.nardoto.Editor
 
       - name: Upload flatpak bundle
         uses: actions/upload-artifact@v4
@@ -273,13 +273,13 @@ jobs:
           # hwaccel::deviceAvailable() dlopens libva.so.2 and libva-drm.so.2 itself before
           # letting FFmpeg near VAAPI. See vaapiLoadable() in src/engine/HwAccel.cpp.
           ./linuxdeploy.AppImage --appdir AppDir --plugin qt --output appimage \
-            -d flatpak/org.cutwire.Drift.desktop \
-            -i flatpak/share/icons/hicolor/256x256/apps/org.cutwire.Drift.png \
-            -e AppDir/usr/bin/drift \
+            -d flatpak/com.nardoto.Editor.desktop \
+            -i flatpak/share/icons/hicolor/256x256/apps/com.nardoto.Editor.png \
+            -e AppDir/usr/bin/nardoto-editor \
             -l /usr/lib/x86_64-linux-gnu/libssl.so.3 \
             -l /usr/lib/x86_64-linux-gnu/libcrypto.so.3
           appimage="$(ls ./*.AppImage | grep -iv linuxdeploy | head -n 1)"
-          mv "${appimage}" "dist/Drift-${{ inputs.version }}-x86_64.AppImage"
+          mv "${appimage}" "dist/NardotoEditor-${{ inputs.version }}-x86_64.AppImage"
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
@@ -375,11 +375,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist\bin | Out-Null
-          Copy-Item build\Release\drift.exe dist\bin -Force
+          Copy-Item build\Release\nardoto-editor.exe dist\bin -Force
           # --qmldir: Drift's own QML lives in the binary's resources, but the Qt Quick modules it
           # imports have to be deployed, and qmlimportscanner reads the sources to find them.
           & "${{ env.QT_ROOT_DIR }}\bin\windeployqt.exe" --release --no-translations `
-            --qmldir src\qml dist\bin\drift.exe
+            --qmldir src\qml dist\bin\nardoto-editor.exe
           Copy-Item vcpkg\installed\x64-windows\bin\*.dll dist\bin -Force
           Copy-Item .deps\ffmpeg\bin\*.dll dist\bin -Force
           # Bundled effect/transition/template packages: a POST_BUILD step already put them beside
@@ -412,7 +412,7 @@ jobs:
             throw "$check was not built; cannot verify the multimedia backend plugin"
           }
           Copy-Item $check dist\bin -Force
-          # Run from the staged tree so the checker's app dir is the same as drift.exe.
+          # Executa da árvore preparada, igual ao diretório do Nardoto Editor.
           Push-Location dist\bin
           try {
             & .\audiobackendcheck.exe $plugin
@@ -428,7 +428,7 @@ jobs:
       - name: Build Inno Setup installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
         with:
-          path: installer/windows/Drift.iss
+          path: installer/windows/NardotoEditor.iss
           options: |
             /DMyAppVersion=${{ inputs.version }}
             /DMyAppSource=${{ github.workspace }}\dist\bin
@@ -437,8 +437,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item installer\windows\output\Drift-Setup-x64.exe `
-            "dist\Drift-Setup-${{ inputs.version }}-x64.exe" -Force
+          Copy-Item installer\windows\output\NardotoEditor-Setup-x64.exe `
+            "dist\NardotoEditor-Setup-${{ inputs.version }}-x64.exe" -Force
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -456,10 +456,10 @@ jobs:
       - name: Build portable zip
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path portable\Drift, dist\portable | Out-Null
-          Copy-Item dist\bin\* portable\Drift -Recurse -Force
+          New-Item -ItemType Directory -Force -Path portable\NardotoEditor, dist\portable | Out-Null
+          Copy-Item dist\bin\* portable\NardotoEditor -Recurse -Force
           & "$env:ProgramFiles\7-Zip\7z.exe" a -tzip -mx=9 `
-            "dist\portable\Drift-Portable-${{ inputs.version }}-x64.zip" .\portable\Drift
+            "dist\portable\NardotoEditor-Portable-${{ inputs.version }}-x64.zip" .\portable\NardotoEditor
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
@@ -571,8 +571,8 @@ jobs:
       # The script already names it from the project version, which is what a release tag carries.
       - name: Name the artifact for this release
         run: |
-          want="dist/Drift-${{ inputs.version }}-arm64.dmg"
-          for f in dist/Drift-*.dmg; do
+          want="dist/NardotoEditor-${{ inputs.version }}-arm64.dmg"
+          for f in dist/NardotoEditor-*.dmg; do
             [ "$f" = "$want" ] || mv "$f" "$want"
           done
 
@@ -734,12 +734,12 @@ jobs:
         shell: bash
         run: |
           if [ "${{ inputs.android_identity }}" = "release" ]; then
-            echo "package=org.cutwire.drift" >> "$GITHUB_OUTPUT"
-            echo "app_name=Drift" >> "$GITHUB_OUTPUT"
+            echo "package=com.nardoto.editor" >> "$GITHUB_OUTPUT"
+            echo "app_name=Nardoto Editor" >> "$GITHUB_OUTPUT"
             echo "version_code=" >> "$GITHUB_OUTPUT"
           else
-            echo "package=org.cutwire.drift.ci" >> "$GITHUB_OUTPUT"
-            echo "app_name=Drift CI" >> "$GITHUB_OUTPUT"
+            echo "package=com.nardoto.editor.ci" >> "$GITHUB_OUTPUT"
+            echo "app_name=Nardoto Editor CI" >> "$GITHUB_OUTPUT"
             echo "version_code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -784,7 +784,7 @@ jobs:
           [ -n "$APK" ] || { echo "no release APK under $BUILD/android-build" >&2; exit 1; }
 
           mkdir -p dist
-          OUT="dist/Drift-${VERSION}-${ABI}.apk"
+          OUT="dist/NardotoEditor-${VERSION}-${ABI}.apk"
 
           if [ -z "${KEYSTORE_B64:-}" ]; then
             echo "::warning::ANDROID_KEYSTORE_BASE64 not set; uploading unsigned APK"
@@ -806,5 +806,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk-${{ matrix.abi }}
-          path: dist/Drift-${{ inputs.version }}-${{ matrix.abi }}.apk
+          path: dist/NardotoEditor-${{ inputs.version }}-${{ matrix.abi }}.apk
           if-no-files-found: error

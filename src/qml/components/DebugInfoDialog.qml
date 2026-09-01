@@ -414,7 +414,7 @@ ThemedDialog {
                     tone: "default"
                     textFormat: Text.RichText
                     linkColor: Theme.primary
-                    text: "<a href=\"https://github.com/CutWire-Studios/Drift/issues\">%1</a>"
+                    text: "<a href=\"https://github.com/LoopLess-nardoto/nardoto-editor-open/issues\">%1</a>"
                           .arg(qsTr("Report a bug"))
                     onLinkActivated: (link) => Qt.openUrlExternally(link)
                     HoverHandler {
@@ -428,7 +428,7 @@ ThemedDialog {
                     tone: "default"
                     textFormat: Text.RichText
                     linkColor: Theme.primary
-                    text: "<a href=\"https://docs.cutwire.org/drift\">%1</a>"
+                    text: "<a href=\"https://github.com/LoopLess-nardoto/nardoto-editor-open\">%1</a>"
                           .arg(qsTr("Documentation"))
                     onLinkActivated: (link) => Qt.openUrlExternally(link)
                     HoverHandler {

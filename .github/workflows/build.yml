@@ -2,7 +2,7 @@ name: Build
 
 # Manual, unversioned dry run of the release builds. Use this to prove a platform green before
 # pushing a tag — a tag is public the moment release.yml finishes, so a failure there is expensive.
-# Android dry runs use org.cutwire.drift.ci so the APK installs beside a release build.
+# Testes Android usam com.nardoto.editor.ci para instalar ao lado da versão de lançamento.
 on:
   workflow_dispatch:
     inputs:

@@ -1,4 +1,4 @@
-package org.cutwire.drift;
+package com.nardoto.editor;
 
 import android.Manifest;
 import android.app.Activity;
@@ -24,7 +24,7 @@ public class ExportService extends Service
 {
     private static final String CHANNEL_ID = "export";
     private static final int NOTIFICATION_ID = 4711;
-    private static final String ACTION_CANCEL = "org.cutwire.drift.CANCEL_EXPORT";
+    private static final String ACTION_CANCEL = "com.nardoto.editor.CANCEL_EXPORT";
 
     // The service now holds any long job, not just an export, so the notification says which one.
     // volatile because start() runs on the job's thread while onStartCommand and setPercent read it

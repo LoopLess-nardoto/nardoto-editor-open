@@ -51,7 +51,7 @@ QByteArray postJson(quint16 port, const QString &token, const QByteArray &body, 
     if (!socket.waitForConnected(2000)) {
         if (error)
             *error = QStringLiteral(
-                "Could not connect to Drift. Is the editor open with Agent access enabled?");
+                "Não foi possível conectar ao Nardoto Editor. O editor está aberto com o Acesso de agentes habilitado?");
         return {};
     }
 
@@ -75,7 +75,7 @@ QByteArray postJson(quint16 port, const QString &token, const QByteArray &body, 
     const int sep = response.indexOf("\r\n\r\n");
     if (sep < 0) {
         if (error)
-            *error = QStringLiteral("Empty response from Drift MCP.");
+            *error = QStringLiteral("Resposta vazia do MCP do Nardoto Editor.");
         return {};
     }
     if (statusOut)
@@ -161,7 +161,7 @@ int runStdioAttach()
             return 3;
         }
         if (status > 0 && (status < 200 || status >= 300)) {
-            const QString msg = QStringLiteral("Drift MCP HTTP %1").arg(status);
+            const QString msg = QStringLiteral("MCP do Nardoto Editor HTTP %1").arg(status);
             fprintf(stderr, "%s\n", qPrintable(msg));
             writeRpcError(QJsonValue::Null, -32000, msg);
             return 3;
