@@ -25,15 +25,21 @@
 // native platform file picker, which routes through xdg-desktop-portal.
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDirIterator>
 #include <QEvent>
 #include <QFileOpenEvent>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QIcon>
 #include <QImageReader>
 #include <QLoggingCategory>
+#include <QQmlAbstractUrlInterceptor>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
 #include <QSurfaceFormat>
+#include <QTimer>
 #include <QtQml/qqml.h>
 #include <QFile>
 
@@ -63,6 +69,43 @@ bool verboseLoggingRequested(int argc, char *argv[])
     }
     return false;
 }
+
+QString devQmlDirectory()
+{
+    const QString configured = qEnvironmentVariable("NARDOTO_QML_DEV_DIR").trimmed();
+    if (configured.isEmpty())
+        return {};
+
+    const QDir directory(configured);
+    if (!QFileInfo::exists(directory.filePath(QStringLiteral("Main.qml")))) {
+        qWarning("QML de desenvolvimento não encontrado em %s", qPrintable(configured));
+        return {};
+    }
+    return directory.absolutePath();
+}
+
+class DevQmlUrlInterceptor final : public QQmlAbstractUrlInterceptor
+{
+public:
+    explicit DevQmlUrlInterceptor(QString sourceDirectory)
+        : m_sourceDirectory(sourceDirectory)
+    {
+    }
+
+    QUrl intercept(const QUrl &url, DataType) override
+    {
+        static constexpr auto resourcePrefix = "/qt/qml/Drift/";
+        if (url.scheme() != QLatin1String("qrc") || !url.path().startsWith(resourcePrefix))
+            return url;
+
+        const QString relativePath = url.path().mid(qstrlen(resourcePrefix));
+        const QString localPath = QDir(m_sourceDirectory).filePath(relativePath);
+        return QFileInfo::exists(localPath) ? QUrl::fromLocalFile(localPath) : url;
+    }
+
+private:
+    QString m_sourceDirectory;
+};
 
 // FFmpeg logs at INFO and Qt prints every qDebug/qInfo, which buries the failures worth acting on
 // under per-frame filtergraph chatter. qWarning is this codebase's failure channel, so it stays on
@@ -306,7 +349,14 @@ int main(int argc, char *argv[])
     editorState.queueExternalProject(
         AppController::startupProjectUrlFromArguments(app.arguments()));
 
+    const QString qmlDevDirectory = devQmlDirectory();
+    const QUrl desktopMainQml = qmlDevDirectory.isEmpty()
+        ? QUrl{}
+        : QUrl::fromLocalFile(QDir(qmlDevDirectory).filePath(QStringLiteral("Main.qml")));
     QQmlApplicationEngine engine;
+    DevQmlUrlInterceptor qmlDevInterceptor(qmlDevDirectory);
+    if (!qmlDevDirectory.isEmpty())
+        engine.setUrlInterceptor(&qmlDevInterceptor);
     QObject::connect(&editorState, &AppController::uiLanguageChanged,
                      &engine, &QQmlEngine::retranslate);
     engine.addImageProvider(QStringLiteral("drift"), new DriftImageProvider());
@@ -314,14 +364,85 @@ int main(int argc, char *argv[])
     engine.addImageProvider(QStringLiteral("clippreview"), new ClipPreviewImageProvider());
     engine.addImageProvider(QStringLiteral("multicam"), new MulticamImageProvider());
     engine.addImageProvider(QStringLiteral("textstyle"), new TextStylePreviewImageProvider());
-    QObject::connect(
-        &engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QGuiApplication::exit(-1); }, Qt::QueuedConnection);
+    if (qmlDevDirectory.isEmpty()) {
+        QObject::connect(
+            &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
+            [] { QGuiApplication::exit(-1); }, Qt::QueuedConnection);
+    } else {
+        QObject::connect(
+            &engine, &QQmlApplicationEngine::objectCreationFailed,
+            [] { qWarning("A recarga do QML de desenvolvimento falhou; a interface anterior foi mantida."); });
+    }
     // Main.qml is the desktop layout. AndroidMain.qml is the touch entry point; the desktop tree
     // stays compiled so the touch port can reuse leaf components.
 #ifdef Q_OS_ANDROID
     engine.loadFromModule("Drift", "AndroidMain");
 #else
-    engine.loadFromModule("Drift", "Main");
+    if (qmlDevDirectory.isEmpty())
+        engine.loadFromModule("Drift", "Main");
+    else
+        engine.load(desktopMainQml);
+#endif
+
+#ifndef Q_OS_ANDROID
+    if (!qmlDevDirectory.isEmpty()) {
+        auto *qmlDevWatcher = new QFileSystemWatcher(&app);
+        auto *qmlDevReloadTimer = new QTimer(&app);
+        qmlDevReloadTimer->setSingleShot(true);
+        qmlDevReloadTimer->setInterval(180);
+
+        const auto trackQmlFiles = [qmlDevWatcher, &qmlDevDirectory] {
+            QStringList paths;
+            paths.append(qmlDevDirectory);
+
+            QDirIterator iterator(qmlDevDirectory, {QStringLiteral("*.qml")}, QDir::Files,
+                                  QDirIterator::Subdirectories);
+            while (iterator.hasNext())
+                paths.append(iterator.next());
+
+            QDirIterator directoryIterator(qmlDevDirectory, QDir::Dirs | QDir::NoDotAndDotDot,
+                                           QDirIterator::Subdirectories);
+            while (directoryIterator.hasNext())
+                paths.append(directoryIterator.next());
+
+            QStringList missing;
+            const QStringList watched = qmlDevWatcher->files() + qmlDevWatcher->directories();
+            for (const QString &path : paths) {
+                if (!watched.contains(path))
+                    missing.append(path);
+            }
+            if (!missing.isEmpty())
+                qmlDevWatcher->addPaths(missing);
+        };
+
+        trackQmlFiles();
+        const auto requestQmlReload = [&trackQmlFiles, qmlDevReloadTimer](const QString &) {
+            trackQmlFiles();
+            qmlDevReloadTimer->start();
+        };
+        QObject::connect(qmlDevWatcher, &QFileSystemWatcher::fileChanged, &app, requestQmlReload);
+        QObject::connect(qmlDevWatcher, &QFileSystemWatcher::directoryChanged, &app, requestQmlReload);
+        QObject::connect(qmlDevReloadTimer, &QTimer::timeout, &app,
+                         [&engine, desktopMainQml] {
+                             // Limpa primeiro apenas o cache de compilação. Os objetos QML atuais
+                             // continuam vivos, para uma edição inválida não deixar o editor sem
+                             // janela.
+                             engine.clearComponentCache();
+                             QQmlComponent candidate(&engine, desktopMainQml);
+                             if (candidate.isError()) {
+                                 for (const QQmlError &error : candidate.errors())
+                                     qWarning("QML de desenvolvimento: %s", qPrintable(error.toString()));
+                                 return;
+                             }
+
+                             const auto roots = engine.rootObjects();
+                             for (QObject *root : roots)
+                                 root->deleteLater();
+                             QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+                             engine.load(desktopMainQml);
+                         });
+        qInfo("QML de desenvolvimento ativo: %s", qPrintable(qmlDevDirectory));
+    }
 #endif
 
     return app.exec();

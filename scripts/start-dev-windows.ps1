@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [switch]$Build,
     [switch]$NoLaunch
 )
 
@@ -7,6 +8,8 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $buildDir = Join-Path $repoRoot 'build-dev'
+$releaseDir = Join-Path $buildDir 'Release'
+$editorExe = Join-Path $releaseDir 'nardoto-editor.exe'
 
 $cmake = (Get-Command cmake -ErrorAction SilentlyContinue).Source
 if (-not $cmake) {
@@ -32,34 +35,34 @@ if (-not (Test-Path $toolchain)) {
     throw 'vcpkg não foi encontrado. Defina VCPKG_ROOT ou inicialize .tools\vcpkg.'
 }
 
-$ffmpegRoot = $env:FFMPEG_ROOT
-if (-not $ffmpegRoot) {
-    $ffmpegRoot = (Get-ChildItem -Path (Join-Path $repoRoot '.tools\deps\ffmpeg') -Directory -ErrorAction SilentlyContinue |
-        Select-Object -First 1).FullName
-}
-if (-not $ffmpegRoot -or -not (Test-Path (Join-Path $ffmpegRoot 'lib\avformat.lib'))) {
-    throw 'FFmpeg compatível não foi encontrado. Defina FFMPEG_ROOT ou instale-o em .tools\deps\ffmpeg.'
-}
+if ($Build -or -not (Test-Path $editorExe)) {
+    $ffmpegRoot = $env:FFMPEG_ROOT
+    if (-not $ffmpegRoot) {
+        $ffmpegRoot = (Get-ChildItem -Path (Join-Path $repoRoot '.tools\deps\ffmpeg') -Directory -ErrorAction SilentlyContinue |
+            Select-Object -First 1).FullName
+    }
+    if (-not $ffmpegRoot -or -not (Test-Path (Join-Path $ffmpegRoot 'lib\avformat.lib'))) {
+        throw 'FFmpeg compatível não foi encontrado. Defina FFMPEG_ROOT ou instale-o em .tools\deps\ffmpeg.'
+    }
 
-if (-not (Test-Path (Join-Path $buildDir 'CMakeCache.txt'))) {
-    & $cmake -S $repoRoot -B $buildDir -A x64 `
-        "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
-        "-DCMAKE_PREFIX_PATH=$qtRoot;$ffmpegRoot" `
-        "-DFFMPEG_ROOT=$ffmpegRoot" `
-        "-DFETCHCONTENT_BASE_DIR=$(Join-Path $repoRoot '.tools\fetchcontent')" `
-        '-DDRIFT_AUTO_UPDATE_TRANSLATIONS=OFF'
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Test-Path (Join-Path $buildDir 'CMakeCache.txt'))) {
+        & $cmake -S $repoRoot -B $buildDir -A x64 `
+            "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
+            "-DCMAKE_PREFIX_PATH=$qtRoot;$ffmpegRoot" `
+            "-DFFMPEG_ROOT=$ffmpegRoot" `
+            "-DFETCHCONTENT_BASE_DIR=$(Join-Path $repoRoot '.tools\fetchcontent')" `
+            '-DDRIFT_AUTO_UPDATE_TRANSLATIONS=OFF'
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    }
+
+    & $cmake --build $buildDir --config Release --target drift --parallel
+    if ($LASTEXITCODE -ne 0 -or $NoLaunch) {
         exit $LASTEXITCODE
     }
 }
 
-& $cmake --build $buildDir --config Release --target drift --parallel
-if ($LASTEXITCODE -ne 0 -or $NoLaunch) {
-    exit $LASTEXITCODE
-}
-
-$releaseDir = Join-Path $buildDir 'Release'
-$editorExe = Join-Path $releaseDir 'nardoto-editor.exe'
 if (-not (Test-Path $editorExe)) {
     throw 'A build terminou sem gerar o executável do Nardoto Editor.'
 }
@@ -68,4 +71,6 @@ $qtBin = Join-Path $qtRoot 'bin'
 $vcpkgBin = Join-Path $vcpkgRoot 'installed\x64-windows\bin'
 $env:PATH = "$releaseDir;$qtBin;$vcpkgBin;$env:PATH"
 $env:QML2_IMPORT_PATH = Join-Path $qtRoot 'qml'
+$env:NARDOTO_QML_DEV_DIR = Join-Path $repoRoot 'src\qml'
+$env:QML_DISABLE_DISK_CACHE = '1'
 Start-Process -FilePath $editorExe -WorkingDirectory $releaseDir
