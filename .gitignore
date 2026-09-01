@@ -43,6 +43,7 @@ flatpak/dist/
 /.deps/
 /vcpkg/
 /vcpkg_bincache/
+/.tools/
 packaging/arch/src/
 packaging/arch/pkg/
 packaging/arch/*.pkg.tar.zst
