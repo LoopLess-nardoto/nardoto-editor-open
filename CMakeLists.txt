@@ -1051,6 +1051,23 @@ function(drift_bundle_onnxruntime target)
     endif()
 endfunction()
 
+function(drift_bundle_ffmpeg_runtime target)
+    if(NOT WIN32 OR NOT FFMPEG_AVFORMAT_LIBRARY)
+        return()
+    endif()
+
+    get_filename_component(_ffmpeg_lib_dir "${FFMPEG_AVFORMAT_LIBRARY}" DIRECTORY)
+    get_filename_component(_ffmpeg_root "${_ffmpeg_lib_dir}" DIRECTORY)
+    file(GLOB _ffmpeg_runtime "${_ffmpeg_root}/bin/*.dll")
+    if(_ffmpeg_runtime)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${_ffmpeg_runtime}
+                    "$<TARGET_FILE_DIR:${target}>"
+            COMMENT "Copiar FFmpeg compatível para a build do Nardoto Editor")
+    endif()
+endfunction()
+
 function(drift_copy_effect_templates target)
     drift_stage_packages(${target} effect-templates)
 endfunction()
@@ -1062,6 +1079,7 @@ if(NOT ANDROID)
     drift_copy_transitions(drift)
     drift_copy_audio_effects(drift)
     drift_bundle_onnxruntime(drift)
+    drift_bundle_ffmpeg_runtime(drift)
 endif()
 
 # Desktop packaging, the headless CLI tools and the QTest binaries. None of it applies to an
