@@ -15129,6 +15129,14 @@ void AppController::copyMcpAgentGuide()
     copyToClipboard(mcpAgentGuide());
 }
 
+// O chat do Nardoto Studio já enxerga este editor pela ponte embutida nele: a
+// pessoa não precisa de configuração, só de um pedido para colar e completar.
+void AppController::copyStudioChatPrompt()
+{
+    copyToClipboard(tr("Build a video in Nardoto Editor with the narration [audio file], "
+                       "the subtitles [.srt file] and the images in the folder [folder]."));
+}
+
 QVariantMap AppController::debugInfo() const
 {
     return DebugReport::collect();

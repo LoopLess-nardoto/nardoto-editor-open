@@ -233,10 +233,6 @@
         <translation>Chiudi</translation>
     </message>
     <message>
-        <source>Permita que Cursor ou Claude editem este projeto: adicionem clipes, alterem a timeline e confiram o resultado. Apenas programas deste computador podem acessar. O recurso inicia desativado a cada abertura do Nardoto Editor; desligue-o ao terminar.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Allow for this session</source>
         <translation>Consenti per questa sessione</translation>
     </message>
@@ -245,16 +241,36 @@
         <translation>Consente a un assistente su questo computer di modificare questo progetto finché non lo disattivi o esci.</translation>
     </message>
     <message>
-        <source>Turn this on, then copy the setup for Cursor or Claude and paste it into that app.</source>
-        <translation>Attiva questa opzione, quindi copia la configurazione per Cursor o Claude e incollala in quell&apos;app.</translation>
-    </message>
-    <message>
         <source>Access is on</source>
         <translation>Accesso attivo</translation>
     </message>
     <message>
-        <source>Copy the setup for the assistant you use. You only need one.</source>
-        <translation>Copia la configurazione per l&apos;assistente che usi. Ne serve solo una.</translation>
+        <source>Turn this on so the Nardoto Studio chat, Cursor or Claude can edit this project.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Permita que o chat do Nardoto Studio, o Cursor ou o Claude editem este projeto: adicionem clipes, alterem a timeline e confiram o resultado. Apenas programas deste computador podem acessar. O recurso inicia desativado a cada abertura do Nardoto Editor; desligue-o ao terminar.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Using Nardoto Studio? Its chat already sees this editor, no setup needed. Copy a ready request, paste it into the Studio chat and fill in your files.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy request for the Studio chat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A ready request to paste into the Nardoto Studio chat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copied. Paste it into the Studio chat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Using Cursor or Claude? Copy the setup for the one you use.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Copy for Cursor</source>
@@ -2771,6 +2787,10 @@
     <message>
         <source>Nothing on this device can share that file</source>
         <translation>Nessuna applicazione su questo dispositivo può condividere questo file</translation>
+    </message>
+    <message>
+        <source>Build a video in Nardoto Editor with the narration [audio file], the subtitles [.srt file] and the images in the folder [folder].</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nudge selection</source>

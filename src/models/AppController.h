@@ -434,6 +434,7 @@ public:
     Q_INVOKABLE void copyMcpStdioSnippet();
     Q_INVOKABLE void copyMcpAgentGuide();
     QString mcpAgentGuide() const;
+    Q_INVOKABLE void copyStudioChatPrompt();
     Q_INVOKABLE QVariantMap debugInfo() const;
     Q_INVOKABLE QString debugInfoText() const;
     Q_INVOKABLE void copyDebugInfo();

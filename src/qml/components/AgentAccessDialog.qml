@@ -42,7 +42,7 @@ ThemedDialog {
                 width: parent.width
                 size: "sm"
                 wrapMode: Text.WordWrap
-                text: qsTr("Permita que Cursor ou Claude editem este projeto: adicionem clipes, alterem a timeline e confiram o resultado. Apenas programas deste computador podem acessar. O recurso inicia desativado a cada abertura do Nardoto Editor; desligue-o ao terminar.")
+                text: qsTr("Permita que o chat do Nardoto Studio, o Cursor ou o Claude editem este projeto: adicionem clipes, alterem a timeline e confiram o resultado. Apenas programas deste computador podem acessar. O recurso inicia desativado a cada abertura do Nardoto Editor; desligue-o ao terminar.")
             }
 
             ThemedSwitch {
@@ -63,7 +63,7 @@ ThemedDialog {
                 width: parent.width
                 visible: !EditorState.mcpRunning
                 wrapMode: Text.WordWrap
-                text: qsTr("Turn this on, then copy the setup for Cursor or Claude and paste it into that app.")
+                text: qsTr("Turn this on so the Nardoto Studio chat, Cursor or Claude can edit this project.")
             }
 
             Column {
@@ -91,10 +91,30 @@ ThemedDialog {
                     }
                 }
 
+                // Nardoto Studio primeiro: o chat de lá já enxerga o editor, então
+                // a pessoa só precisa de um pedido pronto, nada de configuração.
                 ThemedLabel {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: qsTr("Copy the setup for the assistant you use. You only need one.")
+                    text: qsTr("Using Nardoto Studio? Its chat already sees this editor, no setup needed. Copy a ready request, paste it into the Studio chat and fill in your files.")
+                }
+
+                ThemedButton {
+                    width: parent.width
+                    variant: "primary"
+                    glyph: Theme.icons.copy
+                    text: qsTr("Copy request for the Studio chat")
+                    tooltip: qsTr("A ready request to paste into the Nardoto Studio chat")
+                    onClicked: {
+                        EditorState.copyStudioChatPrompt()
+                        Toasts.success(qsTr("Copied. Paste it into the Studio chat"))
+                    }
+                }
+
+                ThemedLabel {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Using Cursor or Claude? Copy the setup for the one you use.")
                 }
 
                 ThemedButton {
