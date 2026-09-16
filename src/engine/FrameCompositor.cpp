@@ -586,7 +586,7 @@ int karaokeWordIndex(const drift::Clip &clip, const drift::SubtitleCue &cue, dri
 {
     if (clip.textStyle.accent.rule != drift::WordAccentRule::Karaoke)
         return -1;
-    return drift::activeWordIndexAt(cue.text, cue.startUs, cue.endUs, localUs);
+    return drift::activeWordIndexAt(cue.text, cue.startUs, cue.endUs, localUs, cue.wordStartsUs);
 }
 
 // CapCut-style body intro/outro: opacity/offset/scale/rotation on top of fades and text anims.

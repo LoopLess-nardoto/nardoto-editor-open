@@ -121,7 +121,7 @@ void TestAddonPackage::rejectsTamperedSignature()
 
     QString error;
     QVERIFY(!install(path, m_tmp.filePath(QStringLiteral("bad-sig")), {}, nullptr, &error));
-    QVERIFY2(error.contains(QStringLiteral("signature")), qPrintable(error));
+    QVERIFY2(error.contains(QStringLiteral("assinatura")), qPrintable(error));
 }
 
 void TestAddonPackage::rejectsTruncatedFile()

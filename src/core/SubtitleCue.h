@@ -12,6 +12,9 @@ struct SubtitleCue
     TimeUs startUs = 0; // relative to the parent clip's timeline start
     TimeUs endUs = 0;
     QString text;
+    // Optional measured starts, one per word, in the same local time base as startUs/endUs.
+    // Empty keeps the legacy proportional timing used by imported SRT/VTT and Whisper output.
+    QList<TimeUs> wordStartsUs;
 };
 
 const SubtitleCue *activeSubtitleCueAt(const QList<SubtitleCue> &cues, TimeUs localUs);
@@ -20,7 +23,8 @@ const SubtitleCue *activeSubtitleCueAt(const QList<SubtitleCue> &cues, TimeUs lo
 // window is empty or has not started. Drives the Karaoke accent rule. The timings are the same
 // proportional ones packSubtitleCues uses — true word timestamps aren't available from our ONNX
 // Whisper export — so this is exact at cue boundaries and interpolated in between.
-int activeWordIndexAt(const QString &text, TimeUs startUs, TimeUs endUs, TimeUs localUs);
+int activeWordIndexAt(const QString &text, TimeUs startUs, TimeUs endUs, TimeUs localUs,
+                      const QList<TimeUs> &wordStartsUs = {});
 int subtitleCueIndexAt(const QList<SubtitleCue> &cues, TimeUs localUs);
 void sortSubtitleCues(QList<SubtitleCue> &cues);
 

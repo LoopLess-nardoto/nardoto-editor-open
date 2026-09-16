@@ -33,6 +33,7 @@ qt_add_executable(tst_editorstate
     ../src/mcp/McpHttp.cpp
     ../src/mcp/McpDispatcher.cpp
     ../src/mcp/McpDispatcherExtended.cpp
+    ../src/mcp/McpDispatcherAssemble.cpp
     ../src/mcp/McpServer.cpp
     ../src/mcp/McpStdio.cpp
 )
@@ -122,6 +123,7 @@ qt_add_executable(tst_mcp
     ../src/playback/ClipPreviewPlayer.cpp
     ../src/mcp/McpDispatcher.cpp
     ../src/mcp/McpDispatcherExtended.cpp
+    ../src/mcp/McpDispatcherAssemble.cpp
     ../src/mcp/McpServer.cpp
     ../src/mcp/McpStdio.cpp
 )

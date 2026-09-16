@@ -678,6 +678,9 @@ QJsonObject McpDispatcher::applyOne(const QString &tool, const QJsonObject &args
     const QJsonObject extended = applyOneExtended(tool, args);
     if (!extended.value(QStringLiteral("error")).toString().startsWith(QLatin1String("unknown_op")))
         return extended;
+    const QJsonObject assembled = applyOneAssemble(tool, args);
+    if (!assembled.value(QStringLiteral("error")).toString().startsWith(QLatin1String("unknown_op")))
+        return assembled;
     return err("unknown_op", tool);
 }
 

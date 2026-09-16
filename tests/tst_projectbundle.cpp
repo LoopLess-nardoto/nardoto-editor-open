@@ -305,7 +305,7 @@ void TestProjectBundle::rejectsNewerMajorVersion()
                                     QStringLiteral("%1.0.0").arg(kFormatMajor + 1));
     QVERIFY(!major.isEmpty());
     QVERIFY(!readManifest(major, &error).has_value());
-    QVERIFY(error.contains(QStringLiteral("newer version")));
+    QVERIFY(error.contains(QStringLiteral("versão mais recente")));
 }
 
 void TestProjectBundle::rejectsCorruptBlob()
@@ -347,7 +347,7 @@ void TestProjectBundle::rejectsBadMagic()
     flipByte(path, 0);
 
     QVERIFY(!readManifest(path, &error).has_value());
-    QVERIFY(error.contains(QStringLiteral("magic")));
+    QVERIFY(error.contains(QStringLiteral("assinatura inválida")));
 }
 
 void TestProjectBundle::cancellingWriteKeepsPreviousFile()

@@ -16,6 +16,8 @@ public:
     QJsonObject apply(const QJsonObject &args);
     QJsonObject applyOne(const QString &tool, const QJsonObject &args);
     QJsonObject applyOneExtended(const QString &tool, const QJsonObject &args);
+    // Macros de montagem (McpDispatcherAssemble.cpp): compõem as ops acima num passo de desfazer.
+    QJsonObject applyOneAssemble(const QString &tool, const QJsonObject &args);
     QJsonObject capture(const QJsonObject &args);
 
 private:
@@ -97,6 +99,7 @@ private:
     QJsonObject opListShortcuts() const;
     QJsonObject opSetShortcut(const QJsonObject &args);
     QJsonObject opResetShortcuts();
+    QJsonObject opAssembleVideo(const QJsonObject &args);
 
     static QJsonArray speedPointsToJson(const QVariantList &points);
     static QVariantList speedPointsFromJson(const QJsonArray &points);

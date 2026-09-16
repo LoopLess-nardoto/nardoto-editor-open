@@ -229,11 +229,17 @@ QVariantList subtitleCuesFromJson(const QJsonArray &cues)
     QVariantList out;
     for (const QJsonValue &entry : cues) {
         const QJsonObject cue = entry.toObject();
-        out.append(QVariantMap{
+        QVariantMap map{
             {QStringLiteral("start"), jsonNumber(cue.value(QStringLiteral("start")), 0)},
             {QStringLiteral("end"), jsonNumber(cue.value(QStringLiteral("end")), 0)},
             {QStringLiteral("text"), cue.value(QStringLiteral("text")).toString()},
-        });
+        };
+        QVariantList starts;
+        for (const QJsonValue &start : cue.value(QStringLiteral("wordStarts")).toArray())
+            starts.append(jsonNumber(start, 0));
+        if (!starts.isEmpty())
+            map.insert(QStringLiteral("wordStarts"), starts);
+        out.append(map);
     }
     return out;
 }

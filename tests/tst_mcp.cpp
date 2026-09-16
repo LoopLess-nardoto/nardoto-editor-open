@@ -1,7 +1,9 @@
 #include <QtTest>
 
 #include <QAbstractSocket>
+#include <QColor>
 #include <QCoreApplication>
+#include <QImage>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QEventLoop>
@@ -86,6 +88,10 @@ private slots:
     void undoToByHash();
     void snapshotFileHashMatchesHistory();
     void linearHistoryDropsRedo();
+    void assembleVideoRejectsMissingFiles();
+    void assembleVideoBuildsNarratedTimeline();
+    void assembleVideoKeepsShortVideosNatural();
+    void assembleVideoDemoFromEnv();
 };
 
 static QJsonObject rpc(const QString &method, const QJsonObject &params = {}, int id = 1)
@@ -161,7 +167,7 @@ void McpTest::catalogListsToolboxes()
     const QJsonObject cat = drift::mcp::catalogPayload();
     QVERIFY(cat.value(QStringLiteral("ok")).toBool());
     const QJsonArray boxes = cat.value(QStringLiteral("toolboxes")).toArray();
-    QCOMPARE(boxes.size(), 17);
+    QCOMPARE(boxes.size(), 18);
     QStringList names;
     for (const QJsonValue &v : boxes)
         names.append(v.toObject().value(QStringLiteral("name")).toString());
@@ -172,6 +178,7 @@ void McpTest::catalogListsToolboxes()
     QVERIFY(names.contains(QStringLiteral("audio")));
     QVERIFY(names.contains(QStringLiteral("scene")));
     QVERIFY(names.contains(QStringLiteral("multicam")));
+    QVERIFY(names.contains(QStringLiteral("build")));
 }
 
 void McpTest::catalogOpsIncludeWhen()
@@ -270,12 +277,17 @@ void McpTest::protocolInitializeAndToolsList()
     QCOMPARE(init.toObject().value(QStringLiteral("result")).toObject()
                  .value(QStringLiteral("serverInfo")).toObject()
                  .value(QStringLiteral("name")).toString(),
-             QStringLiteral("drift"));
+             QStringLiteral("nardoto-editor"));
 
     const QJsonValue listed = drift::mcp::handleJsonRpc(rpc(QStringLiteral("tools/list")), {}, {});
     const QJsonArray tools =
         listed.toObject().value(QStringLiteral("result")).toObject().value(QStringLiteral("tools")).toArray();
-    QCOMPARE(tools.size(), 5);
+    // catalog, toolbox, inspect, apply, capture + a macro assemble_video.
+    QCOMPARE(tools.size(), 6);
+    QStringList names;
+    for (const QJsonValue &v : tools)
+        names.append(v.toObject().value(QStringLiteral("name")).toString());
+    QVERIFY(names.contains(QStringLiteral("assemble_video")));
 }
 
 void McpTest::protocolNotificationHasNoReply()
@@ -339,7 +351,7 @@ void McpTest::sessionFileMissing()
     qputenv("DRIFT_MCP_SESSION_PATH", "/tmp/drift-mcp-does-not-exist-test.json");
     QString error;
     QVERIFY(!drift::mcp::readSessionFile(nullptr, nullptr, &error));
-    QVERIFY(error.contains(QStringLiteral("Agent access")));
+    QVERIFY(error.contains(QStringLiteral("Acesso de agentes")));
     qunsetenv("DRIFT_MCP_SESSION_PATH");
 }
 
@@ -378,7 +390,7 @@ void McpTest::serverInitializeWithToken()
     QCOMPARE(doc.object().value(QStringLiteral("result")).toObject()
                  .value(QStringLiteral("serverInfo")).toObject()
                  .value(QStringLiteral("name")).toString(),
-             QStringLiteral("drift"));
+             QStringLiteral("nardoto-editor"));
     QVERIFY(QFile::exists(dir.filePath(QStringLiteral("s.json"))));
     state.setMcpEnabled(false);
     QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("s.json"))));
@@ -1813,6 +1825,313 @@ void McpTest::linearHistoryDropsRedo()
                                                     {{QStringLiteral("hash"), dropped}});
     QCOMPARE(missing.value(QStringLiteral("ok")).toBool(), false);
     QCOMPARE(missing.value(QStringLiteral("error")).toString(), QStringLiteral("not_found"));
+}
+
+// --- build (assemble_video) ---------------------------------------------------------------
+
+namespace {
+
+QStringList writeTestImages(const QTemporaryDir &dir, int count)
+{
+    QStringList paths;
+    for (int i = 0; i < count; ++i) {
+        QImage img(320, 180, QImage::Format_RGB32);
+        img.fill(QColor(60 + 50 * i, 40, 120));
+        const QString p = dir.filePath(QStringLiteral("%1.png").arg(i + 1));
+        if (!img.save(p))
+            return {};
+        paths.append(p);
+    }
+    return paths;
+}
+
+bool writeTestSrt(const QString &path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+        return false;
+    f.write("1\n00:00:00,000 --> 00:00:01,800\nUm\n\n"
+            "2\n00:00:02,200 --> 00:00:03,900\nDois\n\n"
+            "3\n00:00:04,100 --> 00:00:06,000\nTrês\n");
+    return true;
+}
+
+// One second of colour bars, mpeg4 so it works on any ffmpeg build.
+bool writeShortVideo(const QString &path)
+{
+    return runFfmpeg({QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                      QStringLiteral("testsrc=duration=1:size=320x180:rate=30"),
+                      QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-pix_fmt"),
+                      QStringLiteral("yuv420p"), path});
+}
+
+int undoDepth(drift::mcp::McpDispatcher &dispatcher)
+{
+    return dispatcher.inspect({}).value(QStringLiteral("undo")).toObject().value(QStringLiteral("depth")).toInt();
+}
+
+} // namespace
+
+void McpTest::assembleVideoRejectsMissingFiles()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    const int tracksBefore = state.tracks().size();
+
+    const QJsonObject vazio = dispatcher.applyOne(QStringLiteral("assemble_video"), {});
+    QCOMPARE(vazio.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+
+    const QJsonObject r = dispatcher.applyOne(
+        QStringLiteral("assemble_video"),
+        {{QStringLiteral("media"), QJsonArray{dir.filePath(QStringLiteral("nao-existe.png"))}},
+         {QStringLiteral("narration"), dir.filePath(QStringLiteral("nao-existe.wav"))}});
+    QCOMPARE(r.value(QStringLiteral("ok")).toBool(), false);
+    QCOMPARE(r.value(QStringLiteral("error")).toString(), QStringLiteral("not_found"));
+    QCOMPARE(r.value(QStringLiteral("missing")).toArray().size(), 2);
+    // Nothing was touched: no tracks, no assets, no undo step.
+    QCOMPARE(state.tracks().size(), tracksBefore);
+    QCOMPARE(library.count(), 0);
+    QCOMPARE(undoDepth(dispatcher), 0);
+}
+
+void McpTest::assembleVideoBuildsNarratedTimeline()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate a narration");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString narracao = dir.filePath(QStringLiteral("narracao.wav"));
+    QVERIFY(writeClickTrack(narracao, 6));
+    const QString musica = dir.filePath(QStringLiteral("musica.wav"));
+    QVERIFY(writeHalfSilentTone(musica)); // 4 s, so covering 6 s needs two loops
+    const QStringList imagens = writeTestImages(dir, 3);
+    QCOMPARE(imagens.size(), 3);
+    const QString srt = dir.filePath(QStringLiteral("narracao.srt"));
+    QVERIFY(writeTestSrt(srt));
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    const int undoBefore = undoDepth(dispatcher);
+
+    const QJsonObject r = dispatcher.applyOne(
+        QStringLiteral("assemble_video"),
+        {{QStringLiteral("media"), QJsonArray::fromStringList(imagens)},
+         {QStringLiteral("narration"), narracao},
+         {QStringLiteral("subtitles"), srt},
+         {QStringLiteral("subtitle_preset"), QStringLiteral("caption")},
+         {QStringLiteral("music"), musica},
+         {QStringLiteral("music_volume"), 0.2},
+         {QStringLiteral("media_mode"), QStringLiteral("cues")},
+         {QStringLiteral("transition"),
+          QJsonObject{{QStringLiteral("kind"), QStringLiteral("crossfade")}, {QStringLiteral("duration"), 0.3}}},
+         {QStringLiteral("title"),
+          QJsonObject{{QStringLiteral("text"), QStringLiteral("Teste")}, {QStringLiteral("duration"), 2.0}}}});
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), QJsonDocument(r).toJson().constData());
+
+    QVERIFY(qAbs(r.value(QStringLiteral("target")).toDouble() - 6.0) < 0.05);
+    const QJsonArray clips = r.value(QStringLiteral("clips")).toArray();
+    QCOMPARE(clips.size(), 3);
+    // media_mode cues: the cuts land on the sentence starts 2.2 and 4.1, not on the equal
+    // slices 2.0 and 4.0, and the last image runs to the end of the narration.
+    QCOMPARE(clips.at(0).toObject().value(QStringLiteral("start")).toDouble(), 0.0);
+    QVERIFY(qAbs(clips.at(1).toObject().value(QStringLiteral("start")).toDouble() - 2.2) < 0.05);
+    QVERIFY(qAbs(clips.at(2).toObject().value(QStringLiteral("start")).toDouble() - 4.1) < 0.05);
+    const QJsonObject last = clips.at(2).toObject();
+    QVERIFY(qAbs(last.value(QStringLiteral("start")).toDouble() + last.value(QStringLiteral("duration")).toDouble() - 6.0) < 0.05);
+    QCOMPARE(clips.at(0).toObject().value(QStringLiteral("motion")).toString(), QStringLiteral("zoomIn"));
+    QCOMPARE(clips.at(1).toObject().value(QStringLiteral("motion")).toString(), QStringLiteral("zoomOut"));
+    QCOMPARE(clips.at(2).toObject().value(QStringLiteral("motion")).toString(), QStringLiteral("panRight"));
+    QCOMPARE(r.value(QStringLiteral("transitions")).toInt(), 2);
+    QVERIFY(!r.value(QStringLiteral("narration_clip")).toString().isEmpty());
+    QVERIFY(!r.value(QStringLiteral("subtitle_clip")).toString().isEmpty());
+    QVERIFY(!r.value(QStringLiteral("title_clip")).toString().isEmpty());
+    QCOMPARE(r.value(QStringLiteral("cues")).toInt(), 3);
+    QCOMPARE(r.value(QStringLiteral("music_clips")).toArray().size(), 2);
+
+    // Track stack: images above narration, narration above music; subtitles have a lane.
+    // Stills live on a shape lane; no video was given, so there is no video lane.
+    const QJsonObject tracks = r.value(QStringLiteral("tracks")).toObject();
+    QVERIFY(tracks.value(QStringLiteral("images")).toInt() >= 0);
+    QCOMPARE(tracks.value(QStringLiteral("videos")).toInt(), -1);
+    QVERIFY(tracks.value(QStringLiteral("images")).toInt() < tracks.value(QStringLiteral("narration")).toInt());
+    QVERIFY(tracks.value(QStringLiteral("narration")).toInt() < tracks.value(QStringLiteral("music")).toInt());
+    QVERIFY(tracks.value(QStringLiteral("subtitles")).toInt() >= 0);
+
+    // The cues reached the subtitle clip and the project covers the narration.
+    const QJsonObject ins = dispatcher.inspect({{QStringLiteral("clips"), true}, {QStringLiteral("cues"), true}});
+    QVERIFY(ins.value(QStringLiteral("dur")).toDouble() >= 5.95);
+    int cuesVistas = -1;
+    for (const QJsonValue &t : ins.value(QStringLiteral("tracks")).toArray()) {
+        for (const QJsonValue &item : t.toObject().value(QStringLiteral("items")).toArray()) {
+            if (item.toObject().value(QStringLiteral("id")).toString() == r.value(QStringLiteral("subtitle_clip")).toString())
+                cuesVistas = item.toObject().value(QStringLiteral("subtitleCues")).toArray().size();
+        }
+    }
+    QCOMPARE(cuesVistas, 3);
+
+    // With NARDOTO_PRINT_DIR set, keep a real composited frame of the build as evidence.
+    const QString printDir = qEnvironmentVariable("NARDOTO_PRINT_DIR");
+    if (!printDir.isEmpty()) {
+        const QJsonObject frame = dispatcher.capture({{QStringLiteral("at"), 3.0}});
+        const QJsonArray content = frame.value(QStringLiteral("content")).toArray();
+        for (const QJsonValue &part : content) {
+            const QJsonObject item = part.toObject();
+            if (item.value(QStringLiteral("type")).toString() != QLatin1String("image"))
+                continue;
+            QFile out(QDir(printDir).filePath(QStringLiteral("editor-assemble-video-3s.jpg")));
+            QVERIFY(out.open(QIODevice::WriteOnly));
+            out.write(QByteArray::fromBase64(item.value(QStringLiteral("data")).toString().toLatin1()));
+        }
+    }
+
+    // Ken Burns wrote a key at each end of the first image.
+    const QJsonObject keys = dispatcher.applyOne(
+        QStringLiteral("list_keyframes"),
+        {{QStringLiteral("clip"), clips.at(0).toObject().value(QStringLiteral("id")).toString()},
+         {QStringLiteral("prop"), QStringLiteral("width")}});
+    QCOMPARE(keys.value(QStringLiteral("keys")).toArray().size(), 2);
+
+    // The whole build is one undo step, and undoing it empties the timeline.
+    QCOMPARE(undoDepth(dispatcher), undoBefore + 1);
+    QVERIFY(dispatcher.applyOne(QStringLiteral("undo"), {}).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(dispatcher.inspect({}).value(QStringLiteral("clips")).toInt(), 0);
+}
+
+void McpTest::assembleVideoKeepsShortVideosNatural()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate fixtures");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString narracao = dir.filePath(QStringLiteral("narracao.wav"));
+    QVERIFY(writeClickTrack(narracao, 6));
+    const QString video = dir.filePath(QStringLiteral("curto.mp4"));
+    QVERIFY(writeShortVideo(video));
+    const QStringList imagens = writeTestImages(dir, 2);
+    QCOMPARE(imagens.size(), 2);
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+
+    // image, 1 s video, image over 6 s: the video keeps its second, the images split the rest.
+    const QJsonObject r = dispatcher.applyOne(
+        QStringLiteral("assemble_video"),
+        {{QStringLiteral("media"), QJsonArray{imagens.at(0), video, imagens.at(1)}},
+         {QStringLiteral("narration"), narracao},
+         {QStringLiteral("motion"), QStringLiteral("none")}});
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), QJsonDocument(r).toJson().constData());
+    const QJsonArray clips = r.value(QStringLiteral("clips")).toArray();
+    QCOMPARE(clips.size(), 3);
+    QVERIFY(qAbs(clips.at(0).toObject().value(QStringLiteral("duration")).toDouble() - 2.5) < 0.05);
+    QVERIFY(qAbs(clips.at(1).toObject().value(QStringLiteral("duration")).toDouble() - 1.0) < 0.1);
+    QVERIFY(qAbs(clips.at(2).toObject().value(QStringLiteral("start")).toDouble() - 3.5) < 0.1);
+    const QJsonObject last = clips.at(2).toObject();
+    QVERIFY(qAbs(last.value(QStringLiteral("start")).toDouble() + last.value(QStringLiteral("duration")).toDouble() - 6.0) < 0.1);
+    QVERIFY(!clips.at(0).toObject().contains(QStringLiteral("motion")));
+    // Mixed media: stills on the shape lane, the video on its own lane, both above the narration.
+    const QJsonObject tracks = r.value(QStringLiteral("tracks")).toObject();
+    QVERIFY(tracks.value(QStringLiteral("images")).toInt() >= 0);
+    QVERIFY(tracks.value(QStringLiteral("videos")).toInt() >= 0);
+    QVERIFY(tracks.value(QStringLiteral("images")).toInt() != tracks.value(QStringLiteral("videos")).toInt());
+    QVERIFY(tracks.value(QStringLiteral("videos")).toInt() < tracks.value(QStringLiteral("narration")).toInt());
+}
+
+// Opt-in: builds a REAL video from real files without touching a running editor, then saves
+// the .drift, three frames and the exported mp4 in NARDOTO_DEMO_OUT_DIR. Skipped unless
+// NARDOTO_DEMO_NARRATION is set, so CI never sees it. It is the headless proof that
+// assemble_video produces a watchable result, not just a consistent timeline.
+void McpTest::assembleVideoDemoFromEnv()
+{
+    const QString narracao = qEnvironmentVariable("NARDOTO_DEMO_NARRATION");
+    if (narracao.isEmpty())
+        QSKIP("NARDOTO_DEMO_NARRATION not set: opt-in demo that builds a real video from real files");
+    const QString pastaMidias = qEnvironmentVariable("NARDOTO_DEMO_MEDIA_DIR");
+    const QString srt = qEnvironmentVariable("NARDOTO_DEMO_SRT");
+    const QString musica = qEnvironmentVariable("NARDOTO_DEMO_MUSIC");
+    const QString saida = qEnvironmentVariable("NARDOTO_DEMO_OUT_DIR");
+    QString preset = qEnvironmentVariable("NARDOTO_DEMO_SUBTITLE_PRESET");
+    if (preset.isEmpty())
+        preset = QStringLiteral("caption");
+    QVERIFY(!pastaMidias.isEmpty() && !saida.isEmpty());
+    QVERIFY(QDir().mkpath(saida));
+
+    QDir dir(pastaMidias);
+    const QStringList nomes = dir.entryList(
+        {QStringLiteral("*.jpg"), QStringLiteral("*.jpeg"), QStringLiteral("*.png"),
+         QStringLiteral("*.webp"), QStringLiteral("*.mp4"), QStringLiteral("*.mov")},
+        QDir::Files, QDir::Name);
+    QVERIFY(!nomes.isEmpty());
+    QJsonArray media;
+    for (const QString &nome : nomes)
+        media.append(dir.filePath(nome));
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+
+    QJsonObject args{{QStringLiteral("media"), media},
+                     {QStringLiteral("narration"), narracao},
+                     {QStringLiteral("transition"),
+                      QJsonObject{{QStringLiteral("kind"), QStringLiteral("crossfade")}, {QStringLiteral("duration"), 0.4}}},
+                     {QStringLiteral("canvas"),
+                      QJsonObject{{QStringLiteral("width"), 1920}, {QStringLiteral("height"), 1080}, {QStringLiteral("fps"), 30}}}};
+    if (!srt.isEmpty()) {
+        args.insert(QStringLiteral("subtitles"), srt);
+        args.insert(QStringLiteral("subtitle_preset"), preset);
+        args.insert(QStringLiteral("media_mode"), QStringLiteral("cues"));
+    }
+    if (!musica.isEmpty())
+        args.insert(QStringLiteral("music"), musica);
+
+    const QJsonObject r = dispatcher.applyOne(QStringLiteral("assemble_video"), args);
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), QJsonDocument(r).toJson().constData());
+    {
+        QFile relatorio(QDir(saida).filePath(QStringLiteral("montagem.json")));
+        QVERIFY(relatorio.open(QIODevice::WriteOnly));
+        relatorio.write(QJsonDocument(r).toJson());
+    }
+    const double alvo = r.value(QStringLiteral("target")).toDouble();
+
+    // Three frames: start, middle, end.
+    for (const double t : {1.0, alvo / 2.0, alvo - 1.5}) {
+        const QJsonObject frame = dispatcher.capture({{QStringLiteral("at"), t}});
+        for (const QJsonValue &part : frame.value(QStringLiteral("content")).toArray()) {
+            const QJsonObject item = part.toObject();
+            if (item.value(QStringLiteral("type")).toString() != QLatin1String("image"))
+                continue;
+            QFile out(QDir(saida).filePath(QStringLiteral("quadro-%1s.jpg").arg(qRound(t))));
+            QVERIFY(out.open(QIODevice::WriteOnly));
+            out.write(QByteArray::fromBase64(item.value(QStringLiteral("data")).toString().toLatin1()));
+        }
+    }
+
+    const QJsonObject salvo = dispatcher.applyOne(
+        QStringLiteral("save_project"), {{QStringLiteral("path"), QDir(saida).filePath(QStringLiteral("demo.drift"))}});
+    QVERIFY2(salvo.value(QStringLiteral("ok")).toBool(), QJsonDocument(salvo).toJson().constData());
+
+    const QString mp4 = QDir(saida).filePath(QStringLiteral("demo.mp4"));
+    const QJsonObject exportado = dispatcher.applyOne(QStringLiteral("export_video"), {{QStringLiteral("path"), mp4}});
+    QVERIFY2(exportado.value(QStringLiteral("ok")).toBool(), QJsonDocument(exportado).toJson().constData());
+    const QString caminhoFinal = exportado.value(QStringLiteral("path")).toString();
+
+    QElapsedTimer relogio;
+    relogio.start();
+    bool ativo = true;
+    while (ativo && relogio.elapsed() < 15 * 60 * 1000) {
+        QTest::qWait(1000);
+        const QJsonObject status = dispatcher.applyOne(QStringLiteral("export_status"), {});
+        ativo = status.value(QStringLiteral("active")).toBool();
+        if (!ativo)
+            qInfo() << "export finished:" << QJsonDocument(status).toJson(QJsonDocument::Compact).constData();
+    }
+    QVERIFY2(!ativo, "export did not finish in 15 minutes");
+    QVERIFY2(QFileInfo(caminhoFinal).size() > 0, qPrintable(caminhoFinal));
+    qInfo() << "demo written to" << saida << "mp4:" << caminhoFinal << "target seconds:" << alvo;
 }
 
 QTEST_MAIN(McpTest)

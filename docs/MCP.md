@@ -86,6 +86,41 @@ All return `{started:true}` immediately. Every field below except `export` needs
 | `scene` | Shot detection, what is in each shot, scene-synced cuts |
 | `ui` | Theme, shortcuts, editor preferences, guides |
 | `multicam` | Multi-camera session: set up, switch at the playhead, save |
+| `build` | **Start here** for "make a video from this audio + subtitles + these files": `assemble_video` builds the whole narrated timeline in one undo step |
+
+### Building a narrated video in one call
+
+`assemble_video` is the macro for the most common job: narration audio + a ready `.srt` + a folder of images/videos. It mirrors what Nardoto Studio does for CapCut and replaces hundreds of fine-grained calls with one.
+
+```json
+{"name": "assemble_video", "arguments": {
+  "media": ["C:/v/01.jpg", "C:/v/02.jpg", "C:/v/03.mp4"],
+  "narration": "C:/v/narracao.mp3",
+  "subtitles": "C:/v/narracao.srt",
+  "subtitle_preset": "karaoke-pop",
+  "music": "C:/v/trilha.mp3",
+  "media_mode": "cues",
+  "transition": {"kind": "crossfade", "duration": 0.4},
+  "effects": ["adjust.contrast"],
+  "title": {"text": "Sete maravilhas", "preset": "impact", "duration": 3}
+}}
+```
+
+What happens, in order:
+
+1. Nothing is touched until every path exists; a missing file returns `{ok:false, error:"not_found", missing:[…]}`.
+2. Everything is imported in one `import_media`.
+3. Tracks are created so the stack reads images (shape lane) / videos / narration / music from top to bottom. The editor keeps stills and videos on different track types; the sequence never overlaps in time, so it plays as one cut. Subtitles and the title get their own lanes above.
+4. The narration is placed at 0 and its length becomes the target. The target is split equally between the media, in the order given. A video shorter than its slice keeps its natural length and hands the rest to the others. The last image stretches to the end.
+5. `media_mode:"cues"` moves each cut to the nearest subtitle cue start, so images change on sentence boundaries.
+6. Every image gets a Ken Burns move: six patterns in rotation (`zoomIn`, `zoomOut`, `panRight`, `panLeft`, `zoomInTopLeft`, `zoomOutBottomRight`), strength `motion_amount` (default 0.10). `motion:"none"` turns it off.
+7. `effects` / `effect_template` are applied to every visual clip; `transition` is added between neighbours of the same kind (image-image, video-video). An image/video boundary is a hard cut and is listed in `warnings`. Transition ids are the package folder names: `crossfade`, `dip`, `dip_white`, `wipe_left`, `wipe_right`, `wipe_up`, `wipe_down`, `push_left`, `zoom_in`, `luma_fade`, `ink_bleed`, `honeycomb_hexagon`, `voronoi_shatter`, `pixelate_matrix`, `triangle_mosaic`, `linear_blinds`, `radial_zoom_blur`, `cross_zoom_swirl`, `kaleidoscope_spin`, `lens_flare_wipe`, `liquid_smudge`, `bubbling_dissolve`, `plasma_burn`, `particle_wind`, `matrix_rain`, `rgb_displacement`, `vhs_scanline`, `analog_interference`.
+8. The music loops to the end at `music_volume` (default 0.15), fades out over `music_fade_out` seconds and is ducked under the narration (`duck`, `duck_amount`).
+9. The optional `title` opens the video; the subtitle file is imported on top and `subtitle_preset` / `subtitle_style` are applied.
+
+Reply: `{duration, target, mode, tracks:{images,videos,narration,music,subtitles,title}, clips:[{id,name,kind,start,duration,motion,effects}], transitions, narration_clip, music_clips, subtitle_clip, cues, title_clip, warnings, n_ops}`. Read `warnings`. Then `capture` a few frames, fix details with the fine-grained ops, and `export_video`.
+
+Without narration, pass `duration` or let images last `image_duration` (default 5 s) each and videos their natural length. `assemble_video` never calls `new_project`: check `inspect.dirty` and save first if the user has work open.
 
 ### Working to the music
 

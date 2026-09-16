@@ -91,8 +91,8 @@
         <translation>Instala un motor de IA a continuación para desbloquear subtítulos automáticos, recorte de sujetos, efectos faciales divertidos y eliminación de ruido.</translation>
     </message>
     <message>
-        <source>Restart Drift for this to take effect.</source>
-        <translation>Reinicia Drift para que esto surta efecto.</translation>
+        <source>Reinicie o Nardoto Editor para aplicar esta alteração.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Can&apos;t reach the download store</source>
@@ -166,8 +166,8 @@
         <translation>Paquetes recomendados</translation>
     </message>
     <message>
-        <source>Install the essential packs for effects, transitions, and audio. You can keep using Drift without them — installing unlocks updates when they improve.</source>
-        <translation>Instala los paquetes esenciales para efectos, transiciones y audio. Puedes seguir usando Drift sin ellos; instalarlos desbloquea actualizaciones cuando mejoren.</translation>
+        <source>Install the essential packs for effects, transitions, and audio. Você pode continuar usando o Nardoto Editor sem eles; instalar libera atualizações when they improve.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1… %2%</source>
@@ -233,8 +233,8 @@
         <translation>Cerrar</translation>
     </message>
     <message>
-        <source>Let Cursor or Claude edit this project for you — add clips, change the timeline, and check how it looks. Only programs on this computer. Starts off each time you open Drift; turn it off when you finish.</source>
-        <translation>Deja que Cursor o Claude editen este proyecto por ti — añade clips, cambia la línea de tiempo y comprueba cómo se ve. Solo programas en este equipo. Se inicia desactivado cada vez que abres Drift; desactívalo cuando termines.</translation>
+        <source>Permita que Cursor ou Claude editem este projeto: adicionem clipes, alterem a timeline e confiram o resultado. Apenas programas deste computador podem acessar. O recurso inicia desativado a cada abertura do Nardoto Editor; desligue-o ao terminar.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Allow for this session</source>
@@ -535,8 +535,8 @@
 <context>
     <name>AndroidEditor</name>
     <message>
-        <source>Drift project (*.drift)</source>
-        <translation>Proyecto Drift (*.drift)</translation>
+        <source>Projeto do Nardoto Editor (*.drift)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Save Project</source>
@@ -570,8 +570,8 @@
 <context>
     <name>AndroidHome</name>
     <message>
-        <source>Create polished videos fast</source>
-        <translation>Crea vídeos profesionales rápidamente</translation>
+        <source>Crie vídeos bem-acabados em poucos passos</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Open</source>
@@ -768,8 +768,8 @@
 <context>
     <name>AndroidMain</name>
     <message>
-        <source>Drift project (*.drift)</source>
-        <translation>Proyecto Drift (*.drift)</translation>
+        <source>Projeto do Nardoto Editor (*.drift)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Save Project</source>
@@ -1425,10 +1425,6 @@
         <translation>Herramienta de corte</translation>
     </message>
     <message>
-        <source>Faster preview takes effect after you restart Drift.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>System default</source>
         <translation>Valor por defecto del sistema</translation>
     </message>
@@ -1960,6 +1956,10 @@
     <message>
         <source>Media edited</source>
         <translation>Medio editado</translation>
+    </message>
+    <message>
+        <source>A prévia mais rápida entra em vigor depois de reiniciar o Nardoto Editor.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Building keyframes…</source>
@@ -3698,10 +3698,6 @@
 <context>
     <name>EditorHeader</name>
     <message>
-        <source>Drift project (*.drift)</source>
-        <translation>Proyecto Drift (*.drift)</translation>
-    </message>
-    <message>
         <source>Open Project</source>
         <translation>Abrir proyecto</translation>
     </message>
@@ -3724,6 +3720,14 @@
     <message>
         <source>Save Shareable Copy</source>
         <translation>Guardar copia para compartir</translation>
+    </message>
+    <message>
+        <source>Nardoto</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>EDITOR</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Projects</source>
@@ -3766,6 +3770,10 @@
         <translation>Tamaño y diseño del vídeo</translation>
     </message>
     <message>
+        <source>Nardoto Editor %1 está disponível</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Agent</source>
         <translation>Agente</translation>
     </message>
@@ -3798,10 +3806,6 @@
         <translation>Actualizar</translation>
     </message>
     <message>
-        <source>Drift %1 is available</source>
-        <translation>Drift %1 está disponible</translation>
-    </message>
-    <message>
         <source>Agent access</source>
         <translation>Acceso de agente</translation>
     </message>
@@ -3824,6 +3828,10 @@
     <message>
         <source>Multicam</source>
         <translation>Cámara múltiple</translation>
+    </message>
+    <message>
+        <source>Projeto do Nardoto Editor (*.drift)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Workspace</source>
@@ -3959,8 +3967,8 @@
 <context>
     <name>EffectStacksSection</name>
     <message>
-        <source>Drift effect stack (*.drifteffects)</source>
-        <translation>Pila de efectos Drift (*.drifteffects)</translation>
+        <source>Pilha de efeitos do Nardoto Editor (*.drifteffects)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Import effect stack</source>
@@ -5503,14 +5511,6 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>no se puede abrir %1</translation>
     </message>
     <message>
-        <source>file is too short to be a Drift project</source>
-        <translation>el archivo es demasiado corto para ser un proyecto Drift</translation>
-    </message>
-    <message>
-        <source>not a Drift project (bad magic)</source>
-        <translation>no es un proyecto Drift (número mágico incorrecto)</translation>
-    </message>
-    <message>
         <source>unsupported container revision</source>
         <translation>revisión de contenedor no compatible</translation>
     </message>
@@ -5535,8 +5535,16 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>el manifiesto del proyecto no tiene versión de formato</translation>
     </message>
     <message>
-        <source>this project was saved by a newer version of Drift (format %1) — update to open it</source>
-        <translation>este proyecto fue guardado por una versión más reciente de Drift (formato %1) — actualiza para abrirlo</translation>
+        <source>o arquivo é curto demais para ser um projeto do Nardoto Editor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>não é um projeto do Nardoto Editor (assinatura inválida)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>este projeto foi salvo por uma versão mais recente do Nardoto Editor (format %1) — update to open it</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>project blob table is not contiguous</source>
@@ -5985,8 +5993,8 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>Trabajando…</translation>
     </message>
     <message>
-        <source>Drift will render a reversed copy of this clip so it plays back smoothly. You can keep editing while it runs.</source>
-        <translation>Drift renderizará una copia invertida de este clip para que se reproduzca con fluidez. Puedes seguir editando mientras se procesa.</translation>
+        <source>O Nardoto Editor renderizará uma cópia invertida deste clipe para que ele seja reproduzido smoothly. You can keep editing while it runs.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>This can take a few minutes on longer clips.</source>
@@ -6373,6 +6381,10 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>Tamaño</translation>
     </message>
     <message>
+        <source>Reinicie o Nardoto Editor para aplicar este tamanho.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Haptic feedback</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6393,8 +6405,12 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>Comprobar al iniciar</translation>
     </message>
     <message>
-        <source>Ask GitHub once a day whether a newer Drift has been released</source>
-        <translation>Consultar en GitHub una vez al día si se ha publicado un Drift más reciente</translation>
+        <source>Verificar no GitHub uma vez por dia se há nova versão do Nardoto Editor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Nardoto Editor %1</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Checking…</source>
@@ -6403,10 +6419,6 @@ Si la reproducción se corta, prueba con otra opción.</translation>
     <message>
         <source>Check now</source>
         <translation>Comprobar ahora</translation>
-    </message>
-    <message>
-        <source>Drift %1</source>
-        <translation>Drift %1</translation>
     </message>
     <message>
         <source>Extra packs</source>
@@ -6443,10 +6455,6 @@ Si la reproducción se corta, prueba con otra opción.</translation>
     <message>
         <source>Makes buttons, text, and icons larger. This is extra scale on top of the size already set in your display settings. Takes effect after restart.</source>
         <translation>Hace que los botones, el texto y los iconos sean más grandes. Es una escala adicional sobre el tamaño ya configurado en la pantalla. Surte efecto tras reiniciar.</translation>
-    </message>
-    <message>
-        <source>Restart Drift to apply this size.</source>
-        <translation>Reinicia Drift para aplicar este tamaño.</translation>
     </message>
     <message>
         <source>Horizontal mouse-wheel pan</source>
@@ -6988,8 +6996,8 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>Suaviza el temblor de la cámara escribiendo fotogramas clave de posición. Los desplazamientos panorámicos lineales quedan como dos fotogramas separados; solo los cambios de dirección reciben fotogramas adicionales. Cambiar la suavidad o el trípode no actualiza la vista previa hasta que apliques.</translation>
     </message>
     <message>
-        <source>Smooths camera shake. Drift scans the clip once, then renders a new video. Changing smoothness or tripod does not update the preview until you apply.</source>
-        <translation>Suaviza el temblor de la cámara. Drift analiza el clip una vez y luego renderiza un nuevo vídeo. Cambiar la suavidad o el trípode no actualiza la vista previa hasta que apliques.</translation>
+        <source>Suaviza a tremulação da câmera. O Nardoto Editor analisa o clipe uma vez e renderiza um novo vídeo. Alterar a suavização ou o tripé não atualiza a prévia até você aplicar.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mode</source>
@@ -7324,8 +7332,8 @@ Si la reproducción se corta, prueba con otra opción.</translation>
 <context>
     <name>TextAssetsTab</name>
     <message>
-        <source>Drift text style (*.drifttextstyle)</source>
-        <translation>Estilo de texto Drift (*.drifttextstyle)</translation>
+        <source>Estilo de texto do Nardoto Editor (*.drifttextstyle)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Import text style</source>
@@ -8535,12 +8543,12 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>No se pudieron buscar actualizaciones: respuesta inesperada.</translation>
     </message>
     <message>
-        <source>Drift %1 is the latest version.</source>
-        <translation>Drift %1 es la versión más reciente.</translation>
+        <source>Nardoto Editor %1 é a versão mais recente.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drift %1 is available.</source>
-        <translation>Drift %1 está disponible.</translation>
+        <source>Nardoto Editor %1 está disponível.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -8550,8 +8558,8 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>Actualización disponible</translation>
     </message>
     <message>
-        <source>Drift %1 is available</source>
-        <translation>Drift %1 está disponible</translation>
+        <source>Nardoto Editor %1 está disponível</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>You have %1.</source>

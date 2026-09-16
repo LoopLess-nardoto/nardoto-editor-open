@@ -1349,11 +1349,18 @@ QVariantList subtitleCuesToMap(const QList<drift::SubtitleCue> &cues)
 {
     QVariantList out;
     for (const drift::SubtitleCue &cue : cues) {
-        out.append(QVariantMap{
+        QVariantMap map{
             {QStringLiteral("start"), drift::usToSeconds(cue.startUs)},
             {QStringLiteral("end"), drift::usToSeconds(cue.endUs)},
             {QStringLiteral("text"), cue.text},
-        });
+        };
+        if (!cue.wordStartsUs.isEmpty()) {
+            QVariantList starts;
+            for (const drift::TimeUs startUs : cue.wordStartsUs)
+                starts.append(drift::usToSeconds(startUs));
+            map.insert(QStringLiteral("wordStarts"), starts);
+        }
+        out.append(map);
     }
     return out;
 }
@@ -1368,6 +1375,8 @@ QList<drift::SubtitleCue> subtitleCuesFromMap(const QVariantList &list)
         cue.startUs = drift::secondsToUs(map.value(QStringLiteral("start")).toDouble());
         cue.endUs = drift::secondsToUs(map.value(QStringLiteral("end")).toDouble());
         cue.text = map.value(QStringLiteral("text")).toString();
+        for (const QVariant &start : map.value(QStringLiteral("wordStarts")).toList())
+            cue.wordStartsUs.append(drift::secondsToUs(start.toDouble()));
         cues.append(cue);
     }
     drift::sortSubtitleCues(cues);
@@ -15239,11 +15248,18 @@ QJsonObject AppController::mcpInspect(bool includeClips, int sinceRevision, bool
                     if (includeCues) {
                         QJsonArray cues;
                         for (const drift::SubtitleCue &cue : track.clips.at(c).subtitleCues) {
-                            cues.append(QJsonObject{
+                            QJsonObject cueObject{
                                 {QStringLiteral("start"), drift::usToSeconds(cue.startUs)},
                                 {QStringLiteral("end"), drift::usToSeconds(cue.endUs)},
                                 {QStringLiteral("text"), cue.text},
-                            });
+                            };
+                            if (!cue.wordStartsUs.isEmpty()) {
+                                QJsonArray starts;
+                                for (const drift::TimeUs startUs : cue.wordStartsUs)
+                                    starts.append(drift::usToSeconds(startUs));
+                                cueObject.insert(QStringLiteral("wordStarts"), starts);
+                            }
+                            cues.append(cueObject);
                         }
                         row.insert(QStringLiteral("subtitleCues"), cues);
                     }

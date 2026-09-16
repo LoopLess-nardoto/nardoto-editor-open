@@ -266,6 +266,11 @@ bool splitClipAtOffset(Clip &head, Clip &tail, TimeUs offset)
             if (cue.startUs < offset) {
                 SubtitleCue left = cue;
                 left.endUs = qMin(cue.endUs, offset);
+                left.wordStartsUs.clear();
+                for (const TimeUs startUs : cue.wordStartsUs) {
+                    if (startUs < left.endUs)
+                        left.wordStartsUs.append(startUs);
+                }
                 if (left.endUs > left.startUs)
                     headCues.append(left);
             }
@@ -273,6 +278,13 @@ bool splitClipAtOffset(Clip &head, Clip &tail, TimeUs offset)
                 SubtitleCue right = cue;
                 right.startUs = qMax<TimeUs>(cue.startUs - offset, 0);
                 right.endUs = cue.endUs - offset;
+                right.wordStartsUs.clear();
+                for (const TimeUs startUs : cue.wordStartsUs) {
+                    if (startUs >= offset)
+                        right.wordStartsUs.append(startUs - offset);
+                }
+                if (right.wordStartsUs.isEmpty() && !cue.wordStartsUs.isEmpty())
+                    right.wordStartsUs.append(right.startUs);
                 if (right.endUs > right.startUs)
                     tailCues.append(right);
             }

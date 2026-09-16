@@ -90,10 +90,25 @@ QList<TimedWord> flattenWords(const QList<SubtitleCue> &cues)
 
 } // namespace
 
-int activeWordIndexAt(const QString &text, TimeUs startUs, TimeUs endUs, TimeUs localUs)
+int activeWordIndexAt(const QString &text, TimeUs startUs, TimeUs endUs, TimeUs localUs,
+                      const QList<TimeUs> &wordStartsUs)
 {
     if (endUs <= startUs || localUs < startUs)
         return -1;
+
+    const QStringList tokens = tokenizeWords(text);
+    if (!wordStartsUs.isEmpty() && !tokens.isEmpty()) {
+        const int count = std::min(tokens.size(), wordStartsUs.size());
+        int active = -1;
+        for (int i = 0; i < count; ++i) {
+            if (wordStartsUs.at(i) > localUs)
+                break;
+            active = i;
+        }
+        if (active >= 0)
+            return active;
+        return -1;
+    }
 
     SubtitleCue cue;
     cue.startUs = startUs;

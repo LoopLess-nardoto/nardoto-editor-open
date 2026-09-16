@@ -633,6 +633,7 @@ const QList<Op> &ops()
           "Reset every action binding to its default. Not undoable.",
           objectSchema({}), false, true }
 #include "mcp/McpCatalogExtendedOps.inl"
+#include "mcp/McpCatalogAssembleOps.inl"
     };
     return k;
 }
@@ -666,7 +667,7 @@ QStringList toolboxNames()
             QStringLiteral("project"),   QStringLiteral("keyframes"), QStringLiteral("speed"),
             QStringLiteral("ui"),        QStringLiteral("shapes"),   QStringLiteral("subtitles"),
             QStringLiteral("segmentation"), QStringLiteral("ai"),   QStringLiteral("audio"),
-            QStringLiteral("scene"),     QStringLiteral("multicam")};
+            QStringLiteral("scene"),     QStringLiteral("multicam"), QStringLiteral("build")};
 }
 
 QStringList undoExemptOps()
@@ -786,8 +787,20 @@ QString agentGuideText()
         "whatever the client exposes), then pass those absolute paths to import_media and confirm\n"
         "missing:[] is empty.\n"
         "\n"
+        "Building a narrated video (build toolbox):\n"
+        "When the user hands you narration audio + a ready .srt + a folder of images/videos, do NOT\n"
+        "place clips one by one. Locate the files with your own tools (natural sort of the folder:\n"
+        "2 before 10), then call assemble_video({media:[…], narration, subtitles, music,\n"
+        "subtitle_preset, transition:{kind,duration}, effects:[…]}). It imports, lays the media\n"
+        "out over the narration in equal slices (videos shorter than a slice keep their length),\n"
+        "animates every image (Ken Burns, six patterns in rotation), loops and ducks the music,\n"
+        "imports the subtitles on top and applies the preset, all as ONE undo step. media_mode:\n"
+        "\"cues\" snaps the cuts to sentence starts. Then capture() at a few times to check, fix\n"
+        "details with the fine-grained ops (set_text, add_effect, move_clip…), and export_video.\n"
+        "Check inspect.dirty and save_project before new_project if the user has work open.\n"
+        "\n"
         "Toolboxes: media, timeline, canvas, playback, text, effects, project, keyframes, speed, ui, "
-        "shapes, subtitles, segmentation, ai, audio, scene, multicam.\n");
+        "shapes, subtitles, segmentation, ai, audio, scene, multicam, build.\n");
 }
 
 QJsonObject catalogPayload()
@@ -818,6 +831,9 @@ QJsonObject catalogPayload()
         {"audio", "Waveforms, silence, loudness, ducking, beat detection, beat-synced cuts, clip volume."},
         {"scene", "Detect shots, read what is in them, and cut or assemble against them."},
         {"multicam", "Multi-camera session: set up angles, switch at the playhead, save separate or combined."},
+        {"build", "START HERE for 'make me a video from this audio + subtitles + these files': "
+                  "assemble_video builds the whole narrated timeline (media in order, narration, "
+                  "music ducked, Ken Burns, transitions, subtitles) in one undo step."},
     };
 
     QJsonArray toolboxes;
@@ -941,6 +957,13 @@ QJsonArray homepageTools()
         objectSchema({{QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds (default: playhead)"))},
                       {QStringLiteral("full"), boolProp(QStringLiteral("Full-res PNG on disk instead of inline JPEG"))}}),
         toolAnnotations(true, false, true)));
+    // A macro de montagem vive na página inicial junto das cinco de casa: é por ela que o
+    // agente começa quando recebe áudio + legenda + pasta de mídias, e a lista de tools/list é
+    // tudo que a CLI deixa o modelo chamar por nome.
+    for (const Op &op : ops()) {
+        if (qstrcmp(op.name, "assemble_video") == 0)
+            tools.append(opTool(op));
+    }
     return tools;
 }
 

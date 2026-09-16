@@ -617,6 +617,7 @@ if(NOT ANDROID)
         src/mcp/McpDispatcher.h
         src/mcp/McpDispatcher.cpp
         src/mcp/McpDispatcherExtended.cpp
+        src/mcp/McpDispatcherAssemble.cpp
         src/mcp/McpServer.h
         src/mcp/McpServer.cpp
         src/mcp/McpStdio.h

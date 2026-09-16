@@ -1165,6 +1165,14 @@ void CoreTest::karaokeWordIndexTracksTheCue()
     QCOMPARE(drift::activeWordIndexAt(text, start, end, end - 1), 3);
     // Past the end (rounding at a cue boundary) keeps the last word lit rather than blanking it.
     QCOMPARE(drift::activeWordIndexAt(text, start, end, end), 3);
+
+    // Importers with measured timestamps bypass the proportional fallback.
+    const QList<drift::TimeUs> measured = {
+        start, start + 100000, start + 900000, start + 1700000,
+    };
+    QCOMPARE(drift::activeWordIndexAt(text, start, end, start + 50000, measured), 0);
+    QCOMPARE(drift::activeWordIndexAt(text, start, end, start + 850000, measured), 1);
+    QCOMPARE(drift::activeWordIndexAt(text, start, end, start + 1500000, measured), 2);
 }
 
 void CoreTest::shapeStyleSerialization()

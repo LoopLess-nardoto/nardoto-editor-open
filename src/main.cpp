@@ -220,6 +220,7 @@ int main(int argc, char *argv[])
 {
     applyLogLevel(verboseLoggingRequested(argc, argv));
 
+    bool mcpEnableRequested = false;
 #ifndef Q_OS_ANDROID
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--mcp-stdio") == 0) {
@@ -228,6 +229,8 @@ int main(int argc, char *argv[])
             QCoreApplication::setOrganizationName("Nardoto");
             return drift::mcp::runStdioAttach();
         }
+        if (qstrcmp(argv[i], "--mcp-enable") == 0)
+            mcpEnableRequested = true;
     }
 #endif
 
@@ -382,6 +385,11 @@ int main(int argc, char *argv[])
         engine.loadFromModule("Drift", "Main");
     else
         engine.load(desktopMainQml);
+
+    // Aberto pelo chat do Nardoto Studio: o Acesso de agente já nasce ligado, sem a pessoa
+    // mexer no interruptor nem copiar configuração. Sem a flag, continua desligado como antes.
+    if (mcpEnableRequested)
+        editorState.setMcpEnabled(true);
 #endif
 
 #ifndef Q_OS_ANDROID

@@ -9,6 +9,7 @@
     "dev": "npm run start:win",
     "start:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\start-dev-windows.ps1",
     "build:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\start-dev-windows.ps1 -Build -NoLaunch",
-    "rebuild:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\start-dev-windows.ps1 -Build"
+    "rebuild:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\start-dev-windows.ps1 -Build",
+    "translate:hyperframes": "node scripts/hyperframes-to-nardoto.mjs"
   }
 }
