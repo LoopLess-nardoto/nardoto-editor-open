@@ -27,6 +27,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
@@ -539,6 +540,7 @@ void ClipReader::close()
     m_audioStream = -1;
     m_audioStreamOrdinal = 0;
     m_sourceRotation = 0;
+    m_hasAlpha = false;
     m_hwAccelDisabled = false;
     m_hwScalerFailed = false;
     m_audioPositioned = false;
@@ -589,6 +591,11 @@ bool ClipReader::open(const QString &path, int audioStreamOrdinal)
 
     if (m_videoStream >= 0) {
         m_sourceRotation = displayRotationOf(m_fmt->streams[m_videoStream]);
+        // Vídeo com canal alfa (ProRes 4444, por exemplo) precisa do caminho RGBA:
+        // o NV12 da prévia e as superfícies de hardware descartam a transparência.
+        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(
+            static_cast<AVPixelFormat>(m_fmt->streams[m_videoStream]->codecpar->format));
+        m_hasAlpha = desc && (desc->flags & AV_PIX_FMT_FLAG_ALPHA);
         const AVRational rate = m_fmt->streams[m_videoStream]->avg_frame_rate;
         if (rate.num > 0 && rate.den > 0) {
             m_sourceFrameDurationUs =
@@ -757,6 +764,9 @@ bool ClipReader::tryOpenHardwareDecoder()
 {
     if (!m_fmt || m_videoStream < 0 || m_hwAccelActive || m_hwAccelDisabled)
         return m_hwAccelActive;
+    // Decodificador de hardware entrega NV12/P010 sem alfa.
+    if (m_hasAlpha)
+        return false;
 
     // Hardware vs software is a preview preference. Auto keeps the per-clip
     // heuristic (4K / heavy bitrates on the GPU, cheap streams on software);
@@ -1653,6 +1663,11 @@ bool ClipReader::decodePreviewVideoFrameAtOnce(drift::TimeUs sourceUs, PreviewVi
 bool ClipReader::readPreviewVideoFrame(drift::TimeUs sourceUs, PreviewVideoFrame &out, int maxWidth,
                                        int maxHeight)
 {
+    // Sem caminho NV12 para fonte com alfa: quem chama cai no RGBA, que preserva a
+    // transparência e compõe como um PNG.
+    if (m_hasAlpha)
+        return false;
+
     if (!m_prefetching)
         m_lastRequestedPreviewUs = sourceUs;
 
@@ -1682,6 +1697,8 @@ bool ClipReader::prefetchNextPreviewVideoFrame(int maxWidth, int maxHeight, drif
 {
     m_readAheadUs = qMax<drift::TimeUs>(0, readAheadUs);
     trimPreviewCache();
+    if (m_hasAlpha)
+        return false;
 
     if (!m_videoPositioned || m_sourceFrameDurationUs <= 0)
         return false;

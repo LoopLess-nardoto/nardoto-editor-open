@@ -38,6 +38,9 @@ public:
 
     bool hasVideo() const { return m_videoStream >= 0; }
     bool hasAudio() const { return m_audioStream >= 0; }
+    // Fonte de vídeo com canal alfa (ex.: ProRes 4444). Nesse caso a prévia NV12 e o
+    // decodificador de hardware ficam de fora e o quadro sai em RGBA com transparência.
+    bool hasAlpha() const { return m_hasAlpha; }
 
     // maxWidth/maxHeight bound the decode buffer; they are a hint, not an exact
     // size. The reader fits the source into that box (never upscaling) and keeps
@@ -172,6 +175,7 @@ private:
     // Source display-matrix rotation (0/90/180/270), applied to every decoded frame
     // so everything downstream sees upright pixels.
     int m_sourceRotation = 0;
+    bool m_hasAlpha = false;
     int m_outputSampleRate = 48000;
     bool m_hwAccelActive = false;
     bool m_hwAccelDisabled = false; // sticky after a failed hardware decode

@@ -123,6 +123,7 @@ private slots:
     void effectProcessorBrightness();
     void clipReaderSequentialAndSeek();
     void clipReaderHoldsFrameAcrossGaps();
+    void alphaVideoCompositesOverLowerTrack();
     void clipReaderAppliesDisplayRotation_data();
     void clipReaderAppliesDisplayRotation();
     void hwAccelBackendIdsRoundTrip();
@@ -2121,6 +2122,82 @@ void EngineTest::clipReaderHoldsFrameAcrossGaps()
     PreviewVideoFrame early;
     QVERIFY(reader.readPreviewVideoFrame(0, early, 64, 64));
     QVERIFY(early.isValid());
+}
+
+// ProRes 4444 com alfa: metade esquerda vermelha opaca, metade direita transparente.
+// A prévia NV12 e o decodificador de hardware descartam o alfa, então a fonte tem de
+// seguir pelo caminho RGBA e compor como um PNG sobre a trilha de baixo.
+void EngineTest::alphaVideoCompositesOverLowerTrack()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("alpha.mov"));
+    QProcess proc;
+    proc.start(ffmpeg,
+               {QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+                QStringLiteral("-i"),
+                QStringLiteral("color=c=red:s=64x64:r=25:d=0.4,format=rgba,"
+                               "geq=r=255:g=0:b=0:a='if(lt(X,32),255,0)'"),
+                QStringLiteral("-c:v"), QStringLiteral("prores_ks"), QStringLiteral("-profile:v"),
+                QStringLiteral("4444"), QStringLiteral("-pix_fmt"), QStringLiteral("yuva444p10le"),
+                path});
+    if (!proc.waitForFinished(30000) || proc.exitCode() != 0 || !QFileInfo::exists(path))
+        QSKIP("ffmpeg could not encode ProRes 4444");
+
+    ClipReader reader;
+    QVERIFY(reader.open(path));
+    QVERIFY(reader.hasAlpha());
+    PreviewVideoFrame preview;
+    QVERIFY(!reader.readPreviewVideoFrame(0, preview, 64, 64));
+
+    QImage frame;
+    QVERIFY(reader.readVideoFrameAt(0, frame, 64, 64));
+    QVERIFY(!frame.isNull());
+    QVERIFY(qAlpha(frame.pixel(8, 32)) > 240);
+    QVERIFY(qAlpha(frame.pixel(56, 32)) < 16);
+
+    drift::Project project;
+    project.setResolution(64, 64);
+    project.setFps(25);
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    project.tracks().append(drift::Track{.type = drift::TrackType::Shape});
+
+    drift::Clip top;
+    top.id = QStringLiteral("alpha");
+    top.type = drift::ClipType::Video;
+    top.path = path;
+    top.timelineStart = 0;
+    top.timelineDuration = drift::secondsToUs(0.4);
+    project.tracks()[0].clips.append(top);
+
+    drift::Clip below;
+    below.id = QStringLiteral("below");
+    below.type = drift::ClipType::Shape;
+    below.timelineStart = 0;
+    below.timelineDuration = drift::secondsToUs(0.4);
+    below.shapeStyle.kind = drift::ShapeKind::Rectangle;
+    below.shapeStyle.fill = Qt::blue;
+    below.shapeStyle.strokeWidth = 0.0;
+    project.tracks()[1].clips.append(below);
+
+    FrameCompositor compositor;
+    compositor.setProject(&project);
+    const QImage composited = compositor.compositeAt(100'000);
+    QVERIFY(!composited.isNull());
+    const QRgb left = composited.pixel(8, 32);
+    const QRgb right = composited.pixel(56, 32);
+    QVERIFY2(qRed(left) > 200 && qBlue(left) < 60,
+             qPrintable(QStringLiteral("left %1").arg(left, 8, 16)));
+    QVERIFY2(qBlue(right) > 200 && qRed(right) < 60,
+             qPrintable(QStringLiteral("right %1").arg(right, 8, 16)));
+
+    // Solta o arquivo para a pasta temporária poder ser apagada no Windows.
+    ClipReaderPool::instance().releaseAll();
 }
 
 // 64x32 landscape, red left half / blue right half, tagged with a display matrix.
