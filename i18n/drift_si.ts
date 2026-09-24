@@ -1978,6 +1978,10 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Insert gap</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Building keyframes…</source>
         <translation>කීෆ්‍රේම ගොඩනඟමින්…</translation>
     </message>
@@ -3051,6 +3055,10 @@
     <message>
         <source>Shapes</source>
         <translation>හැඩතල</translation>
+    </message>
+    <message>
+        <source>Motion</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Scenes</source>
@@ -5238,6 +5246,107 @@
     <message>
         <source>Reopen the project once they finish installing.</source>
         <translation>ඒවා ස්ථාපනය අවසන් වූ පසු ව්‍යාපෘතිය නැවත විවෘත කරන්න.</translation>
+    </message>
+</context>
+<context>
+    <name>MotionLibrary</name>
+    <message>
+        <source>This motion graphic is no longer on disk.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not save the change request.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This motion graphic is still being generated.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>MotionPlacer</name>
+    <message>
+        <source>No project is open to receive the motion graphic.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not import the motion graphic.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The motion graphic took too long to import.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>MotionTab</name>
+    <message>
+        <source>Templates</source>
+        <translation type="unfinished">ආකෘති</translation>
+    </message>
+    <message>
+        <source>No templates yet. The Nardoto Studio installs them here.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Mine</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Motion graphics you create in the Nardoto Studio chat show up here.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This project</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No motion graphics in this project&apos;s folder yet.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Error</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rendering</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Generating</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add to a new top track at the playhead</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Modify</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Generating the new version…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open the Nardoto Studio to generate the new version.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Modify “%1”</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This motion graphic has no editable fields.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

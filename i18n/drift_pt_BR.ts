@@ -1982,6 +1982,10 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Insert gap</source>
+        <translation>Abrir espaço</translation>
+    </message>
+    <message>
         <source>Building keyframes…</source>
         <translation>Criando quadros-chave…</translation>
     </message>
@@ -3051,6 +3055,10 @@
     <message>
         <source>Shapes</source>
         <translation>Formas</translation>
+    </message>
+    <message>
+        <source>Motion</source>
+        <translation>Motion</translation>
     </message>
     <message>
         <source>Scenes</source>
@@ -5238,6 +5246,107 @@
     <message>
         <source>Reopen the project once they finish installing.</source>
         <translation>Reabra o projeto quando a instalação terminar.</translation>
+    </message>
+</context>
+<context>
+    <name>MotionLibrary</name>
+    <message>
+        <source>This motion graphic is no longer on disk.</source>
+        <translation>Este motion graphic não está mais no disco.</translation>
+    </message>
+    <message>
+        <source>Could not save the change request.</source>
+        <translation>Não foi possível salvar o pedido de alteração.</translation>
+    </message>
+    <message>
+        <source>This motion graphic is still being generated.</source>
+        <translation>Este motion graphic ainda está sendo gerado.</translation>
+    </message>
+</context>
+<context>
+    <name>MotionPlacer</name>
+    <message>
+        <source>No project is open to receive the motion graphic.</source>
+        <translation>Nenhum projeto aberto para receber o motion graphic.</translation>
+    </message>
+    <message>
+        <source>Could not import the motion graphic.</source>
+        <translation>Não foi possível importar o motion graphic.</translation>
+    </message>
+    <message>
+        <source>The motion graphic took too long to import.</source>
+        <translation>O motion graphic demorou demais para importar.</translation>
+    </message>
+</context>
+<context>
+    <name>MotionTab</name>
+    <message>
+        <source>Templates</source>
+        <translation>Modelos</translation>
+    </message>
+    <message>
+        <source>No templates yet. The Nardoto Studio installs them here.</source>
+        <translation>Ainda não há modelos. O Nardoto Studio instala os modelos aqui.</translation>
+    </message>
+    <message>
+        <source>Mine</source>
+        <translation>Meus</translation>
+    </message>
+    <message>
+        <source>Motion graphics you create in the Nardoto Studio chat show up here.</source>
+        <translation>Os motion graphics que você cria no chat do Nardoto Studio aparecem aqui.</translation>
+    </message>
+    <message>
+        <source>This project</source>
+        <translation>Deste projeto</translation>
+    </message>
+    <message>
+        <source>No motion graphics in this project&apos;s folder yet.</source>
+        <translation>Ainda não há motion graphics na pasta deste projeto.</translation>
+    </message>
+    <message>
+        <source>Error</source>
+        <translation>Erro</translation>
+    </message>
+    <message>
+        <source>Rendering</source>
+        <translation>Renderizando</translation>
+    </message>
+    <message>
+        <source>Generating</source>
+        <translation>Gerando</translation>
+    </message>
+    <message>
+        <source>Use</source>
+        <translation>Usar</translation>
+    </message>
+    <message>
+        <source>Add to a new top track at the playhead</source>
+        <translation>Adicionar numa trilha nova no topo, na posição do cursor</translation>
+    </message>
+    <message>
+        <source>Modify</source>
+        <translation>Modificar</translation>
+    </message>
+    <message>
+        <source>Generating the new version…</source>
+        <translation>Gerando a nova versão…</translation>
+    </message>
+    <message>
+        <source>Open the Nardoto Studio to generate the new version.</source>
+        <translation>Abra o Nardoto Studio para gerar a nova versão.</translation>
+    </message>
+    <message>
+        <source>Modify “%1”</source>
+        <translation>Modificar “%1”</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>Confirmar</translation>
+    </message>
+    <message>
+        <source>This motion graphic has no editable fields.</source>
+        <translation>Este motion graphic não tem campos editáveis.</translation>
     </message>
 </context>
 <context>
