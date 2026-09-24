@@ -577,6 +577,10 @@ qt_add_executable(drift
     src/models/EditorState.h
     src/models/LayoutStore.h
     src/models/LayoutStore.cpp
+    src/models/MotionLibrary.h
+    src/models/MotionLibrary.cpp
+    src/models/MotionPlacer.h
+    src/models/MotionPlacer.cpp
     src/models/FileDialogs.h
     src/models/FileDialogs.cpp
     src/models/Haptics.h
@@ -737,6 +741,7 @@ qt_add_qml_module(drift
         src/qml/components/properties/EffectsInspector.qml
         src/qml/components/assets/TextAssetsTab.qml
         src/qml/components/assets/ScenesTab.qml
+        src/qml/components/assets/MotionTab.qml
         src/qml/components/assets/SubtitlesTab.qml
         src/qml/components/assets/StickersTab.qml
         src/qml/components/assets/ShapesTab.qml

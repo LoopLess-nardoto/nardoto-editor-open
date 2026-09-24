@@ -12,6 +12,8 @@
 #include "models/FileDialogs.h"
 #include "models/Haptics.h"
 #include "models/LayoutStore.h"
+#include "models/MotionLibrary.h"
+#include "models/MotionPlacer.h"
 #include "models/UpdateChecker.h"
 #include "engine/VaapiZeroCopy.h"
 #include "ClipPreviewImageProvider.h"
@@ -336,6 +338,8 @@ int main(int argc, char *argv[])
     static AddonManager addonManager;
     static UpdateChecker updateChecker;
     static LayoutStore layoutStore;
+    static MotionLibrary motionLibrary;
+    static MotionPlacer motionPlacer(&editorState);
     static drift::Haptics haptics;
     editorState.setAddonManager(&addonManager);
     qmlRegisterSingletonInstance("Drift", 1, 0, "AssetLibrary", &assetLibrary);
@@ -347,6 +351,14 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("Drift", 1, 0, "Updates", &updateChecker);
     qmlRegisterSingletonInstance("Drift", 1, 0, "LayoutMemory", &layoutStore);
     qmlRegisterSingletonInstance("Drift", 1, 0, "Haptics", &haptics);
+    qmlRegisterSingletonInstance("Drift", 1, 0, "MotionLibrary", &motionLibrary);
+    // Aba Motion: a seção "Deste projeto" acompanha o projeto aberto, e "Usar" passa pelo
+    // MotionPlacer, que importa o clipe e o põe no topo, no playhead.
+    motionLibrary.setProjectFile(editorState.currentProjectPath());
+    QObject::connect(&editorState, &AppController::currentProjectPathChanged, &motionLibrary,
+                     [] { motionLibrary.setProjectFile(editorState.currentProjectPath()); });
+    QObject::connect(&motionLibrary, &MotionLibrary::usoPedido, &motionPlacer, &MotionPlacer::colocar);
+    QObject::connect(&motionPlacer, &MotionPlacer::erro, &motionLibrary, &MotionLibrary::erro);
 
     app.installEventFilter(new FileOpenFilter(&editorState, &app));
     editorState.queueExternalProject(

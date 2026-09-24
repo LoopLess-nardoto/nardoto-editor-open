@@ -80,6 +80,15 @@ target_include_directories(tst_projectbundle PRIVATE ../src)
 target_link_libraries(tst_projectbundle PRIVATE Qt6::Test driftengine ${DRIFT_ZSTD_TARGET})
 add_test(NAME ProjectBundle COMMAND tst_projectbundle)
 
+qt_add_executable(tst_motionlibrary
+    tst_motionlibrary.cpp
+    ../src/models/MotionLibrary.h
+    ../src/models/MotionLibrary.cpp
+)
+target_include_directories(tst_motionlibrary PRIVATE ../src)
+target_link_libraries(tst_motionlibrary PRIVATE Qt6::Test)
+add_test(NAME MotionLibrary COMMAND tst_motionlibrary)
+
 qt_add_executable(tst_engine tst_engine.cpp)
 target_include_directories(tst_engine PRIVATE ../src)
 target_link_libraries(tst_engine PRIVATE Qt6::Test Qt6::Gui Qt6::OpenGL driftengine driftcore)
