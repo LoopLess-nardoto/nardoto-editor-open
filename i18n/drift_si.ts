@@ -8555,6 +8555,22 @@ If playback stutters, try another.</source>
 <context>
     <name>UpdateChecker</name>
     <message>
+        <source>Baixando o Nardoto Editor %1...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Não foi possível baixar a atualização: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Não foi possível gravar o instalador em %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Instalador pronto. O editor vai fechar para atualizar.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Couldn’t check for updates: %1</source>
         <translation>යාවත්කාලීන පරීක්ෂා කිරීමට නොහැකි විය: %1</translation>
     </message>
@@ -8598,8 +8614,20 @@ If playback stutters, try another.</source>
         <translation>පසුව</translation>
     </message>
     <message>
+        <source>Fechar e atualizar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Download</source>
         <translation>බාගන්න</translation>
+    </message>
+    <message>
+        <source>Atualizar agora</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Baixa o instalador; o editor fecha e reabre já atualizado</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Opens the release page in your browser</source>

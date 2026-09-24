@@ -368,6 +368,18 @@ ApplicationWindow {
         id: updateDialog
     }
 
+    // Installer downloaded: close through the normal path, so an unsaved project still gets its
+    // prompt. The installer itself starts on aboutToQuit (UpdateChecker) and reopens the editor.
+    Connections {
+        target: Updates
+        function onDownloadChanged() {
+            if (!Updates.installerReady)
+                return
+            updateDialog.close()
+            window.close()
+        }
+    }
+
     DebugInfoDialog {
         id: debugInfoDialog
     }

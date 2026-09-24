@@ -244,11 +244,24 @@ FunctionEnd
 ; O compilador NSIS gera um instalador de 32 bits; sem SetRegView 64 tudo o que
 ; ele escreve em HKLM\Software vai parar no Wow6432Node, e um app x64 some da
 ; lista de Aplicativos instalados. Provado aqui em 2026-09-16.
+; 1 quando o próprio editor chamou o instalador (auto-update, src/models/UpdateChecker.cpp):
+; sem assistente, espera o editor soltar o executável e reabre no fim.
+Var ModoAtualizar
+
 Function .onInit
   SetRegView 64
   ReadRegStr $0 HKLM "Software\Nardoto\Editor" "InstallDir"
   ${If} $0 != ""
     StrCpy $INSTDIR $0
+  ${EndIf}
+
+  StrCpy $ModoAtualizar 0
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/ATUALIZAR" $R1
+  ${IfNot} ${Errors}
+    StrCpy $ModoAtualizar 1
+    SetSilent silent
   ${EndIf}
 FunctionEnd
 
@@ -292,12 +305,25 @@ Section "Nardoto Editor" SecEditor
     Abort
   ${EndIf}
 
-  ; Arquivo em uso trava a cópia no meio e deixa a instalação pela metade.
+  ; Arquivo em uso trava a cópia no meio e deixa a instalação pela metade. No
+  ; auto-update o editor acabou de mandar fechar e ainda pode estar saindo:
+  ; espera até 30 s pelo executável ficar livre antes de desistir.
   ${If} ${FileExists} "$INSTDIR\${EXE}"
+    StrCpy $R2 0
+    tentarDeNovo:
     ClearErrors
     Rename "$INSTDIR\${EXE}" "$INSTDIR\${EXE}.emuso"
     ${If} ${Errors}
-      MessageBox MB_OK|MB_ICONSTOP "O Nardoto Editor está aberto. Feche o editor e rode este instalador de novo."
+      ${If} $ModoAtualizar == 1
+      ${AndIf} $R2 < 60
+        IntOp $R2 $R2 + 1
+        Sleep 500
+        Goto tentarDeNovo
+      ${EndIf}
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "O Nardoto Editor está aberto. Feche o editor e rode este instalador de novo."
+      ${EndIf}
+      SetErrorLevel 3
       Abort
     ${Else}
       Rename "$INSTDIR\${EXE}.emuso" "$INSTDIR\${EXE}"
@@ -334,6 +360,11 @@ Section "Nardoto Editor" SecEditor
   WriteRegDWORD HKLM "${CHAVE_DESINSTALAR}" "NoRepair" 1
 
   System::Call 'shell32::SHChangeNotify(i 0x8000000, i 0, p 0, p 0)'
+
+  ; Auto-update: a pessoa só viu o editor fechar; ele volta sozinho, como usuário normal.
+  ${If} $ModoAtualizar == 1
+    Exec '"$WINDIR\explorer.exe" "$INSTDIR\${EXE}"'
+  ${EndIf}
 SectionEnd
 
 Section "Uninstall"

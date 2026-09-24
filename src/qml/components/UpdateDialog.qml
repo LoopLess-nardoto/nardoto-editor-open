@@ -5,8 +5,10 @@ import Drift
 // Opened from the badge in EditorHeader, never by itself — a dialog over the project someone just
 // launched to work on is an interruption, and the badge is already the notification.
 //
-// Three actions, and "Skip" belongs away from the two safe ones, so the buttons live in the
-// content and ThemedDialog's two-button footer is off (same shape as UnsavedChangesDialog).
+// On Windows the primary action downloads the installer here; when it is on disk, Main.qml closes
+// the window (through the unsaved-changes prompt) and the installer takes over. Elsewhere the
+// primary action opens the release page. "Skip" belongs away from the two safe actions, so the
+// buttons live in the content and ThemedDialog's two-button footer is off.
 ThemedDialog {
     id: root
 
@@ -14,16 +16,21 @@ ThemedDialog {
     preferredWidth: Theme.dialogWidthMd
     showFooter: false
     acceptOnReturn: false
+    closePolicy: Updates.downloading ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     Shortcut {
         sequences: ["Return", "Enter"]
-        enabled: root.visible
-        onActivated: root.download()
+        enabled: root.visible && !Updates.downloading
+        onActivated: root.update()
     }
 
-    function download() {
-        Updates.openDownloadPage()
-        close()
+    function update() {
+        if (Updates.canInstall) {
+            Updates.downloadAndInstall()
+        } else {
+            Updates.openDownloadPage()
+            close()
+        }
     }
 
     contentItem: Column {
@@ -49,9 +56,8 @@ ThemedDialog {
             visible: notesFlick.visible
         }
 
-        // The release body verbatim, including the install instructions the release workflow
-        // appends. Scrolled rather than trimmed: matching on a heading to cut them off would
-        // break silently the day that template changes.
+        // The release body verbatim. Scrolled rather than trimmed: matching on a heading to cut
+        // it off would break silently the day the template changes.
         Flickable {
             id: notesFlick
             width: parent.width
@@ -72,14 +78,35 @@ ThemedDialog {
             }
         }
 
+        // Download in progress or done: the bar and the one-line status from the checker.
+        Column {
+            width: parent.width
+            spacing: Theme.spacingSm
+            visible: Updates.downloading || Updates.installerReady || Updates.status.length > 0
+
+            ThemedProgressBar {
+                width: parent.width
+                value: Updates.downloadProgress
+                visible: Updates.downloading || Updates.installerReady
+            }
+
+            ThemedLabel {
+                width: parent.width
+                size: "sm"
+                wrapMode: Text.WordWrap
+                text: Updates.status
+            }
+        }
+
         Item {
             width: parent.width
-            height: downloadButton.height
+            height: updateButton.height
 
             ThemedButton {
                 anchors.left: parent.left
                 variant: "ghost"
                 text: qsTr("Skip")
+                enabled: !Updates.downloading && !Updates.installerReady
                 tooltip: qsTr("Don't mention %1 again. Later releases are still announced.")
                             .arg(Updates.latestVersion)
                 onClicked: {
@@ -95,20 +122,26 @@ ThemedDialog {
                 ThemedButton {
                     variant: "secondary"
                     text: qsTr("Later")
+                    enabled: !Updates.downloading
                     onClicked: root.close()
                 }
 
                 ThemedButton {
-                    id: downloadButton
+                    id: updateButton
                     variant: "primary"
                     glyph: Theme.icons.download
-                    text: qsTr("Download")
-                    tooltip: qsTr("Opens the release page in your browser")
-                    onClicked: root.download()
+                    enabled: !Updates.downloading
+                    text: Updates.installerReady
+                          ? qsTr("Fechar e atualizar")
+                          : Updates.canInstall ? qsTr("Atualizar agora") : qsTr("Download")
+                    tooltip: Updates.canInstall
+                             ? qsTr("Baixa o instalador; o editor fecha e reabre já atualizado")
+                             : qsTr("Opens the release page in your browser")
+                    onClicked: root.update()
                 }
             }
         }
     }
 
-    onOpened: downloadButton.forceActiveFocus()
+    onOpened: updateButton.forceActiveFocus()
 }
