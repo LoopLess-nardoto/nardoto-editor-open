@@ -80,6 +80,7 @@ private slots:
     void undoToRestoresSnapshot();
     void setRippleIsNotUndoable();
     void closeGapClosesOneHole();
+    void insertGapPushesClipsRight();
     void saveProjectWithoutPathUsesCurrent();
     void detectSilenceFindsInjectedGap();
     void setEffectStringParamSetsFileParam();
@@ -1564,6 +1565,51 @@ void McpTest::closeGapClosesOneHole()
         QCOMPARE(clip.value(QStringLiteral("start")).toDouble(), gapAt);
     }
     QVERIFY(found);
+}
+
+// insert_gap: abre espaço no começo de uma trilha cheia (sem sobreposição, o
+// padrão) empurrando os clipes juntos, sem mover um a um; um desfazer volta tudo.
+void McpTest::insertGapPushesClipsRight()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+
+    const QJsonObject a = dispatcher.applyOne(
+        QStringLiteral("add_text"),
+        {{QStringLiteral("text"), QStringLiteral("A")}, {QStringLiteral("at"), 0.0}});
+    QVERIFY(a.value(QStringLiteral("ok")).toBool());
+    const double aEnd = a.value(QStringLiteral("start")).toDouble() + a.value(QStringLiteral("dur")).toDouble();
+    const QJsonObject b = dispatcher.applyOne(
+        QStringLiteral("add_text"),
+        {{QStringLiteral("text"), QStringLiteral("B")}, {QStringLiteral("at"), aEnd}});
+    QVERIFY(b.value(QStringLiteral("ok")).toBool());
+    const double bStart = b.value(QStringLiteral("start")).toDouble();
+
+    QVERIFY(!dispatcher.applyOne(QStringLiteral("insert_gap"), {{QStringLiteral("at"), 0.0}})
+                 .value(QStringLiteral("ok")).toBool()); // sem "seconds" = bad_args
+    const QJsonObject aberto = dispatcher.applyOne(
+        QStringLiteral("insert_gap"),
+        {{QStringLiteral("at"), 0.0}, {QStringLiteral("seconds"), 15.5}});
+    QVERIFY(aberto.value(QStringLiteral("ok")).toBool());
+
+    const auto inicioDe = [&](const QString &id) {
+        const QJsonArray tracks = dispatcher.inspect({{QStringLiteral("clips"), true}})
+                                      .value(QStringLiteral("tracks")).toArray();
+        for (const QJsonValue &t : tracks)
+            for (const QJsonValue &c : t.toObject().value(QStringLiteral("items")).toArray())
+                if (c.toObject().value(QStringLiteral("id")).toString() == id)
+                    return c.toObject().value(QStringLiteral("start")).toDouble();
+        return -1.0;
+    };
+    const QString aid = a.value(QStringLiteral("id")).toString();
+    const QString bid = b.value(QStringLiteral("id")).toString();
+    QCOMPARE(inicioDe(aid), 15.5);
+    QCOMPARE(inicioDe(bid), bStart + 15.5);
+
+    QVERIFY(dispatcher.applyOne(QStringLiteral("undo"), {}).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(inicioDe(aid), 0.0);
+    QCOMPARE(inicioDe(bid), bStart);
 }
 
 void McpTest::saveProjectWithoutPathUsesCurrent()

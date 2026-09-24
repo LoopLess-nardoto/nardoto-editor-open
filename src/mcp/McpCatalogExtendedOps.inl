@@ -731,6 +731,15 @@
           objectSchema({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
                         {QStringLiteral("at"), numberProp(QStringLiteral("Left edge of the hole, timeline seconds"))}},
                        {QStringLiteral("track"), QStringLiteral("at")}) },
+        { "insert_gap", "timeline", "Open a hole by pushing clips right",
+          "The opposite of close_gap. Shift every clip that starts at or after `at` right by `seconds`, "
+          "on one `track` or on every track when `track` is omitted. Use it to make room for an intro or "
+          "a motion graphic without moving clips one by one (move_clip with overlap off is pushed into "
+          "the next clip). One undo step; linked A/V partners follow.",
+          objectSchema({{QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds where the hole starts"))},
+                        {QStringLiteral("seconds"), numberProp(QStringLiteral("Hole width in seconds (> 0)"))},
+                        {QStringLiteral("track"), integerProp(QStringLiteral("Track index; omit for all tracks"))}},
+                       {QStringLiteral("at"), QStringLiteral("seconds")}) },
         { "set_snap", "timeline", "Toggle snapping",
           "Editor snap-to-clips/beats/bookmarks. Not undoable.",
           objectSchema({{QStringLiteral("enabled"), boolProp(QStringLiteral("Snap on"))}},

@@ -787,6 +787,7 @@ public:
     // width of the gap immediately following that position, closing it. Linked partner
     // clips on other tracks (e.g. a companion audio clip) follow along to stay in sync.
     Q_INVOKABLE void closeGap(int trackIndex, double gapStartSeconds);
+    Q_INVOKABLE void insertGap(int trackIndex, double atSeconds, double seconds);
     Q_INVOKABLE void alignSelectedClipLeft();
     Q_INVOKABLE void alignSelectedClipRight();
     Q_INVOKABLE void splitSelectedClipLeft();

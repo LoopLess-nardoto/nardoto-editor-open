@@ -253,7 +253,9 @@ const QList<Op> &ops()
                                   {})) },
         { "move_clip", "timeline", "Change a clip's start time",
           "Move a clip on its track. When overlap is off (default) the start may be pushed forward to "
-          "the next gap; the reply carries requested, placed, and reason:\"gap\" when they differ.",
+          "the next gap; the reply carries requested, placed, and reason:\"gap\" when they differ. "
+          "To make room on a packed track (e.g. an intro at the front), call insert_gap instead of "
+          "moving clips one by one.",
           objectSchema(mergeProps({{QStringLiteral("at"), numberProp(QStringLiteral("New start seconds"))}},
                                   clipRefProps()),
                        {QStringLiteral("at")}) },

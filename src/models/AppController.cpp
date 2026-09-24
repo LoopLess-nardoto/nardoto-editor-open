@@ -4075,6 +4075,42 @@ void AppController::closeGap(int trackIndex, double gapStartSeconds)
     finishEdit(tr("Close gap"));
 }
 
+// O contrário do closeGap: abre um espaço de `seconds` empurrando para a direita
+// todo clipe que começa em `atSeconds` ou depois. trackIndex < 0 = todas as
+// trilhas (abrir espaço para uma intro no começo). Um único passo de desfazer.
+void AppController::insertGap(int trackIndex, double atSeconds, double seconds)
+{
+    if (seconds <= 0 || trackIndex >= m_project.tracks().size())
+        return;
+
+    const drift::Project before = m_project; // cópia antes de qualquer referência (ver closeGap)
+    const drift::TimeUs atUs = drift::secondsToUs(atSeconds);
+    const drift::TimeUs shiftUs = drift::secondsToUs(seconds);
+
+    QSet<QString> movedIds;
+    for (int t = 0; t < m_project.tracks().size(); ++t) {
+        if (trackIndex >= 0 && t != trackIndex)
+            continue;
+        for (drift::Clip &clip : m_project.tracks()[t].clips) {
+            if (clip.timelineStart < atUs)
+                continue;
+            clip.timelineStart += shiftUs;
+            movedIds.insert(clip.id);
+        }
+    }
+    if (movedIds.isEmpty())
+        return;
+    if (trackIndex >= 0) {
+        for (const drift::Clip &clip : m_project.tracks()[trackIndex].clips) {
+            if (movedIds.contains(clip.id))
+                syncLinkedPartnersFrom(m_project, clip, movedIds);
+        }
+    }
+
+    pushProjectEdit(before, tr("Insert gap"));
+    finishEdit(tr("Insert gap"));
+}
+
 void AppController::splitAtPlayhead()
 {
     const drift::Project before = m_project;

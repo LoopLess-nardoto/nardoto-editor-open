@@ -1477,6 +1477,19 @@ QJsonObject McpDispatcher::applyOneExtended(const QString &tool, const QJsonObje
         return ok({});
     }
 
+    if (tool == QLatin1String("insert_gap")) {
+        if (!args.contains(QStringLiteral("at")) || !args.contains(QStringLiteral("seconds")))
+            return err("bad_args", QStringLiteral("at and seconds required"));
+        const double seconds = jsonNumber(args.value(QStringLiteral("seconds")), 0.0);
+        if (seconds <= 0)
+            return err("bad_args", QStringLiteral("seconds must be > 0"));
+        const int track = args.contains(QStringLiteral("track")) ? jsonInt(args.value(QStringLiteral("track"))) : -1;
+        if (track >= m_controller->tracks().size())
+            return err("not_found", QStringLiteral("Unknown track"));
+        m_controller->insertGap(track, jsonNumber(args.value(QStringLiteral("at")), 0.0), seconds);
+        return ok({{QStringLiteral("shifted_by"), seconds}});
+    }
+
     if (tool == QLatin1String("set_snap")) {
         if (!args.contains(QStringLiteral("enabled")))
             return err("bad_args", QStringLiteral("enabled required"));
