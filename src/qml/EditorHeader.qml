@@ -8,13 +8,29 @@ import "components"
 Rectangle {
     id: root
 
+    // Main owns the window; the header only asks for it.
+    signal downloadsRequested()
+
     height: Theme.headerHeight
     color: Theme.appBackground
 
     property string projectName: EditorState.projectName
 
-    readonly property var projectFilter: [qsTr("Projeto do Nardoto Editor (*.drift)")]
-    readonly property var projectMimeTypes: ["application/x-nardoto-editor-project"]
+    // Disabled: external project imports (Premiere Pro, DaVinci Resolve/FCPXML, Kdenlive/Shotcut,
+    // .mogrt, EDL, OTIO) need more fixing before shipping. Uncomment these entries, the open*()
+    // functions below and the RecentProjectsPopup connections when the readers are stable.
+    readonly property var projectFilter: [
+        qsTr("Projeto do Nardoto Editor (*.drift)"),
+        qsTr("JSON document (*.json)"),
+        qsTr("All Files (*)")
+    ]
+    readonly property var projectMimeTypes: [
+        "application/x-nardoto-editor-project",
+        "application/xml",
+        "text/xml",
+        "application/zip",
+        "application/octet-stream"
+    ]
 
     // Action to run after Save or Don't Save resolves. Null when idle.
     property var _pendingAfterUnsaved: null
@@ -30,25 +46,24 @@ Rectangle {
         unsavedDialog.openDialog()
     }
 
+    // New / Open / Recent / Close all delegate to the window: it's the one place
+    // that owns the confirm-if-dirty gate for these together with the start
+    // screen's show/hide bookkeeping, so Ctrl+N/Ctrl+O, this header's Projects
+    // menu, and the start screen's own tiles can't drift out of sync.
     function openProject() {
-        root.confirmIfDirty(function () {
-            var url = FileDialogs.openFile(qsTr("Open Project"), root.projectFilter,
-                                           root.projectMimeTypes)
-            if (url != "")
-                EditorState.loadProject(url)
-        })
+        root.Window.window.requestOpenProjectDialog()
     }
 
     function requestNewProject() {
-        root.confirmIfDirty(function () {
-            EditorState.newProject()
-        })
+        root.Window.window.requestNewProject()
     }
 
     function openRecent(path) {
-        root.confirmIfDirty(function () {
-            EditorState.openRecentProject(path)
-        })
+        root.Window.window.requestOpenRecentProject(path)
+    }
+
+    function closeProject() {
+        root.Window.window.requestCloseProject()
     }
 
     // Returns true when the project is clean after the attempt. False if the
@@ -67,6 +82,19 @@ Rectangle {
         return !EditorState.hasUnsavedChanges
     }
 
+    // Save As: writes the open project to a new .drift and keeps editing that one, leaving the
+    // file it came from exactly as it was on disk. The suggested name is the project's plus
+    // "copy", so accepting the picker's default cannot overwrite the original.
+    function saveProjectAs() {
+        var url = FileDialogs.saveFile(qsTr("Save Project As"), root.projectFilter,
+                                       qsTr("%1 copy").arg(EditorState.projectName), "drift", "",
+                                       root.projectMimeTypes)
+        if (url == "")
+            return false
+        EditorState.saveProjectAs(url)
+        return !EditorState.hasUnsavedChanges
+    }
+
     // Raw document JSON: an export, not a project file. Always asks for a path and leaves the
     // current .drift association untouched.
     function saveProjectJson() {
@@ -80,7 +108,13 @@ Rectangle {
 
     // Inverse of saveProjectJson. Confirms unsaved work like Open, because it replaces the
     // timeline. The JSON does not become the current project path.
+    //
+    // loadProjectJson() itself rejects a second call while another load is still in
+    // flight (see AppController::beginProjectLoad), so this check only saves the user a
+    // trip through the file dialog for a request the backend would refuse anyway.
     function openProjectJson() {
+        if (root.Window.window.rejectIfProjectOpenPending())
+            return
         root.confirmIfDirty(function () {
             var url = FileDialogs.openFile(qsTr("Open Project JSON"),
                                            [qsTr("JSON document (*.json)")],
@@ -89,6 +123,75 @@ Rectangle {
                 EditorState.loadProjectJson(url)
         })
     }
+
+    // Disabled: external project imports (Premiere Pro, DaVinci Resolve/FCPXML, Kdenlive/Shotcut,
+    // .mogrt, EDL, OTIO). Uncomment alongside the loadProject() routing in AppController once the
+    // readers are stable.
+    //
+    // function openPremiereProject() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import Premiere Pro Project"),
+    //                                        [qsTr("Premiere Pro project (*.prproj *.xml)"),
+    //                                         qsTr("Premiere Pro project (*.prproj)"),
+    //                                         qsTr("Final Cut Pro XML (*.xml)")],
+    //                                        ["application/xml", "text/xml"])
+    //         if (url != "")
+    //             EditorState.loadPremiereProject(url)
+    //     })
+    // }
+    //
+    // function openMogrt() {
+    //     var url = FileDialogs.openFile(qsTr("Import Motion Graphics Template"),
+    //                                    [qsTr("Motion Graphics Template (*.mogrt)"),
+    //                                     qsTr("All Files (*)")],
+    //                                    ["application/zip", "application/octet-stream"])
+    //     if (url != "")
+    //         EditorState.importMogrt(url)
+    // }
+    //
+    // function openKdenliveProject() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import Kdenlive / Shotcut Project"),
+    //                                        [qsTr("Kdenlive & Shotcut project (*.kdenlive *.mlt)"),
+    //                                         qsTr("Kdenlive project (*.kdenlive)"),
+    //                                         qsTr("Shotcut project (*.mlt)")],
+    //                                        ["application/xml", "text/xml", "application/x-kdenlive"])
+    //         if (url != "")
+    //             EditorState.loadKdenliveProject(url)
+    //     })
+    // }
+    //
+    // function openResolveProject() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import DaVinci Resolve Project / FCPXML"),
+    //                                        [qsTr("DaVinci Resolve project (*.drp *.fcpxml)"),
+    //                                         qsTr("DaVinci Resolve project archive (*.drp)"),
+    //                                         qsTr("Final Cut Pro X XML (*.fcpxml)")],
+    //                                        ["application/zip", "application/octet-stream", "application/xml", "text/xml"])
+    //         if (url != "")
+    //             EditorState.loadResolveProject(url)
+    //     })
+    // }
+    //
+    // function openEdlTimeline() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import Edit Decision List (.edl)"),
+    //                                        [qsTr("Edit Decision List (*.edl)")],
+    //                                        ["text/plain", "application/octet-stream"])
+    //         if (url != "")
+    //             EditorState.loadEdlTimeline(url)
+    //     })
+    // }
+    //
+    // function openOtioTimeline() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import OpenTimelineIO (.otio)"),
+    //                                        [qsTr("OpenTimelineIO sequence (*.otio)")],
+    //                                        ["application/json", "text/plain", "application/octet-stream"])
+    //         if (url != "")
+    //             EditorState.loadOtioTimeline(url)
+    //     })
+    // }
 
     // Save As with every source file copied in, so the result opens on a machine that has none of
     // the media. Always asks for a path: it is a different artefact from the working save.
@@ -101,7 +204,7 @@ Rectangle {
     }
 
     function exportVideo() {
-        exportDialog.openDialog()
+        exportDialogLoader.ensure().openDialog()
     }
 
     // True once the user has dismissed the progress dialog while an export is
@@ -114,41 +217,50 @@ Rectangle {
         function onExportInProgressChanged() {
             if (EditorState.exportInProgress) {
                 root.exportProgressDismissed = false
-                exportProgressDialog.openDialog()
+                exportProgressDialogLoader.ensure().openDialog()
             }
         }
         function onSaveRequested() { root.saveProject() }
+        function onSaveAsRequested() { root.saveProjectAs() }
         function onOpenRequested() { root.openProject() }
         function onNewProjectRequested() { root.requestNewProject() }
     }
 
-    ExportDialog {
-        id: exportDialog
+    LazyLoader {
+        id: exportDialogLoader
+        sourceComponent: Component { ExportDialog { } }
     }
 
-    ExportProgressDialog {
-        id: exportProgressDialog
-        onClosed: if (EditorState.exportInProgress) root.exportProgressDismissed = true
+    LazyLoader {
+        id: exportProgressDialogLoader
+        sourceComponent: Component {
+            ExportProgressDialog {
+                onClosed: if (EditorState.exportInProgress) root.exportProgressDismissed = true
+            }
+        }
     }
 
-    ProjectPropertiesDialog {
-        id: projectPropertiesDialog
+    LazyLoader {
+        id: projectPropertiesDialogLoader
+        sourceComponent: Component { ProjectPropertiesDialog { } }
     }
 
     PackageProgressDialog {
         id: packageProgressDialog
     }
 
-    LanguageChooserDialog {
-        id: languageChooserDialog
+    LazyLoader {
+        id: languageChooserDialogLoader
+        sourceComponent: Component { LanguageChooserDialog { } }
     }
 
     AgentAccessDialog {
         id: agentAccessDialog
     }
 
-    VideoSizeDialog {
-        id: videoSizeDialog
+    LazyLoader {
+        id: videoSizeDialogLoader
+        sourceComponent: Component { VideoSizeDialog { } }
     }
 
     UnsavedChangesDialog {
@@ -247,7 +359,7 @@ Rectangle {
             Rectangle {
                 id: projectsButton
 
-                readonly property bool open: recentPopup.visible
+                readonly property bool open: recentPopupLoader.shown
                 readonly property bool saved: !EditorState.hasUnsavedChanges
 
                 // Cap width so a long name does not shove the right-side actions.
@@ -317,19 +429,34 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: recentPopup.open()
+                    onClicked: recentPopupLoader.ensure().open()
                 }
 
-                RecentProjectsPopup {
-                    id: recentPopup
-                    y: parent.height + Theme.spacingMd
-                    onOpenFileRequested: root.openProject()
-                    onNewProjectRequested: root.requestNewProject()
-                    onOpenRecentRequested: (path) => root.openRecent(path)
-                    onPackageRequested: root.packageProject()
-                    onSaveJsonRequested: root.saveProjectJson()
-                    onOpenJsonRequested: root.openProjectJson()
-                    onPropertiesRequested: projectPropertiesDialog.openDialog()
+                // Fills the button so the popup still hangs off its bottom edge.
+                LazyLoader {
+                    id: recentPopupLoader
+                    anchors.fill: parent
+                    sourceComponent: Component {
+                        RecentProjectsPopup {
+                            y: parent.height + Theme.spacingMd
+                            onOpenFileRequested: root.openProject()
+                            onNewProjectRequested: root.requestNewProject()
+                            onOpenRecentRequested: (path) => root.openRecent(path)
+                            onCloseProjectRequested: root.closeProject()
+                            onSaveAsRequested: root.saveProjectAs()
+                            onPackageRequested: root.packageProject()
+                            onSaveJsonRequested: root.saveProjectJson()
+                            onOpenJsonRequested: root.openProjectJson()
+                            // Disabled: external project imports. Uncomment with the open*() functions above.
+                            // onImportPremiereRequested: root.openPremiereProject()
+                            // onImportMogrtRequested: root.openMogrt()
+                            // onImportKdenliveRequested: root.openKdenliveProject()
+                            // onImportResolveRequested: root.openResolveProject()
+                            // onImportEdlRequested: root.openEdlTimeline()
+                            // onImportOtioRequested: root.openOtioTimeline()
+                            onPropertiesRequested: projectPropertiesDialogLoader.ensure().openDialog()
+                        }
+                    }
                 }
             }
 
@@ -339,7 +466,7 @@ Rectangle {
                 text: qsTr("Save")
                 tooltip: {
                     const keys = EditorState.shortcutFor("save")
-                    return keys.length > 0 ? qsTr("Save project (%1)").arg(keys)
+                    return keys.length > 0 ? qsTr("Save project (%1)").arg(Theme.shortcutDisplay(keys))
                                            : qsTr("Save project")
                 }
                 anchors.verticalCenter: parent.verticalCenter
@@ -350,10 +477,10 @@ Rectangle {
                 glyph: Theme.icons.ratio
                 variant: "ghost"
                 text: qsTr("Video")
-                active: videoSizeDialog.visible || EditorState.canvasCropMode
+                active: videoSizeDialogLoader.shown || EditorState.canvasCropMode
                 tooltip: qsTr("Video size and layout")
                 anchors.verticalCenter: parent.verticalCenter
-                onClicked: videoSizeDialog.openDialog()
+                onClicked: videoSizeDialogLoader.ensure().openDialog()
             }
         }
 
@@ -368,6 +495,50 @@ Rectangle {
             Layout.alignment: Qt.AlignVCenter
             spacing: Theme.spacingSm
 
+            Item {
+                id: downloadsButton
+                visible: Market.configured
+                implicitWidth: downloadsBtn.implicitWidth
+                implicitHeight: downloadsBtn.implicitHeight
+                width: visible ? implicitWidth : 0
+                height: implicitHeight
+                anchors.verticalCenter: parent.verticalCenter
+
+                IconButton {
+                    id: downloadsBtn
+                    anchors.fill: parent
+                    glyph: Theme.icons.download
+                    variant: "ghost"
+                    active: Market.activeDownloadCount > 0
+                    tooltip: Market.activeDownloadCount > 0
+                             ? qsTr("Downloads — %n running", "", Market.activeDownloadCount)
+                             : qsTr("Downloads")
+                    onClicked: root.downloadsRequested()
+                }
+
+                // Count rather than a plain dot: with a queue behind a three-at-a-time cap,
+                // how many are outstanding is the thing worth knowing at a glance.
+                Rectangle {
+                    visible: Market.activeDownloadCount > 0
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingXs
+                    width: Math.max(Theme.spacingXl, downloadCount.implicitWidth + Theme.spacingSm)
+                    height: Theme.spacingXl
+                    radius: height / 2
+                    color: Theme.primary
+
+                    Text {
+                        id: downloadCount
+                        anchors.centerIn: parent
+                        text: String(Market.activeDownloadCount)
+                        color: Theme.primaryForeground
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeXs
+                    }
+                }
+            }
+
             component HeaderSeparator: Item {
                 width: Theme.spacingLg + Theme.borderWidth
                 height: 32
@@ -381,40 +552,42 @@ Rectangle {
                 }
             }
 
-            // Workspace switcher. Portrait projects default to the portrait
-            // arrangement, but the choice stays the user's: a tall canvas on an
-            // ultrawide display is still comfortable in the landscape workspace, and
-            // a portrait *display* suits the portrait one whatever the canvas is.
-            // Picking either explicitly stops the canvas from driving it; "Auto"
-            // hands it back.
+            // Workspace, theme and language were three header buttons of their own.
+            // They share one menu now, with the rest of the preferences a step further
+            // in behind "More settings…".
+            //
+            // Workspace: portrait projects default to the portrait arrangement, but the
+            // choice stays the user's — a tall canvas on an ultrawide display is still
+            // comfortable in the landscape workspace, and a portrait *display* suits the
+            // portrait one whatever the canvas is. Picking either explicitly stops the
+            // canvas from driving it; "Auto" hands it back.
             Item {
-                id: workspaceButton
-                implicitWidth: workspaceBtn.implicitWidth
-                implicitHeight: workspaceBtn.implicitHeight
+                id: settingsButton
+                implicitWidth: settingsBtn.implicitWidth
+                implicitHeight: settingsBtn.implicitHeight
                 width: implicitWidth
                 height: implicitHeight
                 anchors.verticalCenter: parent.verticalCenter
 
-                readonly property bool portrait: {
-                    const win = root.Window.window
-                    return win ? win.portraitWorkspace : false
-                }
-
                 IconButton {
-                    id: workspaceBtn
+                    id: settingsBtn
                     anchors.fill: parent
-                    glyph: workspaceButton.portrait ? Theme.icons.smartphone : Theme.icons.monitor
+                    glyph: Theme.icons.settings
                     variant: "ghost"
-                    text: qsTr("Workspace")
-                    active: workspaceMenu.opened
-                    tooltip: workspaceButton.portrait ? qsTr("Workspace: portrait")
-                                                      : qsTr("Workspace: landscape")
-                    onClicked: workspaceMenu.popup(0, workspaceButton.height + Theme.spacingMd)
+                    text: qsTr("Settings")
+                    active: settingsMenu.opened
+                    tooltip: qsTr("Workspace, theme, language and more")
+                    onClicked: settingsMenu.popup(0, settingsButton.height + Theme.spacingMd)
                 }
 
                 ThemedContextMenu {
-                    id: workspaceMenu
-                    implicitWidth: 236
+                    id: settingsMenu
+                    implicitWidth: 248
+
+                    ThemedMenuItem {
+                        sectionHeader: true
+                        text: qsTr("Workspace")
+                    }
 
                     // The active entry swaps its own icon for a tick rather than
                     // adding a trailing column — every row keeps a glyph, so the
@@ -441,25 +614,58 @@ Rectangle {
                                    ? Theme.icons.check : Theme.icons.smartphone
                         onTriggered: EditorState.setWorkspaceLayoutPreference("portrait")
                     }
+
+                    ThemedMenuSeparator { }
+
+                    ThemedMenuItem {
+                        sectionHeader: true
+                        text: qsTr("Theme")
+                    }
+
+                    ThemedMenuItem {
+                        text: qsTr("Light")
+                        icon.name: Theme.darkMode ? Theme.icons.sun : Theme.icons.check
+                        onTriggered: Theme.setDarkMode(false)
+                    }
+
+                    ThemedMenuItem {
+                        text: qsTr("Dark")
+                        icon.name: Theme.darkMode ? Theme.icons.check : Theme.icons.moon
+                        onTriggered: Theme.setDarkMode(true)
+                    }
+
+                    ThemedMenuSeparator { }
+
+                    ThemedMenuItem {
+                        text: qsTr("Language…")
+                        icon.name: Theme.icons.languages
+                        onTriggered: languageChooserDialogLoader.ensure().openFromHeader()
+                    }
+
+                    ThemedMenuSeparator { }
+
+                    // Infrequent tools. They were icon-only header buttons of their own,
+                    // unlabelled and easy to hit by accident next to Export.
+                    ThemedMenuItem {
+                        text: qsTr("Multicam")
+                        icon.name: Theme.icons.shuffle
+                        onTriggered: root.Window.window.openMulticam()
+                    }
+
+                    ThemedMenuItem {
+                        text: qsTr("Debug info…")
+                        icon.name: Theme.icons.bug
+                        onTriggered: root.Window.window.openDebugInfo()
+                    }
+
+                    ThemedMenuSeparator { }
+
+                    ThemedMenuItem {
+                        text: qsTr("More settings…")
+                        icon.name: Theme.icons.sliders
+                        onTriggered: root.Window.window.openSettings()
+                    }
                 }
-            }
-
-            IconButton {
-                glyph: Theme.darkMode ? Theme.icons.sun : Theme.icons.moon
-                variant: "ghost"
-                text: qsTr("Theme")
-                tooltip: Theme.darkMode ? qsTr("Switch to light mode") : qsTr("Switch to dark mode")
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: Theme.toggleDarkMode()
-            }
-
-            IconButton {
-                glyph: Theme.icons.languages
-                variant: "ghost"
-                text: qsTr("Language")
-                tooltip: qsTr("Language for menus and labels")
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: languageChooserDialog.openFromHeader()
             }
 
             HeaderSeparator {}
@@ -593,33 +799,6 @@ Rectangle {
 
             HeaderSeparator {}
 
-            // Infrequent tools, icon-only, kept off the main labeled cluster.
-            IconButton {
-                glyph: Theme.icons.shuffle
-                variant: "ghost"
-                tooltip: qsTr("Multicam")
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: {
-                    const win = root.Window.window
-                    if (win)
-                        win.openMulticam()
-                }
-            }
-
-            IconButton {
-                glyph: Theme.icons.bug
-                variant: "ghost"
-                tooltip: qsTr("Debug info")
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: {
-                    const win = root.Window.window
-                    if (win)
-                        win.openDebugInfo()
-                }
-            }
-
-            HeaderSeparator {}
-
             Rectangle {
                 id: exportProgressBadge
                 width: Theme.iconButtonSize
@@ -653,7 +832,7 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         root.exportProgressDismissed = false
-                        exportProgressDialog.openDialog()
+                        exportProgressDialogLoader.ensure().openDialog()
                     }
                 }
             }

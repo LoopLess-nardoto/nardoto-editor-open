@@ -2,6 +2,7 @@
 
 #include <QJsonObject>
 #include <QString>
+#include <QVariantList>
 
 class AppController;
 
@@ -14,11 +15,15 @@ public:
 
     QJsonObject inspect(const QJsonObject &args) const;
     QJsonObject apply(const QJsonObject &args);
+    // Validates against the op schema, then runs; appends ignored:[unknown keys] on success.
     QJsonObject applyOne(const QString &tool, const QJsonObject &args);
+    QJsonObject applyOneUnchecked(const QString &tool, const QJsonObject &args);
     QJsonObject applyOneExtended(const QString &tool, const QJsonObject &args);
     // Macros de montagem (McpDispatcherAssemble.cpp): compõem as ops acima num passo de desfazer.
     QJsonObject applyOneAssemble(const QString &tool, const QJsonObject &args);
     QJsonObject capture(const QJsonObject &args);
+    QJsonObject frames(const QJsonObject &args);
+    QJsonObject activity(const QJsonObject &args);
 
 private:
     struct ClipRef {
@@ -29,8 +34,15 @@ private:
     };
 
     ClipRef resolveClip(const QJsonObject &args) const;
+    // "video", "audio", "image", "text", "subtitle", "shape", "adjustment", "vector", "model3d".
+    QString clipKind(const ClipRef &ref) const;
+    // type_mismatch unless the clip's kind is one of `kinds`; empty when it is.
+    QJsonObject requireKind(const ClipRef &ref, const QStringList &kinds, const char *what) const;
     int resolveAsset(const QJsonValue &value) const;
+    // transitionKinds() rows carry their id under "kind"; the catalog helpers key on "id".
+    QVariantList transitionCatalog() const;
     QJsonObject clipFeedback(const ClipRef &ref, const QJsonObject &extra = {}) const;
+    QJsonObject effectHost(const ClipRef &ref, QJsonObject extra) const;
     QJsonObject waitImport(const QStringList &ids);
     bool isUndoable(const QString &tool) const;
     void moveClipToRequested(const ClipRef &ref, double at);
@@ -39,6 +51,12 @@ private:
     QJsonObject opListAssets() const;
     QJsonObject opRenameAsset(const QJsonObject &args);
     QJsonObject opAddTrack(const QJsonObject &args);
+    QJsonObject opMakeTransformLayer(const QJsonObject &args);
+    QJsonObject opSetTransformSpan(const QJsonObject &args);
+    // {end, covers} for the transform layer at `track`.
+    QJsonObject transformSpanJson(int track) const;
+    // The transform layers moving the clip's track, outermost first.
+    QJsonArray transformedBy(int track) const;
     QJsonObject opRemoveTrack(const QJsonObject &args);
     QJsonObject opSetTrack(const QJsonObject &args);
     QJsonObject opPlaceClip(const QJsonObject &args);
@@ -61,9 +79,9 @@ private:
     QJsonObject opClearWorkArea();
     QJsonObject opAddText(const QJsonObject &args);
     QJsonObject opSetText(const QJsonObject &args);
-    QJsonObject opListEffects() const;
-    QJsonObject opListAudioEffects() const;
-    QJsonObject opListTransitions() const;
+    QJsonObject opListEffects(const QJsonObject &args) const;
+    QJsonObject opListAudioEffects(const QJsonObject &args) const;
+    QJsonObject opListTransitions(const QJsonObject &args) const;
     QJsonObject opAddEffect(const QJsonObject &args);
     QJsonObject opRemoveEffect(const QJsonObject &args);
     QJsonObject opSetEffectParam(const QJsonObject &args);
@@ -96,7 +114,7 @@ private:
     QJsonObject opSplitOnScenes(const QJsonObject &args);
     QJsonObject opGetUiPreferences() const;
     QJsonObject opSetTheme(const QJsonObject &args);
-    QJsonObject opListShortcuts() const;
+    QJsonObject opListShortcuts(const QJsonObject &args) const;
     QJsonObject opSetShortcut(const QJsonObject &args);
     QJsonObject opResetShortcuts();
     QJsonObject opAssembleVideo(const QJsonObject &args);

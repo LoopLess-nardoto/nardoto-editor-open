@@ -21,10 +21,6 @@ Item {
     readonly property real rightInset: SafeArea.margins.right
 
     property real zoom: 1.0
-    property string timelineTool: ""
-    property real cutHoverSeconds: -1
-    property int cutHoverTrack: -1
-    property int cutHoverClip: -1
 
     // Keyframe lane: opened from the lane bar, and only offered when the selected
     // clip has something animated. KeyframeGraph gates itself on propertiesTab, so
@@ -68,6 +64,10 @@ Item {
     property int savePresetTrack: -1
     property int savePresetClip: -1
 
+    function requestConvertTextToSubtitle() {
+        convertToSubtitleDialog.open()
+    }
+
     // TimelineClipItem's context menu calls this on its `panel`, so the touch timeline
     // has to answer it exactly as TimelinePanel does or "Rename…" is a TypeError.
     function requestRenameClip(trackIndex, clipIndex) {
@@ -90,6 +90,55 @@ Item {
         const clips = root.tracks[trackIndex].clips || []
         const name = clipIndex < clips.length ? (clips[clipIndex].name || "") : ""
         effectPresetNameDialog.openWith(qsTr("Save effect preset"), name)
+    }
+
+    // === Voiceover control bar (top-right of mobile timeline) ===
+    VoiceoverControlBar {
+        id: voiceoverBar
+        anchors.top: parent.top
+        anchors.topMargin: 4
+        anchors.right: parent.right
+        anchors.rightMargin: Math.max(8, root.rightInset + 8)
+        z: 200
+        visible: EditorState.isRecordingAudio
+        opacity: visible ? 1 : 0
+        Behavior on opacity {
+            NumberAnimation { duration: 180 }
+        }
+    }
+
+    // One gap menu for the whole timeline, rather than one built up front inside every gap.
+    property int gapMenuTrack: -1
+    property real gapMenuStart: 0
+    function openGapMenu(trackIndex, start) {
+        gapMenuTrack = trackIndex
+        gapMenuStart = start
+        gapContextMenu.popup()
+    }
+
+    ThemedContextMenu {
+        id: gapContextMenu
+        ThemedMenuItem {
+            text: qsTr("Close gap")
+            icon.name: Theme.icons.chevronsRightLeft
+            onTriggered: EditorState.closeGap(root.gapMenuTrack, root.gapMenuStart)
+        }
+    }
+
+    ThemedDialog {
+        id: convertToSubtitleDialog
+        title: qsTr("Convert to subtitle?")
+        acceptText: qsTr("Convert")
+        preferredWidth: Theme.dialogWidthSm
+
+        contentItem: ThemedLabel {
+            width: parent ? parent.width : Theme.dialogWidthSm
+            wrapMode: Text.WordWrap
+            size: "sm"
+            text: qsTr("The selected text clips will be replaced by one subtitle clip. Every caption will use the position and style of the first text clip.")
+        }
+
+        onAccepted: EditorState.convertSelectionToSubtitle()
     }
 
     ThemedDialog {
@@ -191,12 +240,6 @@ Item {
         }
     }
 
-    onTimelineToolChanged: if (timelineTool === "") {
-        cutHoverSeconds = -1
-        cutHoverTrack = -1
-        cutHoverClip = -1
-    }
-
     // Matches TimelinePanel's floor. 0.05 was 2.5 px/second: a ten-minute project was
     // 1500px against a ~330px viewport with no way to see it end to end.
     readonly property real minZoom: 0.0001
@@ -207,40 +250,55 @@ Item {
     readonly property real timelineEndPadPx: Math.max(
         Theme.timelineEndPadMinPx, flick.width * Theme.timelineEndPadFraction)
 
-    // Keep `anchorSeconds` glued to the same viewport X across the scale change.
-    // Zoom buttons used to assign root.zoom directly, so the view expanded from the
-    // content origin and whatever was on screen slid away to the right.
-    function setZoomAround(newZoom, anchorSeconds, viewportX) {
+    // --- Fixed centre playhead -------------------------------------------------------
+    // Time and horizontal scroll are the same quantity here: the head is painted at the
+    // viewport centre and the content moves under it.
+    //
+    //     contentX == playheadSeconds * pxPerSecond - flick.width / 2
+    //
+    // The half-viewport of slack at each end is Flickable.leftMargin/rightMargin, NOT
+    // padding baked into contentWidth: margins extend the scrollable range without
+    // shifting content coordinates, so every `x: t * pxPerSecond` binding — including the
+    // ones in TimelineClipItem, which desktop shares — is untouched by this.
+    readonly property real minContentX: -flick.leftMargin
+    readonly property real maxContentX: Math.max(
+        minContentX, flick.contentWidth - flick.width + flick.rightMargin)
+
+    function clampContentX(x) {
+        return Math.max(minContentX, Math.min(maxContentX, x))
+    }
+
+    readonly property real viewCentreSeconds:
+        Math.max(0, (flick.contentX + flick.width / 2) / pxPerSecond)
+
+    // The conflict between "time drives scroll" and "scroll drives time" is removed
+    // rather than arbitrated: exactly one of them is live at any moment. While the user
+    // owns the view the Binding below is inert; the rest of the time it is the only
+    // writer of contentX. scrollLocked is in the set because dragEdgeScroll writes
+    // contentX directly during a clip drag, and without it that would drag the playhead
+    // along with the clip.
+    readonly property bool userDrivingView: flick.dragging || flick.flicking
+                                            || pinch.active || root.scrollLocked
+
+    // No anchor argument any more: the anchor is the playhead, and the playhead is the
+    // centre of the viewport by construction. Set the scale and contentX follows.
+    function setZoom(newZoom) {
         const z = Math.max(minZoom, Math.min(maxZoom, newZoom))
         if (z === zoom)
             return
-        contentXAnimation.stop()
         zoom = z
-        const newMaxX = Math.max(0, flick.contentWidth - flick.width)
-        flick.contentX = Math.max(0, Math.min(newMaxX,
-                                              anchorSeconds * pxPerSecond - viewportX))
         filmstripRefreshEpoch++
     }
 
-    // Zoom buttons: hold the playhead steady.
-    function setZoom(newZoom) {
-        const anchorSeconds = Math.max(0, EditorState.playheadSeconds)
-        const viewportX = anchorSeconds * pxPerSecond - flick.contentX
-        setZoomAround(newZoom, anchorSeconds, viewportX)
-    }
-
     function fitZoom() {
-        contentXAnimation.stop()
         if (!(EditorState.durationSeconds > 0)) {
             zoom = 1.0
-            flick.contentX = 0
             filmstripRefreshEpoch++
             return
         }
         const usable = Math.max(Math.max(flick.width, 1) - timelineEndPadPx, 1)
         const fit = usable / (EditorState.durationSeconds * Theme.pixelsPerSecondBase)
         zoom = Math.max(minZoom, Math.min(maxZoom, fit))
-        flick.contentX = 0
         filmstripRefreshEpoch++
     }
     readonly property real labelsWidth: Theme.androidTrackLabelsWidth
@@ -349,6 +407,83 @@ Item {
     }
 
     readonly property var tracks: EditorState.tracks
+    // What the scene-graph clip renderer reads from this panel, bound once here instead of once
+    // per clip.
+    TimelineViewState {
+        id: timelineViewState
+        viewX: root.timelineViewX
+        viewW: root.timelineViewW
+        pxPerSecond: root.pxPerSecond
+        touchMode: true
+        multiSelectActive: root.multiSelectActive === true
+        totalTracksHeight: root.totalTracksHeight()
+        moveFollowActive: root.moveFollowActive
+        moveLeaderTrack: root.moveLeaderTrack
+        moveLeaderClip: root.moveLeaderClip
+        moveFollowDeltaX: root.moveFollowDeltaX
+        moveFollowDeltaY: root.moveFollowDeltaY
+        trimFollowActive: root.trimFollowActive
+        trimFollowLinkId: root.trimFollowLinkId
+        trimFollowClipId: root.trimFollowClipId
+        trimFollowStart: root.trimFollowStart
+        trimFollowDuration: root.trimFollowDuration
+        trimFollowIn: root.trimFollowIn
+        trimFollowOut: root.trimFollowOut
+        effectDropTrack: root.effectDropTrackIndex
+        effectDropClip: root.effectDropClipIndex
+        style: ({
+            "clipVideo": Theme.clipVideoPlaceholder,
+            "clipAudio": Theme.clipAudio,
+            "clipText": Theme.clipText,
+            "clipSubtitle": Theme.clipSubtitle,
+            "clipGraphic": Theme.clipGraphic,
+            "clipEffect": Theme.clipEffect,
+            "clipComposite": Theme.clipComposite,
+            "adjustmentVideo": Theme.clipAdjustmentVideo,
+            "adjustmentAudio": Theme.clipAdjustmentAudio,
+            "adjustmentMask": Theme.clipAdjustmentMask,
+            "adjustmentTransform": Theme.clipTransform,
+            "primary": Theme.primary,
+            "scrim": Theme.scrimColor,
+            "proxyBand": Theme.clipProxyBand,
+            "onMedia": Theme.onMedia,
+            "waveform": Theme.waveformColor,
+            "mutedForeground": Theme.mutedForeground,
+            "panelBorder": Theme.panelBorder,
+            "proxyPill": Theme.clipProxy,
+            "proxyPillForeground": Theme.clipProxyForeground,
+            "editFriendlyPill": Theme.clipEditFriendly,
+            "editFriendlyPillForeground": Theme.clipEditFriendlyForeground,
+            "warning": Theme.warning,
+            "fontFamily": Theme.fontFamily,
+            "fontSizeTiny": Theme.fontSizeTiny,
+            "fontSizeXs": Theme.fontSizeXs,
+            "radiusSm": Theme.radiusSm,
+            "radiusXs": Theme.radiusXs,
+            "ringWidth": Theme.clipSelectionRingWidth,
+            "borderWidthFocus": Theme.borderWidthFocus,
+            "headerBandHeight": Theme.clipHeaderBandHeight,
+            "clipMinWidth": Theme.clipMinWidth,
+            "iconSizeSm": Theme.iconSizeSm,
+            "spacingLg": Theme.spacingLg,
+            "spacingMd": Theme.spacingMd,
+            "edgeMarginDesktop": 14,
+            "edgeMarginTouch": Theme.androidClipEdgeMargin,
+            "trimHotspotExtraDesktop": 10,
+            "trimHotspotExtraTouch": Theme.androidTrimHotspotExtra,
+            "proxyLabel": qsTr("Proxy"),
+            "proxyTooltip": qsTr("Previewing from a low-resolution proxy. Export uses the original."),
+            "editFriendlyLabel": qsTr("Edit-friendly"),
+            "editFriendlyTooltip": qsTr("Converted to a constant frame rate for smooth editing"),
+            "vfrTooltip": qsTr("Variable frame rate. This clip can drift out of sync with its audio. Right-click it and choose Convert to edit-friendly format."),
+            "spanToolTip": qsTr("Transform layer: moves, scales and turns every track its bracket covers")
+        })
+    }
+
+    PlayheadInterpolator {
+        id: needle
+        active: root.visible
+    }
 
     property real snapGuideSeconds: -1
     // The guide is where the panel already records that a drag is held by a snap target, and it
@@ -364,30 +499,66 @@ Item {
     property real dropDurationSeconds: 0
     property bool dropCreatesNewTrack: false
     property int dropNewTrackIndex: 0
+    // Clip type of a non-media drag headed for a new track (see TimelineDropRouter); sizes the
+    // ghost lane when there is no asset index to ask.
+    property string pendingDropKind: ""
+    readonly property TimelineDropRouter dropRouter: TimelineDropRouter { panel: root }
     property int effectDropTrackIndex: -1
     property int effectDropClipIndex: -1
+
+
+    // A trim in progress, broadcast so the dragged clip's linked A/V companion can follow it on
+    // screen. The commit gives the partner identical timing (syncLinkedTiming), so the preview
+    // is simply the same geometry applied to both.
+    property bool trimFollowActive: false
+    property string trimFollowLinkId: ""
+    property string trimFollowClipId: ""
+    property real trimFollowStart: 0
+    property real trimFollowDuration: 0
+    property real trimFollowIn: 0
+    property real trimFollowOut: 0
+
+    function setTrimFollow(linkId, clipId, start, duration, inPoint, outPoint) {
+        trimFollowLinkId = linkId || ""
+        trimFollowClipId = clipId || ""
+        trimFollowStart = start
+        trimFollowDuration = duration
+        trimFollowIn = inPoint
+        trimFollowOut = outPoint
+        trimFollowActive = trimFollowLinkId !== ""
+    }
+
+    function clearTrimFollow() {
+        trimFollowActive = false
+        trimFollowLinkId = ""
+        trimFollowClipId = ""
+    }
 
     property bool moveFollowActive: false
     property int moveLeaderTrack: -1
     property int moveLeaderClip: -1
     property real moveFollowDeltaX: 0
+    property real moveFollowDeltaY: 0
 
     function beginMoveFollow(trackIndex, clipIndex) {
         moveLeaderTrack = trackIndex
         moveLeaderClip = clipIndex
         moveFollowDeltaX = 0
+        moveFollowDeltaY = 0
         moveFollowActive = true
     }
-    function updateMoveFollow(deltaX) {
+    function updateMoveFollow(deltaX, deltaY) {
         if (!moveFollowActive)
             return
         moveFollowDeltaX = deltaX
+        moveFollowDeltaY = deltaY || 0
     }
     function clearMoveFollow() {
         moveFollowActive = false
         moveLeaderTrack = -1
         moveLeaderClip = -1
         moveFollowDeltaX = 0
+        moveFollowDeltaY = 0
     }
 
     readonly property real timelineViewY: flick.contentY
@@ -407,11 +578,8 @@ Item {
     // slide it out of view, because MouseArea rewrites the drag target's position on
     // move events and none arrive while the finger is parked at the edge.
     function dragEdgeScroll(dx, dy) {
-        // ensurePlayheadVisible's animation would otherwise fight these ticks.
-        contentXAnimation.stop()
-        const maxX = Math.max(0, flick.contentWidth - flick.width)
         const maxY = Math.max(0, flick.contentHeight - flick.height)
-        const nx = Math.max(0, Math.min(maxX, flick.contentX + dx))
+        const nx = root.clampContentX(flick.contentX + dx)
         const ny = Math.max(0, Math.min(maxY, flick.contentY + dy))
         const applied = { "x": nx - flick.contentX, "y": ny - flick.contentY }
         flick.contentX = nx
@@ -419,8 +587,8 @@ Item {
         return applied
     }
 
-    function showLandingPreview(trackIndex, desiredStart, duration) {
-        const snapped = snapClipStart(desiredStart, duration)
+    function showLandingPreview(trackIndex, desiredStart, duration, excludeClipId) {
+        const snapped = snapClipStart(desiredStart, duration, excludeClipId)
         dropTrackIndex = trackIndex
         dropStartSeconds = snapped.start
         dropDurationSeconds = duration
@@ -447,9 +615,12 @@ Item {
         return snapped
     }
 
-    function snapClipStart(desiredStart, duration) {
-        const l = EditorState.snapTime(desiredStart)
-        const rEdge = EditorState.snapTime(desiredStart + duration)
+    // `excludeClipId` is the clip being dragged, if any: it is still parked at its old start in
+    // the model, so leaving its edges in the target set pins every short drag back to the origin.
+    function snapClipStart(desiredStart, duration, excludeClipId) {
+        const ex = excludeClipId || ""
+        const l = EditorState.snapTime(desiredStart, ex)
+        const rEdge = EditorState.snapTime(desiredStart + duration, ex)
         const lSnapped = Math.abs(l - desiredStart) > 0.0005
         const rSnapped = Math.abs(rEdge - (desiredStart + duration)) > 0.0005
         if (lSnapped && (!rSnapped || Math.abs(l - desiredStart) <= Math.abs(rEdge - duration - desiredStart)))
@@ -481,7 +652,8 @@ Item {
             return 5.0
         if (asset.kind === "image" || !(asset.durationSeconds > 0))
             return 5.0
-        return asset.durationSeconds
+        // A bin-preview trim shortens what actually lands, so the landing preview matches it.
+        return asset.placedDurationSeconds
     }
 
     function timelineHasClips() {
@@ -517,6 +689,8 @@ Item {
 
         var cursor = 0
         for (var i = 0; i < count; i++) {
+            if (!trackOccupiesARow(i))
+                continue
             const h = trackHeight(i)
             const rowEnd = cursor + h
             if (y < rowEnd + Theme.trackGap / 2) {
@@ -539,8 +713,11 @@ Item {
     // coordinates — where the ghost lane is drawn.
     function newTrackBoundaryY(insertIndex) {
         var cursor = 0
-        for (var i = 0; i < insertIndex && i < tracks.length; i++)
+        for (var i = 0; i < insertIndex && i < tracks.length; i++) {
+            if (!trackOccupiesARow(i))
+                continue
             cursor += trackHeight(i) + Theme.trackGap
+        }
         return Math.max(0, cursor - Theme.trackGap / 2)
     }
 
@@ -601,56 +778,14 @@ Item {
             runAdd()
     }
 
-    // Outgoing (earlier) clip of the boundary a transition dropped at this x
-    // would bridge.
-    function transitionLeftClipAtPosition(trackIndex, xPixels) {
-        if (trackIndex < 0 || trackIndex >= tracks.length)
-            return -1
-        const track = tracks[trackIndex]
-        if (track.type !== "video" && track.type !== "shape" && track.type !== "text")
-            return -1
-        const seconds = xPixels / pxPerSecond
-        const clips = track.clips
-        let best = -1
-        let bestDist = 1e9
-        for (let i = 0; i < clips.length; i++) {
-            const left = clips[i]
-            for (let j = 0; j < clips.length; j++) {
-                if (i === j)
-                    continue
-                const right = clips[j]
-                if (right.start < left.start)
-                    continue
-                const leftEnd = left.start + left.duration
-                const gap = right.start - leftEnd
-                if (gap > 0.001)
-                    continue
-                let regionStart
-                let regionEnd
-                if (right.start < leftEnd) {
-                    regionStart = right.start
-                    regionEnd = leftEnd
-                } else {
-                    regionStart = leftEnd - 0.25
-                    regionEnd = leftEnd + 0.25
-                }
-                if (seconds >= regionStart && seconds <= regionEnd) {
-                    const mid = (regionStart + regionEnd) / 2
-                    const dist = Math.abs(seconds - mid)
-                    if (dist < bestDist) {
-                        bestDist = dist
-                        best = i
-                    }
-                }
-            }
-        }
-        return best
-    }
-
     // --- TouchDrag drop target ------------------------------------------------
 
-    Component.onCompleted: TouchDrag.dropTarget = root
-    Component.onDestruction: if (TouchDrag.dropTarget === root) TouchDrag.dropTarget = null
+    Component.onCompleted: TouchDrag.registerTarget(root)
+    Component.onDestruction: TouchDrag.unregisterTarget(root)
+
+    function touchDropContains(sceneX, sceneY) {
+        return touchDropPoint(sceneX, sceneY).inside
+    }
 
     // Scene point → { inside, x (content px), y (track-column px), viewX, viewY }.
     // The seek strip is pinned to the top of the viewport, so anything under it is
@@ -669,6 +804,7 @@ Item {
     function clearTouchDrop() {
         clearLandingPreview()
         clearEffectDropHighlight()
+        pendingDropKind = ""
         dropEdgeScroll.stop()
     }
 
@@ -690,21 +826,7 @@ Item {
             updateAssetDropPreview(payload, pt.x, pt.y)
             return true
         }
-
-        clearLandingPreview()
-        const trackIdx = trackIndexAtY(pt.y)
-        if (trackIdx < 0) {
-            clearEffectDropHighlight()
-            return false
-        }
-        if (kind === "transition") {
-            const leftClip = transitionLeftClipAtPosition(trackIdx, Math.max(0, pt.x))
-            effectDropTrackIndex = leftClip >= 0 ? trackIdx : -1
-            effectDropClipIndex = leftClip
-            return leftClip >= 0
-        }
-        updateEffectDropHighlight(trackIdx, Math.max(0, pt.x))
-        return effectDropClipIndex >= 0
+        return dropRouter.hover(kind, payload, pt.x, pt.y)
     }
 
     function performTouchDrop(kind, payload, sceneX, sceneY) {
@@ -717,33 +839,7 @@ Item {
             performAssetDrop(payload, pt.x, pt.y)
             return
         }
-
-        const trackIdx = trackIndexAtY(pt.y)
-        const clipX = Math.max(0, pt.x)
-
-        if (kind === "transition") {
-            const leftClip = trackIdx >= 0
-                             ? transitionLeftClipAtPosition(trackIdx, clipX) : -1
-            if (leftClip < 0) {
-                Toasts.info(qsTr("Drop a transition where two clips meet."))
-                return
-            }
-            EditorState.addTransition(trackIdx, leftClip, payload, 0.5)
-            return
-        }
-
-        const clipIdx = trackIdx >= 0 ? clipIndexAtPosition(trackIdx, clipX) : -1
-        if (clipIdx < 0) {
-            Toasts.info(qsTr("Drop that onto a clip to apply it."))
-            return
-        }
-        if (kind === "effect")
-            EditorState.addEffect(trackIdx, clipIdx, payload)
-        else if (kind === "audioEffect")
-            EditorState.addAudioEffect(trackIdx, clipIdx, payload)
-        else if (kind === "template")
-            EditorState.applyEffectTemplate(trackIdx, clipIdx, payload)
-        EditorState.selectClip(trackIdx, clipIdx)
+        dropRouter.drop(kind, payload, TouchDrag.label, pt.x, pt.y)
     }
 
     // The pane is a couple of track rows tall and a few seconds wide, so without
@@ -788,41 +884,74 @@ Item {
 
     function trackOffsetY(index) {
         var cursor = 0
-        for (var i = 0; i < index && i < tracks.length; i++)
+        for (var i = 0; i < index && i < tracks.length; i++) {
+            if (!trackOccupiesARow(i))
+                continue
             cursor += trackHeight(i) + Theme.trackGap
+        }
         return cursor
     }
 
-    function trackBaseHeight(type) {
-        if (type === "video") return Theme.trackHeightVideo
-        if (type === "audio") return Theme.trackHeightAudio
-        if (type === "shape") return Theme.trackHeightShape
-        if (type === "subtitle") return Theme.trackHeightSubtitle
-        return Theme.trackHeightText
-    }
-
+    // Shared with TimelinePanel and TrackHeaderColumn — see the note there on why the rule
+    // moved out of QML.
     function trackHeight(index) {
-        if (index < 0 || index >= tracks.length)
-            return Theme.trackHeightVideo
-        const track = tracks[index]
-        const scale = track.heightScale > 0 ? track.heightScale : 1
-        return Math.round(Math.max(20, trackBaseHeight(track.type) * scale))
+        const dep = tracks.length
+        return EditorState.trackRowHeight(index, {
+            "video": Theme.trackHeightVideo,
+            "audio": Theme.trackHeightAudio,
+            "text": Theme.trackHeightText,
+            "subtitle": Theme.trackHeightSubtitle,
+            "shape": Theme.trackHeightShape,
+            "adjustment": Theme.trackHeightAdjustment,
+            "lane": Theme.adjustmentLaneHeight
+        })
     }
 
+    // A nested lane is drawn inside its parent's row rather than taking one of its own, so it
+    // must not contribute a gap either.
+    function trackOccupiesARow(index) {
+        return index >= 0 && index < tracks.length && !tracks[index].isAdjustmentLane
+    }
+
+
+    // Adjustment layers are tinted by what they act on, so a glance at a lane says whether it is
+    // grading the picture, treating the audio, or cutting a mask.
+    function adjustmentColor(kind) {
+        if (kind === "audioEffects") return Theme.clipAdjustmentAudio
+        if (kind === "mask") return Theme.clipAdjustmentMask
+        if (kind === "transform") return Theme.clipTransform
+        return Theme.clipAdjustmentVideo
+    }
     function clipColor(type) {
         if (type === "text") return Theme.clipText
         if (type === "subtitle") return Theme.clipSubtitle
         if (type === "audio") return Theme.clipAudio
         if (type === "graphic") return Theme.clipGraphic
-        if (type === "effect") return Theme.clipEffect
+        if (type === "effect" || type === "adjustment") return Theme.clipEffect
+        if (type === "composite") return Theme.clipComposite
         return Theme.clipVideoPlaceholder
+    }
+
+    // Top of a row inside the track column, which stacks the visible rows with a gap.
+    function trackRowTop(index) {
+        var cursor = 0
+        for (var i = 0; i < index && i < tracks.length; i++) {
+            if (!trackOccupiesARow(i))
+                continue
+            cursor += trackHeight(i) + Theme.trackGap
+        }
+        return cursor
     }
 
     function totalTracksHeight() {
         var h = 0
+        var rows = 0
         for (var i = 0; i < tracks.length; i++) {
+            if (!trackOccupiesARow(i))
+                continue
             h += trackHeight(i)
-            if (i > 0) h += Theme.trackGap
+            if (rows > 0) h += Theme.trackGap
+            rows++
         }
         return h
     }
@@ -839,27 +968,12 @@ Item {
         return -1
     }
 
-    // Empty stretches on a track, sorted left-to-right. Gaps are never stored —
-    // they are whatever time is not covered by a clip.
-    function gapsForTrack(trackIndex) {
-        if (trackIndex < 0 || trackIndex >= tracks.length)
-            return []
-        const sorted = tracks[trackIndex].clips.slice().sort(function (a, b) {
-            return a.start - b.start
-        })
-        const gaps = []
-        for (var i = 0; i < sorted.length - 1; i++) {
-            const gapStart = sorted[i].start + sorted[i].duration
-            const gapEnd = sorted[i + 1].start
-            if (gapEnd > gapStart)
-                gaps.push({ start: gapStart, end: gapEnd })
-        }
-        return gaps
-    }
 
     function trackIndexAtY(y) {
         var cursor = 0
         for (var i = 0; i < tracks.length; i++) {
+            if (!trackOccupiesARow(i))
+                continue
             const th = trackHeight(i)
             if (y >= cursor && y < cursor + th)
                 return i
@@ -872,54 +986,19 @@ Item {
     // sink's processedUSecs is cumulative from play(), so the visible playhead
     // becomes tapTime + elapsed. Pause for the gesture and resume on release.
     function beginPlayheadSeek() {
-        if (!EditorState.playing)
-            return
-        resumePlaybackAfterSeek = true
-        EditorState.playing = false
+        if (EditorState.playing) {
+            resumePlaybackAfterSeek = true
+            EditorState.playing = false
+        }
+        EditorState.beginScrub()
     }
 
     function endPlayheadSeek() {
+        EditorState.endScrub()
         if (!resumePlaybackAfterSeek)
             return
         resumePlaybackAfterSeek = false
         EditorState.playing = true
-    }
-
-    function ensurePlayheadVisible() {
-        const playheadX = EditorState.playheadSeconds * pxPerSecond
-        const margin = 64
-        var target = -1
-        if (playheadX < flick.contentX + margin)
-            target = Math.max(0, playheadX - margin)
-        else if (playheadX > flick.contentX + flick.width - margin)
-            target = Math.min(Math.max(0, flick.contentWidth - flick.width),
-                              playheadX - flick.width + margin)
-        if (target < 0)
-            return
-        if (EditorState.playing || flick.dragging || flick.flicking) {
-            flick.contentX = target
-            return
-        }
-        scrollToX(target)
-    }
-
-    function scrollToX(target) {
-        if (flick.dragging || flick.flicking) {
-            flick.contentX = target
-            return
-        }
-        contentXAnimation.stop()
-        contentXAnimation.from = flick.contentX
-        contentXAnimation.to = target
-        contentXAnimation.start()
-    }
-
-    NumberAnimation {
-        id: contentXAnimation
-        target: flick
-        property: "contentX"
-        duration: Theme.durationBase
-        easing.type: Theme.easing
     }
 
     Column {
@@ -976,7 +1055,7 @@ Item {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: qsTr("%n clip(s)", "", EditorState.selection.length)
+                    text: qsTr("%n clip(s)", "", EditorState.selectionCount)
                     color: Theme.panelForeground
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeXs
@@ -1037,7 +1116,11 @@ Item {
             contentWidth: flick.contentWidth
         }
 
-        Row {
+        // Not a Row: a Row positioner assigns x to every child, which silently
+        // overwrote the playhead's centring binding and left it parked at the labels
+        // column's right edge — and pushed the Flickable a playhead-width past where
+        // its own width expected to start.
+        Item {
             width: parent.width
             height: Math.max(0, parent.height - laneBar.height - keyframeLane.height
                                 - subtitleLane.height)
@@ -1094,11 +1177,79 @@ Item {
                     labelsWidth: root.labelsWidth
                     compact: true
                     touchMode: true
+                    onScrollRequested: (dy) => {
+                        flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height,
+                                                              flick.contentY + dy))
+                    }
+                }
+            }
+
+            // The head is a viewport-fixed overlay, a sibling of the Flickable rather than
+            // a child of its content item. `flick` starts after the labels column, so the
+            // centre of the *viewport* is labelsWidth + flick.width/2 — measuring from the
+            // row's left edge instead is exactly the 88px off-centre bug this replaces.
+            //
+            // Being outside the content item is also what deletes the four
+            // `y: flick.contentY` compensations the old head needed to stay put while the
+            // tracks panned vertically.
+            Item {
+                id: playhead
+                x: root.labelsWidth + flick.width / 2 - Theme.androidPlayheadCentreWidth / 2
+                y: 0
+                z: 30
+                width: Theme.androidPlayheadCentreWidth
+                height: parent.height
+
+                Rectangle {
+                    anchors.left: parent.left
+                    y: Theme.timelineRulerHeight * 0.55
+                    width: parent.width
+                    height: parent.height - y
+                    color: Theme.primary
+                }
+
+                Item {
+                    width: Theme.playheadHandleSize
+                    height: Theme.playheadHandleSize + 2
+                    x: -width / 2 + parent.width / 2
+                    y: 3
+
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
+                        height: parent.height * 0.55
+                        radius: 2
+                        color: Theme.primary
+                    }
+
+                    Canvas {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.top: parent.top
+                        anchors.topMargin: parent.height * 0.4
+                        width: parent.width
+                        height: parent.height * 0.6
+                        onPaint: {
+                            const ctx = getContext("2d")
+                            ctx.reset()
+                            ctx.beginPath()
+                            ctx.moveTo(0, 0)
+                            ctx.lineTo(width, 0)
+                            ctx.lineTo(width * 0.5, height)
+                            ctx.closePath()
+                            ctx.fillStyle = Theme.primary
+                            ctx.fill()
+                        }
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        Component.onCompleted: requestPaint()
+                    }
                 }
             }
 
             Flickable {
                 id: flick
+                x: root.labelsWidth
                 width: parent.width - root.labelsWidth
                 height: parent.height
                 contentWidth: Math.max(width, EditorState.durationSeconds * root.pxPerSecond
@@ -1108,15 +1259,47 @@ Item {
                 clip: true
                 interactive: !root.scrollLocked
                 boundsBehavior: Flickable.StopAtBounds
+                // Half a viewport of slack at each end so both t=0 and t=duration can
+                // reach the centre line. Margins, not content padding — see root.
+                leftMargin: width / 2
+                rightMargin: width / 2
                 ScrollBar.horizontal: AppScrollBar { policy: ScrollBar.AsNeeded }
                 ScrollBar.vertical: AppScrollBar { policy: ScrollBar.AsNeeded }
+
+                // Time drives scroll, except while the user is driving the view.
+                Binding {
+                    target: flick
+                    property: "contentX"
+                    value: root.clampContentX(needle.seconds * root.pxPerSecond
+                                              - flick.width / 2)
+                    when: !root.userDrivingView
+                    restoreMode: Binding.RestoreNone
+                }
+
+                // ...and scroll drives time while they are. beginPlayheadSeek already
+                // pauses transport for the gesture, so no playheadSecondsChanged from
+                // playback can arrive mid-drag to fight this.
+                onMovementStarted: root.beginPlayheadSeek()
+                onMovementEnded: {
+                    EditorState.playheadSeconds = EditorState.snapTime(root.viewCentreSeconds)
+                    Haptics.reset()
+                    root.endPlayheadSeek()
+                }
+
+                onContentXChanged: {
+                    // Pinch writes contentX itself to hold the head centred, and a clip
+                    // drag's edge autoscroll must move the view without moving time.
+                    if (!root.userDrivingView || root.scrollLocked || pinch.active)
+                        return
+                    const raw = root.viewCentreSeconds
+                    root.reportSeekSnap(raw, EditorState.playheadSeconds)
+                    EditorState.playheadSeconds = raw
+                }
 
                 PinchHandler {
                     id: pinch
                     target: null
                     property real startZoom: 1
-                    property real startContentX: 0
-                    property real centroidViewportX: 0
                     // Latched, not just rate limited: fingers held spread past the end of the range
                     // keep delivering scale events, and a limiter alone would turn the end of the
                     // zoom into a continuous buzz instead of the single bump it should be.
@@ -1126,16 +1309,6 @@ Item {
                         atZoomLimit = false
                         if (active) {
                             startZoom = root.zoom
-                            startContentX = flick.contentX
-                            // centroid.position is in the handler's parent coordinates,
-                            // which for a handler declared inside a Flickable is the
-                            // *content* item — already shifted by contentX. Mapping the
-                            // scene position into the Flickable itself is independent of
-                            // that reparenting and gives a true viewport offset; using
-                            // centroid.position directly added contentX a second time and
-                            // made the content jump sideways on every pinch.
-                            centroidViewportX =
-                                flick.mapFromItem(null, centroid.scenePosition).x
                         } else {
                             // Pinch stops dirtying the scene graph; force filmstrip Images
                             // to rebind so Android/ANGLE does not leave blank tiles.
@@ -1159,12 +1332,13 @@ Item {
                         pinch.atZoomLimit = limited
                         if (next === root.zoom)
                             return
-                        const t = (startContentX + centroidViewportX)
-                                  / (Theme.pixelsPerSecondBase * startZoom)
                         root.zoom = next
-                        const newMaxX = Math.max(0, flick.contentWidth - flick.width)
-                        flick.contentX = Math.max(0, Math.min(newMaxX,
-                                                              t * root.pxPerSecond - centroidViewportX))
+                        // Anchored on the centre — which is the playhead — the way every
+                        // other phone editor does it. The Binding is inert while the pinch
+                        // is active, so contentX is written here instead.
+                        flick.contentX = root.clampContentX(
+                                    EditorState.playheadSeconds * root.pxPerSecond
+                                    - flick.width / 2)
                     }
                 }
 
@@ -1190,38 +1364,6 @@ Item {
                             anchors.bottom: parent.bottom
                             height: 1
                             color: Theme.panelBorder
-                        }
-
-                        MouseArea {
-                            id: rulerScrub
-                            anchors.fill: parent
-                            preventStealing: true
-                            z: 1
-
-                            function scrubTo(x) {
-                                const raw = Math.max(0, x) / root.pxPerSecond
-                                EditorState.playheadSeconds =
-                                    root.reportSeekSnap(raw, EditorState.playheadSeconds)
-                            }
-                            onPressed: (mouse) => {
-                                // A previous gesture that ended on a snap would otherwise leave the
-                                // latch engaged and swallow this one's first tick.
-                                Haptics.reset()
-                                root.beginPlayheadSeek()
-                                scrubTo(mouse.x)
-                            }
-                            onPositionChanged: (mouse) => {
-                                if (pressed)
-                                    scrubTo(mouse.x)
-                            }
-                            onReleased: {
-                                Haptics.reset()
-                                root.endPlayheadSeek()
-                            }
-                            onCanceled: {
-                                Haptics.reset()
-                                root.endPlayheadSeek()
-                            }
                         }
 
                         Item {
@@ -1273,8 +1415,7 @@ Item {
                         // gets from the right button. Retiming is "Move to playhead"
                         // rather than a drag: this strip has already promised the drag to
                         // the scrubber, and a 10px flag is not a drag target on touch.
-                        // Sits above rulerScrub with preventStealing so a tap on a flag is
-                        // not read as a seek.
+                        // preventStealing keeps a tap on a flag from being read as a seek.
                         Item {
                             id: bookmarkRow
                             y: Theme.timelineRulerHeight
@@ -1372,8 +1513,11 @@ Item {
 
                                     MouseArea {
                                         anchors.fill: parent
-                                        // The flag is 10px; the target is a fingertip.
-                                        anchors.margins: -14
+                                        // The flag is 10px; the target is a fingertip — widened
+                                        // sideways only, so it cannot reach down over the first
+                                        // track and eat the start of a pan there.
+                                        anchors.leftMargin: -14
+                                        anchors.rightMargin: -14
                                         preventStealing: true
                                         pressAndHoldInterval: 400
 
@@ -1424,6 +1568,17 @@ Item {
                         }
                     }
 
+                    TransformCoverageOverlay {
+                        y: trackColumn.y
+                        width: trackColumn.width
+                        height: root.totalTracksHeight()
+                        z: 2
+                        tracks: root.tracks
+                        pxPerSecond: root.pxPerSecond
+                        rowTop: root.trackRowTop
+                        rowHeight: root.trackHeight
+                    }
+
                     Column {
                         id: trackColumn
                         y: root.seekHeaderHeight
@@ -1435,31 +1590,234 @@ Item {
                             model: root.tracks.length
                             delegate: Rectangle {
                                 id: trackRow
+                                // Above the rows below it while one of its clips is dragged, so the clip draws over them.
+                                z: trackClipsRenderer.dragging ? 20 : 0
                                 property int trackIndex: index
+                                // A nested lane is drawn inside its parent's row, not given one
+                                // of its own. Column skips invisible children, so no gap either.
+                                visible: !root.tracks[trackIndex].isAdjustmentLane
                                 width: flick.contentWidth
                                 height: root.trackHeight(trackIndex)
                                 color: Qt.rgba(Theme.panelAccent.r, Theme.panelAccent.g,
                                                Theme.panelAccent.b, 0.22)
 
-                                Repeater {
-                                    model: root.tracks[trackRow.trackIndex].clips.length
-                                    delegate: TimelineClipItem {
-                                        panel: root
-                                        timelineColumn: trackColumn
-                                        trackIndex: trackRow.trackIndex
-                                        touchMode: true
+                                // A transform layer's row carries a faint wash of its colour.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: root.tracks[trackRow.trackIndex].isTransformLayer === true
+                                    color: Qt.rgba(Theme.clipTransform.r, Theme.clipTransform.g,
+                                                   Theme.clipTransform.b, 0.07)
+                                }
+
+                                // A tap on empty track clears the selection. Clips take their
+                                // own presses first, and a drag still belongs to the Flickable.
+                                TapHandler {
+                                    enabled: !root.multiSelectActive
+                                    onTapped: EditorState.clearSelection()
+                                }
+
+                                // Nested adjustment lanes as strips across the top of this row.
+                                Column {
+                                    id: adjustmentLaneStrips
+                                    width: trackRow.width
+                                    spacing: 0
+                                    z: 4
+
+                                    Repeater {
+                                        model: EditorState.clipsModel(trackRow.trackIndex).adjustmentLanes
+                                        delegate: Item {
+                                            id: laneStrip
+                                            required property var modelData
+                                            // See the desktop panel: this Item is what
+                                            // TimelineClipItem reads as its `trackRow`.
+                                            property int trackIndex: modelData
+                                            width: trackRow.width
+                                            height: Theme.adjustmentLaneHeight
+
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                color: Qt.rgba(Theme.clipEffect.r, Theme.clipEffect.g,
+                                                               Theme.clipEffect.b, 0.12)
+                                            }
+
+                                            TimelineTrackArea {
+                                                anchors.fill: parent
+                                                panel: root
+                                                timelineColumn: trackColumn
+                                                trackIndex: laneStrip.trackIndex
+                                                viewState: timelineViewState
+                                                touchMode: true
+                                            }
+
+                                        }
                                     }
                                 }
 
-                                // Long-press a gap to ripple everything after it left.
+                                // The track's own clips sit below the strips. TimelineClipItem
+                                // takes its parent as `trackRow`, so they size themselves to
+                                // what is left without knowing lanes exist.
+                                Item {
+                                    id: trackClipArea
+                                    // Explicit for the same reason as the desktop panel: this
+                                    // Item becomes TimelineClipItem's `trackRow`, shadowing the
+                                    // outer id at the binding below.
+                                    property int trackIndex: trackRow.trackIndex
+                                    y: adjustmentLaneStrips.height
+                                    width: trackRow.width
+                                    height: Math.max(0, trackRow.height - adjustmentLaneStrips.height)
+
+                                    TimelineTrackArea {
+                                        id: trackClipsRenderer
+                                        anchors.fill: parent
+                                        panel: root
+                                        timelineColumn: trackColumn
+                                        trackIndex: trackClipArea.trackIndex
+                                        viewState: timelineViewState
+                                        touchMode: true
+                                    }
+
+
+                                    // Live voiceover recording indicator and waveform on this track
+                                    Rectangle {
+                                        id: liveRecordingBlock
+                                        visible: EditorState.isRecordingAudio && EditorState.recordingTrackIndex === trackClipArea.trackIndex
+                                        x: (EditorState.playheadSeconds - EditorState.audioRecordSeconds) * root.pxPerSecond
+                                        width: Math.max(2, EditorState.audioRecordSeconds * root.pxPerSecond)
+                                        height: parent.height
+                                        color: Qt.rgba(Theme.destructive.r, Theme.destructive.g, Theme.destructive.b, 0.25)
+                                        border.color: EditorState.isAudioRecordingPaused ? "#eab308" : Theme.destructive
+                                        border.width: 1
+                                        radius: Theme.radiusSm
+                                        clip: true
+                                        z: 2
+
+                                        // Real-time live audio waveform canvas
+                                        Canvas {
+                                            id: liveWaveCanvas
+                                            anchors.fill: parent
+                                            anchors.margins: 1
+                                            visible: parent.width > 4
+
+                                            Connections {
+                                                target: EditorState
+                                                function onAudioRecordLivePeaksChanged() {
+                                                    liveWaveCanvas.requestPaint()
+                                                }
+                                            }
+                                            onWidthChanged: requestPaint()
+                                            onHeightChanged: requestPaint()
+
+                                            onPaint: {
+                                                var ctx = getContext("2d");
+                                                ctx.clearRect(0, 0, width, height);
+                                                var peaks = EditorState.audioRecordLivePeaks;
+                                                if (!peaks || peaks.length === 0)
+                                                    return;
+
+                                                var mid = height / 2;
+                                                var half = mid * 0.85;
+                                                var w = Math.max(1, Math.floor(width));
+                                                var n = peaks.length;
+
+                                                // Centerline guideline
+                                                ctx.strokeStyle = Qt.rgba(1.0, 1.0, 1.0, 0.15);
+                                                ctx.lineWidth = 1;
+                                                ctx.beginPath();
+                                                ctx.moveTo(0, mid);
+                                                ctx.lineTo(w, mid);
+                                                ctx.stroke();
+
+                                                // Mirrored waveform fill
+                                                ctx.fillStyle = Qt.rgba(1.0, 1.0, 1.0, 0.85);
+                                                ctx.beginPath();
+                                                for (var x = 0; x < w; x++) {
+                                                    var i0 = Math.floor(x * n / w);
+                                                    var i1 = Math.floor((x + 1) * n / w);
+                                                    if (i1 <= i0) i1 = Math.min(n, i0 + 1);
+                                                    var peak = 0;
+                                                    for (var i = i0; i < i1; i++) {
+                                                        if (peaks[i] > peak) peak = peaks[i];
+                                                    }
+                                                    var amp = Math.max(1.0, peak * half);
+                                                    if (x === 0) ctx.moveTo(x, mid - amp);
+                                                    else ctx.lineTo(x, mid - amp);
+                                                    ctx.lineTo(x + 1, mid - amp);
+                                                }
+                                                for (var xb = w - 1; xb >= 0; xb--) {
+                                                    var j0 = Math.floor(xb * n / w);
+                                                    var j1 = Math.floor((xb + 1) * n / w);
+                                                    if (j1 <= j0) j1 = Math.min(n, j0 + 1);
+                                                    var peakB = 0;
+                                                    for (var j = j0; j < j1; j++) {
+                                                        if (peaks[j] > peakB) peakB = peaks[j];
+                                                    }
+                                                    var ampB = Math.max(1.0, peakB * half);
+                                                    ctx.lineTo(xb + 1, mid + ampB);
+                                                    ctx.lineTo(xb, mid + ampB);
+                                                }
+                                                ctx.closePath();
+                                                ctx.fill();
+                                            }
+                                        }
+
+                                        // Badge tag in upper-left corner of the recording clip
+                                        Rectangle {
+                                            visible: liveRecordingBlock.width > 55
+                                            anchors.left: parent.left
+                                            anchors.leftMargin: 4
+                                            anchors.top: parent.top
+                                            anchors.topMargin: 3
+                                            height: 18
+                                            radius: 3
+                                            color: Qt.rgba(0, 0, 0, 0.7)
+                                            border.color: EditorState.isAudioRecordingPaused ? "#eab308" : Theme.destructive
+                                            border.width: 1
+                                            width: liveRecRow.implicitWidth + 8
+
+                                            Row {
+                                                id: liveRecRow
+                                                anchors.centerIn: parent
+                                                spacing: 4
+
+                                                Rectangle {
+                                                    width: 6
+                                                    height: 6
+                                                    radius: 3
+                                                    color: EditorState.isAudioRecordingPaused ? "#eab308" : Theme.destructive
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    SequentialAnimation on opacity {
+                                                        running: liveRecordingBlock.visible && !EditorState.isAudioRecordingPaused
+                                                        loops: Animation.Infinite
+                                                        NumberAnimation { to: 0.2; duration: 400 }
+                                                        NumberAnimation { to: 1.0; duration: 400 }
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: (EditorState.isAudioRecordingPaused ? qsTr("PAUSED ") : qsTr("REC "))
+                                                          + EditorState.audioRecordSeconds.toFixed(1) + "s"
+                                                    font.pixelSize: 10
+                                                    font.bold: true
+                                                    color: Theme.panelForeground
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Long-press a gap to ripple everything after it left; a tap
+                                // clears the selection like any other empty stretch of track.
                                 Repeater {
-                                    model: root.gapsForTrack(trackRow.trackIndex)
+                                    model: EditorState.clipsModel(trackRow.trackIndex).gaps
                                     delegate: Item {
                                         id: gapItem
                                         required property var modelData
                                         x: modelData.start * root.pxPerSecond
-                                        width: Math.max(Theme.androidClipEdgeMargin,
-                                                        (modelData.end - modelData.start) * root.pxPerSecond)
+                                        // The gap's own width, never more: padding it to a minimum
+                                        // spilled it over the next clip's edge, where it swallowed
+                                        // that clip's taps and its trim handle.
+                                        width: Math.max(0, (modelData.end - modelData.start) * root.pxPerSecond)
                                         height: trackRow.height
                                         z: 1
 
@@ -1474,17 +1832,15 @@ Item {
                                             id: gapPress
                                             anchors.fill: parent
                                             pressAndHoldInterval: 400
-                                            onPressAndHold: gapContextMenu.popup()
-
-                                            ThemedContextMenu {
-                                                id: gapContextMenu
-                                                ThemedMenuItem {
-                                                    text: qsTr("Close gap")
-                                                    icon.name: Theme.icons.chevronsRightLeft
-                                                    onTriggered: EditorState.closeGap(trackRow.trackIndex,
-                                                                                      gapItem.modelData.start)
-                                                }
+                                            property bool held: false
+                                            onPressed: held = false
+                                            onPressAndHold: {
+                                                held = true
+                                                Haptics.pickUp()
+                                                root.openGapMenu(trackRow.trackIndex, gapItem.modelData.start)
                                             }
+                                            onClicked: if (!held && !root.multiSelectActive)
+                                                           EditorState.clearSelection()
                                         }
                                     }
                                 }
@@ -1495,88 +1851,22 @@ Item {
                                 // No preventStealing: a pan across an overlap must still
                                 // reach the Flickable.
                                 Repeater {
-                                    model: root.tracks[trackRow.trackIndex].clips.length
+                                    model: EditorState.clipsModel(trackRow.trackIndex).transitionRegions
                                     delegate: Item {
                                         id: transitionRegion
-                                        required property int index
-                                        readonly property int leftClipIndex: index
-                                        readonly property var leftClip:
-                                            root.tracks[trackRow.trackIndex].clips[leftClipIndex]
-                                        readonly property string trackType: root.tracks[trackRow.trackIndex].type
-                                        // transitionBetweenClips is a plain call with no
-                                        // notifier of its own, and adding a transition
-                                        // leaves the clip count — the Repeater's model —
-                                        // untouched, so this has to depend on tracks
-                                        // explicitly or the region never repaints.
-                                        readonly property var transitionData: {
-                                            void EditorState.tracks
-                                            return EditorState.transitionBetweenClips(
-                                                       trackRow.trackIndex, leftClipIndex)
-                                        }
-                                        readonly property bool hasTransition:
-                                            transitionData && Object.keys(transitionData).length > 0
+                                        required property var modelData
+                                        readonly property int leftClipIndex: modelData.leftClip
+                                        readonly property bool hasTransition: modelData.hasTransition
                                         readonly property bool transitionSelected:
                                             EditorState.selectedTransitionTrack === trackRow.trackIndex
                                             && EditorState.selectedTransitionLeftClip === leftClipIndex
 
-                                        // Nearest later clip that abuts or overlaps this one.
-                                        readonly property int partnerIndex: {
-                                            const clips = root.tracks[trackRow.trackIndex].clips
-                                            const left = leftClip
-                                            if (!left)
-                                                return -1
-                                            var best = -1
-                                            var bestStart = 1e12
-                                            for (var i = 0; i < clips.length; i++) {
-                                                if (i === leftClipIndex)
-                                                    continue
-                                                const right = clips[i]
-                                                if (right.start < left.start)
-                                                    continue
-                                                if (right.start - (left.start + left.duration) > 0.001)
-                                                    continue
-                                                if (right.start < bestStart) {
-                                                    bestStart = right.start
-                                                    best = i
-                                                }
-                                            }
-                                            return best
-                                        }
-                                        readonly property var rightClip: partnerIndex >= 0
-                                            ? root.tracks[trackRow.trackIndex].clips[partnerIndex]
-                                            : null
-                                        readonly property bool physicallyOverlapping:
-                                            leftClip && rightClip
-                                            && rightClip.start < (leftClip.start + leftClip.duration)
-                                        readonly property real regionStart: {
-                                            if (!leftClip || !rightClip)
-                                                return 0
-                                            if (hasTransition && transitionData.start !== undefined)
-                                                return transitionData.start
-                                            return physicallyOverlapping ? rightClip.start : 0
-                                        }
-                                        readonly property real regionEnd: {
-                                            if (!leftClip || !rightClip)
-                                                return 0
-                                            if (hasTransition && transitionData.end !== undefined)
-                                                return transitionData.end
-                                            return physicallyOverlapping
-                                                   ? leftClip.start + leftClip.duration : 0
-                                        }
-                                        readonly property bool showRegion:
-                                            (trackType === "video" || trackType === "shape"
-                                             || trackType === "text")
-                                            && leftClip && rightClip
-                                            && (physicallyOverlapping || hasTransition)
-                                            && regionEnd > regionStart
-
                                         z: 10
-                                        visible: showRegion
-                                        x: regionStart * root.pxPerSecond
+                                        x: modelData.start * root.pxPerSecond
                                         // Floored to a fingertip rather than the desktop's
                                         // 8px, so a half-second crossfade is still tappable.
                                         width: Math.max(Theme.androidIconButtonSize,
-                                                        (regionEnd - regionStart) * root.pxPerSecond)
+                                                        (modelData.end - modelData.start) * root.pxPerSecond)
                                         y: Theme.clipSelectionRingWidth
                                         height: parent.height - Theme.clipSelectionRingWidth * 2
 
@@ -1613,10 +1903,8 @@ Item {
 
                                             Text {
                                                 anchors.centerIn: parent
-                                                text: transitionRegion.hasTransition
-                                                      ? (transitionRegion.transitionData.label
-                                                         ? transitionRegion.transitionData.label.charAt(0)
-                                                         : "≫")
+                                                text: transitionRegion.hasTransition && transitionRegion.modelData.label
+                                                      ? transitionRegion.modelData.label.charAt(0)
                                                       : "≫"
                                                 color: Theme.onMedia
                                                 font.family: Theme.fontFamily
@@ -1625,8 +1913,13 @@ Item {
                                             }
                                         }
 
+                                        // Only the glyph in the middle is a target. Covering the
+                                        // whole overlap took the ends of both clips with it, and
+                                        // those are where their trim handles are.
                                         MouseArea {
-                                            anchors.fill: parent
+                                            anchors.centerIn: parent
+                                            width: Math.min(parent.width, Theme.androidIconButtonSize)
+                                            height: parent.height
                                             onClicked: {
                                                 if (transitionRegion.hasTransition) {
                                                     Haptics.select()
@@ -1742,9 +2035,16 @@ Item {
                     Item {
                         id: newTrackIndicator
                         visible: root.dropCreatesNewTrack
-                        readonly property real laneHeight:
-                            root.trackBaseHeight(EditorState.trackTypeForAsset(
-                                                     EditorState.draggingAssetIndex))
+                        readonly property real laneHeight: {
+                            const t = root.pendingDropKind.length > 0
+                                    ? EditorState.trackTypeForKind(root.pendingDropKind)
+                                    : EditorState.trackTypeForAsset(EditorState.draggingAssetIndex)
+                            if (t === "video") return Theme.trackHeightVideo
+                            if (t === "audio") return Theme.trackHeightAudio
+                            if (t === "shape") return Theme.trackHeightShape
+                            if (t === "subtitle") return Theme.trackHeightSubtitle
+                            return Theme.trackHeightText
+                        }
                         x: 0
                         y: root.seekHeaderHeight
                            + root.newTrackBoundaryY(root.dropNewTrackIndex)
@@ -1831,249 +2131,9 @@ Item {
                         }
                     }
 
-                    Item {
-                        id: playhead
-                        y: 0
-                        z: 3
-                        width: Theme.playheadLineWidth
-                        height: root.seekHeaderHeight + root.totalTracksHeight()
-
-                        Binding {
-                            target: playhead
-                            property: "x"
-                            value: EditorState.playheadSeconds * root.pxPerSecond
-                            when: !playheadDragArea.drag.active && !playheadLineDrag.drag.active
-                        }
-
-                        onXChanged: {
-                            if (!playheadDragArea.drag.active && !playheadLineDrag.drag.active)
-                                return
-                            const raw = playhead.x / root.pxPerSecond
-                            // The drag deliberately does not snap the position — finishSeek does
-                            // that on release — but the targets it passes are still worth feeling,
-                            // and this is where the finger covers the edges it is passing over.
-                            root.reportSeekSnap(raw, EditorState.playheadSeconds)
-                            EditorState.playheadSeconds = raw
-                        }
-
-                        function finishSeek() {
-                            EditorState.playheadSeconds =
-                                EditorState.snapTime(playhead.x / root.pxPerSecond)
-                            Haptics.reset()
-                        }
-
-                        Rectangle {
-                            anchors.left: parent.left
-                            y: flick.contentY + Theme.timelineRulerHeight * 0.55
-                            width: Theme.playheadLineWidth
-                            height: parent.height - y
-                            color: Theme.primary
-                        }
-
-                        // The seek strip is pinned to the viewport (y: flick.contentY),
-                        // so the head and its grab area have to travel with it. Left in
-                        // content coordinates they scrolled off the top the moment the
-                        // tracks were panned vertically, taking the scrub target with them.
-                        Item {
-                            id: playheadHandle
-                            width: Theme.playheadHandleSize
-                            height: Theme.playheadHandleSize + 2
-                            x: -width / 2 + Theme.playheadLineWidth / 2
-                            y: flick.contentY + 3
-
-                            Rectangle {
-                                anchors.top: parent.top
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                width: parent.width
-                                height: parent.height * 0.55
-                                radius: 2
-                                color: Theme.primary
-                            }
-
-                            Canvas {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                anchors.top: parent.top
-                                anchors.topMargin: parent.height * 0.4
-                                width: parent.width
-                                height: parent.height * 0.6
-                                onPaint: {
-                                    const ctx = getContext("2d")
-                                    ctx.reset()
-                                    ctx.beginPath()
-                                    ctx.moveTo(0, 0)
-                                    ctx.lineTo(width, 0)
-                                    ctx.lineTo(width * 0.5, height)
-                                    ctx.closePath()
-                                    ctx.fillStyle = Theme.primary
-                                    ctx.fill()
-                                }
-                                onWidthChanged: requestPaint()
-                                onHeightChanged: requestPaint()
-                                Component.onCompleted: requestPaint()
-                            }
-                        }
-
-                        MouseArea {
-                            id: playheadDragArea
-                            width: Math.max(Theme.playheadSeekGrabWidth, Theme.androidIconButtonSize)
-                            height: root.seekHeaderHeight
-                            x: -(width - Theme.playheadLineWidth) / 2
-                            y: flick.contentY
-                            preventStealing: true
-                            drag.target: playhead
-                            drag.axis: Drag.XAxis
-                            drag.threshold: 0
-                            drag.minimumX: 0
-                            drag.maximumX: flick.contentWidth - Theme.playheadLineWidth
-                            onPressed: root.beginPlayheadSeek()
-                            onReleased: {
-                                playhead.finishSeek()
-                                root.endPlayheadSeek()
-                            }
-                            onCanceled: {
-                                playhead.finishSeek()
-                                root.endPlayheadSeek()
-                            }
-                        }
-
-                        // A short stem under the ruler, not the full column height: at
-                        // 12px wide over every track any touch within ±6px of the playhead
-                        // grabbed the scrubber instead of the clip underneath it.
-                        MouseArea {
-                            id: playheadLineDrag
-                            width: 12
-                            height: 24
-                            x: -(width - Theme.playheadLineWidth) / 2
-                            y: flick.contentY + playheadDragArea.height
-                            preventStealing: true
-                            drag.target: playhead
-                            drag.axis: Drag.XAxis
-                            drag.threshold: 0
-                            drag.minimumX: 0
-                            drag.maximumX: flick.contentWidth - Theme.playheadLineWidth
-                            onPressed: root.beginPlayheadSeek()
-                            onReleased: {
-                                playhead.finishSeek()
-                                root.endPlayheadSeek()
-                            }
-                            onCanceled: {
-                                playhead.finishSeek()
-                                root.endPlayheadSeek()
-                            }
-                        }
-                    }
-
-                    Item {
-                        id: cutOverlay
-                        visible: root.timelineTool !== ""
-                        enabled: root.timelineTool !== ""
-                        x: 0
-                        y: root.seekHeaderHeight
-                        width: parent.width
-                        height: Math.max(root.totalTracksHeight(), flick.height - root.seekHeaderHeight)
-                        z: 20
-
-                        function seconds(mx) {
-                            return EditorState.snapTime(Math.max(0, mx) / root.pxPerSecond)
-                        }
-
-                        function clearHover() {
-                            root.cutHoverSeconds = -1
-                            root.cutHoverTrack = -1
-                            root.cutHoverClip = -1
-                        }
-
-                        function updateHover(mx, my) {
-                            root.cutHoverSeconds = seconds(mx)
-                            const trackIdx = root.trackIndexAtY(my)
-                            root.cutHoverTrack = trackIdx
-                            root.cutHoverClip = trackIdx >= 0
-                                ? root.clipIndexAtPosition(trackIdx, Math.max(0, mx))
-                                : -1
-                        }
-
-                        MouseArea {
-                            id: cutArea
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton
-                            // No preventStealing: this covers the whole track area while a
-                            // cut tool is active, and holding the grab froze pan and pinch
-                            // outright — the timeline could not be moved to reach the cut.
-                            // Instead the cut is abandoned as soon as the gesture reads as
-                            // a pan, and the Flickable takes over.
-                            property real pressX: 0
-                            property real pressY: 0
-                            property bool panning: false
-
-                            onPressed: (mouse) => {
-                                pressX = mouse.x
-                                pressY = mouse.y
-                                panning = false
-                                cutOverlay.updateHover(mouse.x, mouse.y)
-                            }
-                            onPositionChanged: (mouse) => {
-                                if (!panning
-                                        && (Math.abs(mouse.x - pressX) > Qt.styleHints.startDragDistance
-                                            || Math.abs(mouse.y - pressY) > Qt.styleHints.startDragDistance)) {
-                                    panning = true
-                                    cutOverlay.clearHover()
-                                }
-                                if (!panning)
-                                    cutOverlay.updateHover(mouse.x, mouse.y)
-                            }
-                            onReleased: cutOverlay.clearHover()
-                            onCanceled: {
-                                panning = true
-                                cutOverlay.clearHover()
-                            }
-                            onClicked: (mouse) => {
-                                if (panning)
-                                    return
-                                const atSeconds = cutOverlay.seconds(mouse.x)
-                                const trackIdx = root.trackIndexAtY(mouse.y)
-                                if (trackIdx < 0)
-                                    return
-                                const clipIdx = root.clipIndexAtPosition(trackIdx, Math.max(0, mouse.x))
-                                if (clipIdx < 0)
-                                    return
-                                // timelineTool is a mode, not a boolean: the trim tools drop
-                                // everything to one side of the cut instead of splitting.
-                                if (root.timelineTool === "trimStart")
-                                    EditorState.splitClipLeftAt(trackIdx, clipIdx, atSeconds)
-                                else if (root.timelineTool === "trimEnd")
-                                    EditorState.splitClipRightAt(trackIdx, clipIdx, atSeconds)
-                                else
-                                    EditorState.splitClipAt(trackIdx, clipIdx, atSeconds)
-                                // One of the few taps here that changes the project rather than the
-                                // view, and on a phone the cut lands under the finger that made it.
-                                Haptics.confirm()
-                            }
-                        }
-
-                        Column {
-                            visible: root.cutHoverSeconds >= 0 && !cutArea.panning
-                            x: root.cutHoverSeconds * root.pxPerSecond
-                            spacing: 3
-                            Repeater {
-                                model: Math.ceil(cutOverlay.height / 7)
-                                delegate: Rectangle {
-                                    width: 2
-                                    height: 4
-                                    color: Theme.destructive
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
     }
 
-    Connections {
-        target: EditorState
-        function onPlayheadSecondsChanged() {
-            if (EditorState.playing)
-                root.ensurePlayheadVisible()
-        }
-    }
 }

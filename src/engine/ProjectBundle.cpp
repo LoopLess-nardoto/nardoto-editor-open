@@ -12,6 +12,8 @@
 
 #include <zstd.h>
 
+#include <algorithm>
+
 namespace drift::bundle {
 namespace {
 
@@ -55,6 +57,31 @@ bool safeFileName(const QString &name)
         return false;
     return !name.contains(QLatin1Char('/')) && !name.contains(QLatin1Char('\\'))
            && !name.contains(QLatin1Char(':'));
+}
+
+bool safeRelativePath(const QString &path)
+{
+    if (path.size() > 4096)
+        return false;
+    const QStringList segments = path.split(QLatin1Char('/'));
+    return std::all_of(segments.begin(), segments.end(), safeFileName);
+}
+
+QString uniqueName(const QFileInfo &info, const QSet<QString> &used)
+{
+    QString name = info.fileName();
+    if (name.isEmpty())
+        name = QStringLiteral("media");
+    // Two clips can carry the same basename from different directories.
+    if (used.contains(name)) {
+        const QString base = info.completeBaseName();
+        const QString suffix = info.suffix().isEmpty() ? QString() : QLatin1Char('.') + info.suffix();
+        int n = 2;
+        do {
+            name = QStringLiteral("%1-%2%3").arg(base).arg(n++).arg(suffix);
+        } while (used.contains(name));
+    }
+    return name;
 }
 
 // Already-compressed media gains nothing from zstd and costs a full CPU pass over gigabytes, so
@@ -226,11 +253,12 @@ bool readAll(const QString &path, QFile *file, BundleInfo *info, QList<BlobRecor
         entry.role = mediaRoleFromString(object.value(QStringLiteral("role")).toString());
         entry.embedded =
             object.value(QStringLiteral("storage")).toString() == QLatin1String("embedded");
+        entry.resourceOf = object.value(QStringLiteral("resourceOf")).toString();
         entry.blob = object.value(QStringLiteral("blob")).toInt(-1);
         if (entry.embedded) {
             if (entry.blob < 0 || entry.blob >= blobs->size())
                 return fail(error, QCoreApplication::translate("ProjectBundle", "project media entry names no blob"));
-            if (!safeFileName(entry.fileName))
+            if (!safeRelativePath(entry.fileName))
                 return fail(error, QCoreApplication::translate("ProjectBundle", "unsafe file name in project: %1")
                                        .arg(entry.fileName));
             info->embeddedBytes += blobs->at(entry.blob).size;
@@ -267,6 +295,10 @@ QString mediaRoleToString(MediaRole role)
         return QStringLiteral("facetrack");
     case MediaRole::Model3d:
         return QStringLiteral("model3d");
+    case MediaRole::Depth:
+        return QStringLiteral("depth");
+    case MediaRole::Stabilized:
+        return QStringLiteral("stabilized");
     case MediaRole::Source:
         break;
     }
@@ -281,6 +313,10 @@ MediaRole mediaRoleFromString(const QString &role)
         return MediaRole::FaceTrack;
     if (role == QLatin1String("model3d"))
         return MediaRole::Model3d;
+    if (role == QLatin1String("depth"))
+        return MediaRole::Depth;
+    if (role == QLatin1String("stabilized"))
+        return MediaRole::Stabilized;
     return MediaRole::Source;
 }
 
@@ -294,15 +330,47 @@ bool write(const QString &path, const WriteRequest &request, const ProgressFn &p
     quint64 offset = 0;
     quint64 totalRaw = 0;
 
+    // Media that is already gone cannot be embedded. Degrade to a reference rather than refusing
+    // the save: the bytes are lost either way, and blocking the save loses the edit too.
+    QSet<QString> embeddedDocuments;
+    for (MediaEntry &entry : media) {
+        if (entry.embedded && !(QFileInfo(entry.originalPath).isFile()
+                                && QFileInfo(entry.originalPath).isReadable()))
+            entry.embedded = false;
+        if (entry.embedded && entry.resourceOf.isEmpty())
+            embeddedDocuments.insert(entry.originalPath);
+    }
+    // A resource travels only with its document: a referenced document still finds it beside it.
+    QHash<QString, QString> documentFolder;
+    for (MediaEntry &entry : media) {
+        if (entry.resourceOf.isEmpty())
+            continue;
+        entry.embedded = entry.embedded && embeddedDocuments.contains(entry.resourceOf);
+        if (entry.embedded)
+            documentFolder.insert(entry.resourceOf, QString());
+    }
+    // Each document with resources gets a folder of its own, so two documents that both name
+    // "images/img_0.png" cannot collide. Reserved before any flat name is picked.
+    for (auto it = documentFolder.begin(); it != documentFolder.end(); ++it) {
+        const QString folder = uniqueName(QFileInfo(QFileInfo(it.key()).completeBaseName()), usedNames);
+        usedNames.insert(folder);
+        it.value() = folder;
+    }
+
     for (MediaEntry &entry : media) {
         if (!entry.embedded)
             continue;
 
         const QFileInfo info(entry.originalPath);
-        // Media that is already gone cannot be embedded. Degrade to a reference rather than
-        // refusing the save: the bytes are lost either way, and blocking the save loses the edit
-        // too.
-        if (!info.isFile() || !info.isReadable()) {
+        QString layoutName; // fixed by the document's layout rather than picked freely
+        if (!entry.resourceOf.isEmpty()) {
+            layoutName = documentFolder.value(entry.resourceOf) + QLatin1Char('/')
+                         + QDir(QFileInfo(entry.resourceOf).absolutePath())
+                               .relativeFilePath(info.absoluteFilePath());
+        } else if (documentFolder.contains(entry.originalPath)) {
+            layoutName = documentFolder.value(entry.originalPath) + QLatin1Char('/') + info.fileName();
+        }
+        if (!layoutName.isEmpty() && !safeRelativePath(layoutName)) {
             entry.embedded = false;
             continue;
         }
@@ -311,7 +379,7 @@ bool write(const QString &path, const WriteRequest &request, const ProgressFn &p
         const auto existing = blobByPath.constFind(key);
         if (existing != blobByPath.constEnd()) {
             entry.blob = existing.value();
-            entry.fileName = blobs.at(entry.blob).fileName;
+            entry.fileName = layoutName.isEmpty() ? blobs.at(entry.blob).fileName : layoutName;
             continue;
         }
 
@@ -337,20 +405,11 @@ bool write(const QString &path, const WriteRequest &request, const ProgressFn &p
             blob.storedSize = quint64(blob.packed.size());
         }
 
-        QString name = info.fileName();
-        if (name.isEmpty())
-            name = QStringLiteral("media");
-        // Two clips can carry the same basename from different directories.
-        if (usedNames.contains(name)) {
-            const QString base = info.completeBaseName();
-            const QString suffix =
-                info.suffix().isEmpty() ? QString() : QLatin1Char('.') + info.suffix();
-            int n = 2;
-            do {
-                name = QStringLiteral("%1-%2%3").arg(base).arg(n++).arg(suffix);
-            } while (usedNames.contains(name));
+        QString name = layoutName;
+        if (name.isEmpty()) {
+            name = uniqueName(info, usedNames);
+            usedNames.insert(name);
         }
-        usedNames.insert(name);
         blob.fileName = name;
 
         entry.blob = blobs.size();
@@ -380,6 +439,8 @@ bool write(const QString &path, const WriteRequest &request, const ProgressFn &p
             {QStringLiteral("storage"),
              entry.embedded ? QStringLiteral("embedded") : QStringLiteral("reference")},
         };
+        if (!entry.resourceOf.isEmpty())
+            object.insert(QStringLiteral("resourceOf"), entry.resourceOf);
         if (entry.embedded) {
             object.insert(QStringLiteral("fileName"), entry.fileName);
             object.insert(QStringLiteral("blob"), entry.blob);
@@ -517,25 +578,30 @@ bool extract(const QString &path, const QString &destDir, const ProgressFn &prog
     if (hashes.size() != qint64(blobs.size()) * kDigestSize)
         return fail(error, QCoreApplication::translate("ProjectBundle", "project file is truncated"));
 
+    // One blob can land under several names: a file that is both standalone media and a
+    // document's resource has to exist in both places.
     qint64 total = 0;
+    QSet<QString> targets;
     for (const MediaEntry &entry : info.media) {
-        if (entry.embedded)
+        if (entry.embedded && !targets.contains(entry.fileName)) {
+            targets.insert(entry.fileName);
             total += qint64(blobs.at(entry.blob).size);
+        }
     }
 
     qint64 done = 0;
-    QSet<int> extracted;
+    QSet<QString> extracted;
     for (const MediaEntry &entry : info.media) {
         if (!entry.embedded)
             continue;
 
         const BlobRecord &blob = blobs.at(entry.blob);
         const QString target = QDir(destDir).filePath(entry.fileName);
-        if (pathRemap)
+        if (pathRemap && entry.resourceOf.isEmpty())
             pathRemap->insert(entry.originalPath, target);
-        if (extracted.contains(entry.blob))
+        if (extracted.contains(entry.fileName))
             continue;
-        extracted.insert(entry.blob);
+        extracted.insert(entry.fileName);
 
         // Reopening the same bundle should not re-extract gigabytes it already unpacked.
         const QFileInfo existing(target);
@@ -548,6 +614,8 @@ bool extract(const QString &path, const QString &destDir, const ProgressFn &prog
 
         if (!file.seek(blobRegion + qint64(blob.offset)))
             return fail(error, QCoreApplication::translate("ProjectBundle", "project file is truncated"));
+        if (!QDir().mkpath(QFileInfo(target).absolutePath()))
+            return fail(error, QCoreApplication::translate("ProjectBundle", "cannot create %1").arg(QFileInfo(target).absolutePath()));
 
         QSaveFile out(target);
         if (!out.open(QIODevice::WriteOnly))

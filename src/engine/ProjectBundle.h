@@ -38,7 +38,7 @@ namespace drift::bundle {
 // Bumped only by this file. Major is the compatibility gate: a reader refuses a larger major and
 // warns on a larger minor.
 inline constexpr int kFormatMajor = 1;
-inline constexpr int kFormatMinor = 1;
+inline constexpr int kFormatMinor = 2;
 inline constexpr int kFormatPatch = 0;
 
 QString formatVersionString();
@@ -55,7 +55,7 @@ struct AddonRef
 
 // Source media is the only thing that can be referenced instead of embedded; derived artifacts are
 // always embedded, because they live in a volatile app-data cache the user never backs up.
-enum class MediaRole { Source, Matte, FaceTrack, Model3d };
+enum class MediaRole { Source, Matte, FaceTrack, Model3d, Depth, Stabilized };
 
 QString mediaRoleToString(MediaRole role);
 MediaRole mediaRoleFromString(const QString &role);
@@ -63,7 +63,12 @@ MediaRole mediaRoleFromString(const QString &role);
 struct MediaEntry
 {
     QString originalPath; // the path as the document records it; the remap key on load
-    QString fileName;     // basename inside the extraction dir; unique across the bundle
+    QString fileName;     // relative path inside the extraction dir; unique across the bundle
+    // A file a document (Lottie image, SVG <image>, Lottie font) loads relative to its own
+    // directory: the originalPath of that document. Such a file is embedded only alongside the
+    // document, and both land in one folder with the same relative layout, since the document's
+    // bytes name it by that relative path. It gets no pathRemap entry of its own.
+    QString resourceOf;
     MediaRole role = MediaRole::Source;
     bool embedded = false;
     int blob = -1; // index into the blob table, -1 when referenced. Assigned by write().

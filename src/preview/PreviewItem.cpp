@@ -5,11 +5,26 @@
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
 #include <QSGTexture>
+#include <QScreen>
 
 PreviewItem::PreviewItem(QQuickItem *parent)
     : QQuickItem(parent)
 {
     setFlag(ItemHasContents, true);
+    // The item has no window until it enters a scene, so the cadence hook-up cannot happen
+    // here — it happens on every window change, including the first.
+    connect(this, &QQuickItem::windowChanged, this, &PreviewItem::bindDisplayCadence);
+}
+
+PreviewItem::~PreviewItem()
+{
+    // The cadence connections are made from the window to the *engine*, not to this item, so
+    // they outlive it: a panel rebuilt by a layout change would leave the old item's pair
+    // running beside the new one's, double-counting every buffer swap.
+    disconnect(m_afterAnimatingConn);
+    disconnect(m_frameSwappedConn);
+    disconnect(m_screenChangedConn);
+    disconnect(m_refreshRateConn);
 }
 
 void PreviewItem::setPlayback(PlaybackEngine *engine)
@@ -25,7 +40,69 @@ void PreviewItem::setPlayback(PlaybackEngine *engine)
         connect(m_playback, &PlaybackEngine::currentFrameChanged, this, &PreviewItem::pullFrame);
         pullFrame();
     }
+    // The engine may arrive after the window does, so bind from both ends.
+    bindDisplayCadence();
     emit playbackChanged();
+}
+
+void PreviewItem::bindDisplayCadence()
+{
+    QQuickWindow *win = window();
+    if (m_cadenceWindow == win && m_afterAnimatingConn)
+        return;
+
+    disconnect(m_afterAnimatingConn);
+    disconnect(m_frameSwappedConn);
+    disconnect(m_screenChangedConn);
+    disconnect(m_refreshRateConn);
+    m_cadenceWindow = win;
+
+    if (!win || !m_playback) {
+        // No display to follow. The engine falls back to its own timer, which is also what
+        // headless tests and Android's offscreen paths get.
+        if (m_playback)
+            m_playback->setDisplayRefreshRate(0.0);
+        return;
+    }
+
+    // afterAnimating is the one per-frame window signal Qt emits on the GUI thread, and it
+    // lands at the right moment: animations have advanced, the scene has not yet been
+    // synced, so a frame requested now is the one that should appear at the coming swap.
+    //
+    // While playing, each tick also schedules the next frame. The playhead is published once per
+    // project frame, so on a fast panel nothing else in the scene necessarily changes between
+    // refreshes, and without a pending update the window would stop producing ticks at all.
+    m_afterAnimatingConn = connect(win, &QQuickWindow::afterAnimating, this, [win, this] {
+        if (!m_playback)
+            return;
+        m_playback->onDisplayTick();
+        if (m_playback->isPlaying())
+            win->update();
+    });
+    // frameSwapped comes from the render thread, so it must be queued. It is only used to
+    // count real presents — a rate the delivered-frame rate is compared against — which
+    // survives the event-loop hop that scheduling would not.
+    m_frameSwappedConn = connect(win, &QQuickWindow::frameSwapped, m_playback,
+                                 &PlaybackEngine::onFrameSwapped, Qt::QueuedConnection);
+    m_screenChangedConn =
+        connect(win, &QWindow::screenChanged, this, [this](QScreen *) { reportRefreshRate(); });
+    reportRefreshRate();
+}
+
+void PreviewItem::reportRefreshRate()
+{
+    if (!m_playback)
+        return;
+    const QQuickWindow *win = window();
+    QScreen *screen = win ? win->screen() : nullptr;
+    // A panel can change mode under us — a laptop dropping to 48 Hz on battery, a
+    // variable-refresh monitor renegotiating — and screenChanged does not fire for that.
+    disconnect(m_refreshRateConn);
+    if (screen) {
+        m_refreshRateConn =
+            connect(screen, &QScreen::refreshRateChanged, this, [this](qreal) { reportRefreshRate(); });
+    }
+    m_playback->setDisplayRefreshRate(screen ? screen->refreshRate() : 0.0);
 }
 
 void PreviewItem::pullFrame()

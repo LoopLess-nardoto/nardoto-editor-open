@@ -13,9 +13,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
+# AppController.cpp passou do limite de seções do formato COFF padrão no MSVC (C1128).
+if(MSVC)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/bigobj>)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(WITH_BGREMOVAL "Enable OpenCV-based background removal" OFF)
+# Skia (Ganesh/GL) draws text, shapes and Lottie/SVG clips on the GPU; see
+# third_party/build-skia.sh for producing the prebuilt it links. OFF builds a video/image/audio
+# only editor: text, shapes and Lottie/SVG clips draw nothing.
+option(DRIFT_WITH_SKIA "Draw vector content (text, shapes, Lottie, SVG) with Skia" ON)
+set(DRIFT_SKIA_DIR "" CACHE PATH "Directory containing SkiaConfig.cmake (default: third_party/prebuilt/skia/<target>)")
 
 # Defaults off under CI so the Translations test still compares the committed catalogs.
 if(DEFINED ENV{CI})
@@ -62,6 +72,20 @@ set(DRIFT_ADDON_INDEX_URL ""
 set(DRIFT_ADDON_CLIENT_TOKEN ""
     CACHE STRING "Client token sent to the addon service as X-Drift-Client")
 
+# --- Marketplace -----------------------------------------------------------
+# Stock catalog at market.cutwire.org. Empty URL or key disables the Market tab.
+# The HMAC key is not a user secret — it ships in the binary — and exists so requests can be
+# signed and a stable client id derived. See docs/marketplace/README.md.
+#
+#   cmake -B build -DDRIFT_MARKET_API_URL=https://market.example.com/api/v1 \
+#                  -DDRIFT_MARKET_CLIENT_KEY=...
+#
+#   cmake -B build -DDRIFT_MARKET_API_URL=      # no marketplace
+set(DRIFT_MARKET_API_URL "https://market.cutwire.org/api/v1"
+    CACHE STRING "Marketplace API base; empty disables the marketplace")
+set(DRIFT_MARKET_CLIENT_KEY "5409a0bebab4446f88e51d06024a5cf9a694ee141a6a1c6be7a49e45b6687438"
+    CACHE STRING "HMAC key for marketplace client identity and request signing")
+
 # --- Update check -----------------------------------------------------------
 # Where src/models/UpdateChecker looks for a newer release, once a day, to raise the badge in the
 # header. GitHub's releases/latest is the source of truth because the release tag already is: it
@@ -73,7 +97,47 @@ set(DRIFT_ADDON_CLIENT_TOKEN ""
 set(DRIFT_UPDATE_FEED_URL "https://api.github.com/repos/LoopLess-nardoto/nardoto-editor-open/releases/latest"
     CACHE STRING "Release feed polled for updates; empty disables the update check")
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Test Concurrent Widgets OpenGL Network QuickEffects Svg)
+# --- Release channel --------------------------------------------------------
+# Nightly builds are the same source with a different identity: their own app id, their own
+# launcher name, and a version string carrying the build stamp. That is what lets one install
+# beside a stable one (a separate bundle id, Windows AppId and Android package) while still
+# reading the same settings and the same downloaded addons, which is the whole point of testing
+# one. The nightly workflow passes both of these; nothing else sets them.
+#
+# project(Drift VERSION ...) above stays strictly X.Y.Z — CMake rejects a pre-release suffix
+# there — so the string the app displays is built here instead.
+set(DRIFT_CHANNEL "stable" CACHE STRING "Release channel: stable or nightly")
+set(DRIFT_BUILD_ID "" CACHE STRING "Nightly build stamp, YYYYMMDD.<short sha>")
+
+if(NOT DRIFT_CHANNEL STREQUAL "stable" AND NOT DRIFT_CHANNEL STREQUAL "nightly")
+    message(FATAL_ERROR "DRIFT_CHANNEL must be 'stable' or 'nightly', not '${DRIFT_CHANNEL}'")
+endif()
+
+set(DRIFT_APP_ID "com.nardoto.Editor")
+set(DRIFT_APP_NAME "Nardoto Editor")
+set(DRIFT_VERSION_STRING "${PROJECT_VERSION}")
+if(DRIFT_CHANNEL STREQUAL "nightly")
+    set(DRIFT_APP_ID "com.nardoto.Editor.Nightly")
+    set(DRIFT_APP_NAME "Nardoto Editor Nightly")
+    # A local nightly configure with no stamp is still legible rather than "0.7.0-nightly.".
+    if(DRIFT_BUILD_ID STREQUAL "")
+        set(DRIFT_BUILD_ID "dev")
+    endif()
+    set(DRIFT_VERSION_STRING "${PROJECT_VERSION}-nightly.${DRIFT_BUILD_ID}")
+endif()
+message(STATUS "Drift channel: ${DRIFT_CHANNEL} (${DRIFT_VERSION_STRING}, ${DRIFT_APP_ID})")
+
+# Which package this build ships as. Sent to the marketplace so it can hide sources per store
+# (e.g. Play Store moderation) without a separate client build. Every packaging path sets it.
+set(DRIFT_DISTRIBUTIONS source windows windows-store macos appimage flatpak flathub arch android-github android-play)
+set(DRIFT_DISTRIBUTION "source" CACHE STRING "Package type reported to the marketplace")
+set_property(CACHE DRIFT_DISTRIBUTION PROPERTY STRINGS ${DRIFT_DISTRIBUTIONS})
+if(NOT DRIFT_DISTRIBUTION IN_LIST DRIFT_DISTRIBUTIONS)
+    message(FATAL_ERROR "DRIFT_DISTRIBUTION must be one of ${DRIFT_DISTRIBUTIONS}, not '${DRIFT_DISTRIBUTION}'")
+endif()
+message(STATUS "Drift distribution: ${DRIFT_DISTRIBUTION}")
+
+find_package(Qt6 6.10 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Test Concurrent Widgets OpenGL Network QuickEffects Svg Xml)
 find_package(Qt6 COMPONENTS LinguistTools QUIET)
 
 # IconImage loads Lucide SVGs from qrc. The SVG imageformat plugin is refused when it was
@@ -84,6 +148,43 @@ if(NOT _drift_qt_mm STREQUAL _drift_svg_mm)
     message(FATAL_ERROR
         "Qt SVG ${Qt6Svg_VERSION} does not match Qt ${Qt6_VERSION}. "
         "Install a qt6-svg package built for the same Qt as qt6-base, or toolbar icons will not render.")
+endif()
+
+# qtimageformats supplies the qwebp and qtiff QImageReader plugins. Nothing links against them,
+# so without this check a kit missing the module configures, builds and packages cleanly, and
+# then every .webp/.tiff still decodes to a null QImage on the device: no thumbnail, a 0x0 asset,
+# and a clip that renders as nothing. That is exactly how it shipped in the Android packages —
+# the CI jobs installed only qtmultimedia and qtshadertools.
+#
+# The module declares no findable component, but it does install imported plugin targets that
+# Qt6Gui pulls in via __qt_internal_include_plugin_packages(), so the targets are the one thing
+# that can be tested at configure time. QT_SKIP_AUTO_PLUGIN_INCLUSION turns that inclusion off,
+# in which case the targets are absent for a reason that has nothing to do with the module.
+#
+# Fatal on Android only: there the plugin can come from nowhere but the kit, so a missing one is
+# a broken package. A desktop build can still pick it up from the system Qt at runtime.
+if(NOT QT_SKIP_AUTO_PLUGIN_INCLUSION)
+    set(_drift_missing_imageformats "")
+    if(NOT TARGET Qt6::QWebpPlugin)
+        list(APPEND _drift_missing_imageformats "qwebp (.webp)")
+    endif()
+    if(NOT TARGET Qt6::QTiffPlugin)
+        list(APPEND _drift_missing_imageformats "qtiff (.tiff)")
+    endif()
+    if(_drift_missing_imageformats)
+        string(JOIN ", " _drift_missing_list ${_drift_missing_imageformats})
+        set(_drift_imageformats_msg
+            "Qt ImageFormats is missing: ${_drift_missing_list}.\n"
+            "Those stills will import as 0x0 and render as nothing.\n"
+            "  aqtinstall: add qtimageformats to the -m module list\n"
+            "  Arch:       pacman -S qt6-imageformats\n"
+            "  Debian:     apt install qt6-imageformats-dev")
+        if(ANDROID)
+            message(FATAL_ERROR ${_drift_imageformats_msg})
+        else()
+            message(WARNING ${_drift_imageformats_msg})
+        endif()
+    endif()
 endif()
 
 # --- Android prebuilt dependencies -------------------------------------------
@@ -117,8 +218,12 @@ if(ANDROID)
         "${DRIFT_PREBUILT}/lib/libx264.a"
         # libavcodec's only software AV1 decoder — the native "av1" decoder needs a hwaccel.
         "${DRIFT_PREBUILT}/lib/libdav1d.a"
-        # mediandk resolves the AMediaCodec_*/AMediaFormat_* the --enable-mediacodec decoders call.
-        m z mediandk)
+        # vidstabdetect/vidstabtransform, which clip stabilization runs through libavfilter.
+        "${DRIFT_PREBUILT}/lib/libvidstab.a"
+        # mediandk resolves the AMediaCodec_*/AMediaFormat_* the --enable-mediacodec decoders call,
+        # plus the AImageReader_*/AImage_* the zero-copy preview surface is built on. android is
+        # for AHardwareBuffer_*, which lives in libandroid rather than libmediandk.
+        m z mediandk android)
 
     add_library(drift_zstd INTERFACE IMPORTED)
     target_include_directories(drift_zstd INTERFACE "${DRIFT_PREBUILT}/include")
@@ -197,6 +302,7 @@ if(NOT ANDROID)
     endif()
     find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 endif()
+find_package(ZLIB REQUIRED)
 
 # SoundTouch does the pitch shifting behind the voice effects. juce_dsp has no pitch shifter, and a
 # hand-rolled granular one cancels the signal outright wherever the tap spacing lands on an odd
@@ -326,6 +432,7 @@ add_library(driftcore STATIC
     src/core/BinFolder.h
     src/core/MediaAsset.h
     src/core/MediaAsset.cpp
+    src/core/BlendMode.h
     src/core/Clip.h
     src/core/Clip.cpp
     src/core/Stabilize.h
@@ -339,12 +446,28 @@ add_library(driftcore STATIC
     src/core/ClipAnimation.cpp
     src/core/SubtitleCue.h
     src/core/SubtitleCue.cpp
+    src/core/Transcript.h
+    src/core/Transcript.cpp
+    src/core/GuideSet.h
+    src/core/GuideSet.cpp
     src/core/SrtIO.h
     src/core/SrtIO.cpp
     src/core/Mask.h
     src/core/Mask.cpp
     src/core/Transition.h
     src/core/Transition.cpp
+    src/core/TextParamSpec.h
+    src/core/TextParamSpec.cpp
+    src/core/LottieTextImport.h
+    src/core/LottieTextImport.cpp
+    src/core/TextLook.h
+    src/core/TextLook.cpp
+    src/core/TextShading.h
+    src/core/TextShading.cpp
+    src/core/TextAnimationPreset.h
+    src/core/TextAnimationPreset.cpp
+    src/core/TextAnimator.h
+    src/core/TextAnimator.cpp
     src/core/TextStyle.h
     src/core/TextStyle.cpp
     src/core/TextPresetStore.h
@@ -355,17 +478,46 @@ add_library(driftcore STATIC
     src/core/ShapeStyle.cpp
     src/core/ShapePath.h
     src/core/ShapePath.cpp
+    src/core/VectorSource.h
+    src/core/VectorSource.cpp
+    src/core/Model3dSource.h
+    src/core/Model3dSource.cpp
+    src/core/ZipArchive.h
+    src/core/ZipArchive.cpp
+    src/core/DotLottie.h
+    src/core/DotLottie.cpp
     src/core/Track.h
     src/core/Track.cpp
     src/core/Project.h
     src/core/Project.cpp
+    src/core/PrprojReader.h
+    src/core/PrprojReader.cpp
+    src/core/MogrtReader.h
+    src/core/MogrtReader.cpp
+    src/core/KdenliveReader.h
+    src/core/KdenliveReader.cpp
+    src/core/ResolveReader.h
+    src/core/ResolveReader.cpp
+    src/core/EdlReader.h
+    src/core/EdlReader.cpp
+    src/core/OtioReader.h
+    src/core/OtioReader.cpp
     src/core/TimelineOps.h
     src/core/TimelineOps.cpp
+    src/core/CutOps.h
+    src/core/CutOps.cpp
     src/core/commands/ProjectCommands.h
     src/core/commands/ProjectCommands.cpp
 )
 target_include_directories(driftcore PUBLIC src)
-target_link_libraries(driftcore PUBLIC Qt6::Core Qt6::Gui)
+target_link_libraries(driftcore PUBLIC Qt6::Core Qt6::Gui Qt6::Xml ZLIB::ZLIB)
+
+file(GLOB DRIFT_TEXT_ANIMATION_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/presets/text-animations/*.json")
+qt_add_resources(driftcore "drift_text_animations"
+    PREFIX "/text-animations"
+    BASE "${CMAKE_SOURCE_DIR}/presets/text-animations"
+    FILES ${DRIFT_TEXT_ANIMATION_FILES}
+)
 
 # Audio effect DSP. JUCE modules compile into whatever target links them, so keeping them in a
 # library of their own is what stops JUCE's headers, its compile definitions and its build time
@@ -418,10 +570,15 @@ add_library(driftengine STATIC
     src/engine/AndroidUri.cpp
     src/engine/HwAccel.h
     src/engine/HwAccel.cpp
+    src/engine/SwsColorRange.h
     src/engine/MediaProbe.h
     src/engine/MediaProbe.cpp
     src/engine/MediaThumbnail.h
     src/engine/MediaThumbnail.cpp
+    src/engine/StillImage.h
+    src/engine/StillImage.cpp
+    src/engine/MediaCodecImagePool.h
+    src/engine/MediaCodecImagePool.cpp
     src/engine/FilmstripTileCache.h
     src/engine/FilmstripTileCache.cpp
     src/engine/MediaWaveform.h
@@ -434,6 +591,10 @@ add_library(driftengine STATIC
     src/engine/AudioOnsets.cpp
     src/engine/SceneDetect.h
     src/engine/SceneDetect.cpp
+    src/engine/FrameSheet.h
+    src/engine/FrameSheet.cpp
+    src/engine/WaveformSheet.h
+    src/engine/WaveformSheet.cpp
     src/engine/ObjectDetector.h
     src/engine/ObjectDetector.cpp
     src/engine/Exporter.h
@@ -443,6 +604,8 @@ add_library(driftengine STATIC
     src/engine/ClipReader.cpp
     src/engine/DebugReport.h
     src/engine/DebugReport.cpp
+    src/engine/DiagnosticsProbe.h
+    src/engine/DiagnosticsProbe.cpp
     src/engine/ClipReaderWorker.h
     src/engine/ClipReaderWorker.cpp
     src/engine/ClipReaderPool.h
@@ -459,8 +622,12 @@ add_library(driftengine STATIC
     src/engine/EmojiCatalog.cpp
     src/engine/EmojiTable.h
     src/engine/EmojiTable.cpp
-    src/engine/TextRaster.h
-    src/engine/TextRaster.cpp
+    src/engine/TextLayout.h
+    src/engine/TextLayout.cpp
+    src/engine/VectorClipRenderer.h
+    src/engine/VectorClipRenderer.cpp
+    src/engine/VectorInspect.h
+    src/engine/VectorInspect.cpp
     src/engine/EffectPackageLoader.h
     src/engine/EffectPackageLoader.cpp
     src/engine/TransitionCatalog.h
@@ -474,6 +641,8 @@ add_library(driftengine STATIC
     src/engine/GpuCompositor.cpp
     src/engine/GlRuntime.h
     src/engine/GlRuntime.cpp
+    src/engine/GpuStatus.h
+    src/engine/GpuStatus.cpp
     src/engine/VaapiZeroCopy.h
     src/engine/GpuEffectExecutor.h
     src/engine/GpuEffectExecutor.cpp
@@ -500,12 +669,30 @@ add_library(driftengine STATIC
     src/engine/OrtRuntime.cpp
     src/engine/Sam2Segmenter.h
     src/engine/Sam2Segmenter.cpp
+    src/engine/RvmMatter.h
+    src/engine/RvmMatter.cpp
+    src/engine/VdaDepth.h
+    src/engine/VdaDepth.cpp
+    src/engine/DepthSidecar.h
+    src/engine/DepthSidecar.cpp
     src/engine/FaceLandmarker.h
     src/engine/FaceLandmarker.cpp
     src/engine/FaceTrack.h
     src/engine/FaceTrack.cpp
     src/engine/FaceModelTransform.h
     src/engine/FaceModelTransform.cpp
+    src/engine/ModelAnimation.h
+    src/engine/ModelAnimation.cpp
+    src/engine/ClipTransform3d.h
+    src/engine/ClipTransform3d.cpp
+    src/engine/TransformLayer.h
+    src/engine/TransformLayer.cpp
+    src/engine/ClipGizmo.h
+    src/engine/ClipGizmo.cpp
+    src/engine/ModelClipTransform.h
+    src/engine/ModelClipTransform.cpp
+    src/engine/ModelClipRenderer.h
+    src/engine/ModelClipRenderer.cpp
     src/engine/FaceMesh.h
     src/engine/FaceMesh.cpp
     src/engine/ModelAsset.h
@@ -518,6 +705,8 @@ add_library(driftengine STATIC
     src/engine/FaceSwapSource.cpp
     src/engine/FacePropCatalog.h
     src/engine/FacePropCatalog.cpp
+    src/engine/FacePropImport.h
+    src/engine/FacePropImport.cpp
     src/engine/DeepFilterDenoiser.h
     src/engine/DeepFilterDenoiser.cpp
     src/engine/MatteWriter.h
@@ -526,27 +715,93 @@ add_library(driftengine STATIC
     src/engine/ReverseProxyCache.cpp
     src/engine/ReverseRenderer.h
     src/engine/ReverseRenderer.cpp
+    src/engine/ProxyEncoder.h
+    src/engine/ProxyEncoder.cpp
+    src/engine/PreviewProxyRenderer.h
+    src/engine/PreviewProxyRenderer.cpp
     src/engine/MediaEditor.h
     src/engine/MediaEditor.cpp
     src/engine/AudioFileWriter.h
     src/engine/AudioFileWriter.cpp
+    src/engine/AudioRecorder.h
+    src/engine/AudioRecorder.cpp
+    src/engine/SpeechAudio.h
+    src/engine/SpeechAudio.cpp
+    src/engine/SileroVad.h
+    src/engine/SileroVad.cpp
+    src/engine/CtcAligner.h
+    src/engine/CtcAligner.cpp
+    src/engine/LocalTranscription.h
+    src/engine/LocalTranscription.cpp
+    src/engine/KaldiFbank.h
+    src/engine/KaldiFbank.cpp
+    src/engine/SpeakerDiarizer.h
+    src/engine/SpeakerDiarizer.cpp
     src/engine/ProjectBundle.h
     src/engine/ProjectBundle.cpp
     src/engine/ProjectDependencies.h
     src/engine/ProjectDependencies.cpp
+    src/engine/GpuPreference.h
+    src/engine/GpuPreference.cpp
+    src/engine/GpuDevice.h
+    src/engine/GpuDevice.cpp
 )
 target_include_directories(driftengine PUBLIC src)
 # cgltf is PRIVATE: ModelAsset.h exposes no cgltf type, so nothing outside ModelAsset.cpp includes it.
 target_include_directories(driftengine SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/cgltf)
-target_link_libraries(driftengine PUBLIC Qt6::Core Qt6::Gui Qt6::OpenGL FFmpeg::FFmpeg driftcore
+target_link_libraries(driftengine PUBLIC Qt6::Core Qt6::Gui Qt6::OpenGL Qt6::Multimedia FFmpeg::FFmpeg driftcore
     driftaudiodsp onnxruntime::headers)
 target_link_libraries(driftengine PRIVATE ${DRIFT_ZSTD_TARGET} OpenSSL::Crypto Qt6::Network ${CMAKE_DL_LIBS})
-target_compile_definitions(driftengine PRIVATE DRIFT_VERSION="${PROJECT_VERSION}")
+if(WIN32)
+    # Hybrid-graphics laptops: D3D11VA -> OpenGL preview interop, and DXGI adapter enumeration for
+    # the GPU preference and for opening D3D11VA on the GPU that renders.
+    target_sources(driftengine PRIVATE
+        src/engine/D3d11GlInterop.h
+        src/engine/D3d11GlInterop.cpp
+    )
+    target_link_libraries(driftengine PRIVATE d3d11 dxgi d3dcompiler opengl32)
+endif()
+target_compile_definitions(driftengine PRIVATE DRIFT_VERSION="${DRIFT_VERSION_STRING}")
 
 if(WITH_BGREMOVAL)
     target_include_directories(driftengine PRIVATE ${OpenCV_INCLUDE_DIRS})
     target_link_libraries(driftengine PRIVATE ${OpenCV_LIBS})
     target_compile_definitions(driftengine PUBLIC DRIFT_WITH_BGREMOVAL)
+endif()
+
+if(DRIFT_WITH_SKIA)
+    find_package(Skia REQUIRED)
+    target_sources(driftengine PRIVATE
+        src/engine/SkiaRuntime.h
+        src/engine/SkiaRuntime.cpp
+        src/engine/SkiaPath.h
+        src/engine/SkiaPath.cpp
+        src/engine/SkiaShading.h
+        src/engine/SkiaShading.cpp
+        src/engine/SkiaShapePainter.h
+        src/engine/SkiaShapePainter.cpp
+        src/engine/SkiaFonts.h
+        src/engine/SkiaFonts.cpp
+        src/engine/SkiaVectorResources.h
+        src/engine/SkiaVectorResources.cpp
+        src/engine/SkiaVectorObservers.h
+        src/engine/SkiaVectorObservers.cpp
+        src/engine/SkiaTextPainter.h
+        src/engine/SkiaTextPainter.cpp
+        src/engine/SkiaTextEffects.h
+        src/engine/SkiaTextEffects.cpp
+    )
+    # build-skia.sh compiles Skia with RTTI (see the extra_cflags_cc note there), so Drift classes
+    # may subclass Skia interfaces from any translation unit. vcpkg's port on Windows keeps /GR-,
+    # which is harmless: MSVC emits type descriptors as COMDAT wherever they are needed, so a
+    # derived class never depends on its base's archive carrying one.
+    # PRIVATE: no header outside src/engine/Skia*.h includes Skia (Vector*.cpp do, under
+    # DRIFT_WITH_SKIA), so the defines and the include root stay out of the rest of the build.
+    target_link_libraries(driftengine PRIVATE Skia::Skia)
+    target_compile_definitions(driftengine PUBLIC DRIFT_WITH_SKIA)
+    # Qt's `foreach` keyword macro collides with SkTHash::foreach(), which the Skottie headers
+    # pull in. Nothing in Drift writes foreach; Q_FOREACH stays available.
+    target_compile_definitions(driftengine PRIVATE QT_NO_FOREACH)
 endif()
 
 # --- application ------------------------------------------------------------
@@ -568,9 +823,22 @@ qt_add_executable(drift
     src/MulticamImageStore.cpp
     src/TextStylePreviewImageProvider.h
     src/TextStylePreviewImageProvider.cpp
+    src/ShapePreviewImageProvider.h
+    src/ShapePreviewImageProvider.cpp
     src/models/AddonEndpoint.h
     src/models/AddonManager.h
     src/models/AddonManager.cpp
+    src/models/JobRegistry.h
+    src/models/JobRegistry.cpp
+    src/models/CloudProviders.h
+    src/models/CloudProviders.cpp
+    src/models/MarketEndpoint.h
+    src/models/MarketIdentity.h
+    src/models/MarketIdentity.cpp
+    src/models/MarketClient.h
+    src/models/MarketClient.cpp
+    src/models/DriftAssetStore.h
+    src/models/DriftAssetStore.cpp
     src/models/VersionCompare.h
     src/models/UpdateChecker.h
     src/models/UpdateChecker.cpp
@@ -591,10 +859,8 @@ qt_add_executable(drift
     src/models/AssetLibrary.cpp
     src/models/BinFolderListModel.h
     src/models/BinFolderListModel.cpp
-    src/models/TimelineModel.h
-    src/models/TimelineModel.cpp
-    src/models/ClipListModel.h
-    src/models/ClipListModel.cpp
+    src/models/TimelineClipsModel.h
+    src/models/TimelineClipsModel.cpp
     src/playback/PlaybackEngine.h
     src/playback/PlaybackEngine.cpp
     src/playback/PlaybackClock.h
@@ -605,30 +871,58 @@ qt_add_executable(drift
     src/playback/ClipPreviewPlayer.cpp
     src/playback/CompositorService.h
     src/playback/CompositorService.cpp
+    src/playback/PlaybackStats.h
+    src/playback/PlaybackStats.cpp
+    src/playback/PlaybackDiagnostics.h
+    src/playback/PlaybackDiagnostics.cpp
+    src/playback/PerfLog.h
+    src/playback/PerfLog.cpp
     src/preview/PreviewItem.h
     src/preview/PreviewItem.cpp
+    src/timeline/ClipThumbnailStore.h
+    src/timeline/ClipThumbnailStore.cpp
+    src/timeline/TimelineLayout.h
+    src/timeline/TimelineLayout.cpp
+    src/timeline/TimelineTrackItem.h
+    src/timeline/TimelineTrackItem.cpp
+    src/timeline/TimelineViewState.h
+    src/timeline/TimelineViewState.cpp
 )
 
-# MCP is a desktop agent protocol (stdio/HTTP). Skip it on Android APK builds.
+# The MCP server itself ships everywhere. On Android it listens on loopback like it does on
+# desktop, and an agent reaches it through `adb forward` — which is what makes the phone build
+# drivable by tooling instead of by blind coordinate taps.
+target_sources(drift PRIVATE
+    src/mcp/McpSession.h
+    src/mcp/McpSession.cpp
+    src/mcp/McpCatalog.h
+    src/mcp/McpCatalog.cpp
+    src/mcp/McpProtocol.h
+    src/mcp/McpProtocol.cpp
+    src/mcp/McpHttp.h
+    src/mcp/McpHttp.cpp
+    src/mcp/McpDispatcher.h
+    src/mcp/McpDispatcher.cpp
+    src/mcp/McpDispatcherExtended.cpp
+    src/mcp/McpDispatcherAssemble.cpp
+    src/mcp/McpValidate.h
+    src/mcp/McpValidate.cpp
+    src/mcp/McpMarket.cpp
+    src/mcp/McpServer.h
+    src/mcp/McpServer.cpp
+    src/mcp/McpJson.h
+)
+
+# The stdio transport and the headless entry point stay desktop-only: both are process entry
+# points driven from a terminal, which an APK has no equivalent of.
 if(NOT ANDROID)
     target_sources(drift PRIVATE
-        src/mcp/McpSession.h
-        src/mcp/McpSession.cpp
-        src/mcp/McpCatalog.h
-        src/mcp/McpCatalog.cpp
-        src/mcp/McpProtocol.h
-        src/mcp/McpProtocol.cpp
-        src/mcp/McpHttp.h
-        src/mcp/McpHttp.cpp
-        src/mcp/McpDispatcher.h
-        src/mcp/McpDispatcher.cpp
-        src/mcp/McpDispatcherExtended.cpp
-        src/mcp/McpDispatcherAssemble.cpp
-        src/mcp/McpServer.h
-        src/mcp/McpServer.cpp
         src/mcp/McpStdio.h
         src/mcp/McpStdio.cpp
-        src/mcp/McpJson.h
+        src/mcp/McpStdioServer.h
+        src/mcp/McpStdioServer.cpp
+        src/HeadlessApp.h
+        src/HeadlessApp.cpp
     )
 endif()
 
@@ -652,8 +946,11 @@ endif()
 # It also collides with the <build>/Drift/ directory qt_add_qml_module(URI Drift) writes, which
 # on case-insensitive APFS fails the link with EISDIR.
 if(APPLE)
-    set(DRIFT_MACOS_EXECUTABLE "Nardoto Editor")
-    set(DRIFT_MACOS_BUNDLE_ID "com.nardoto.Editor")
+    # Channel-dependent: a nightly is Nardoto Editor Nightly.app with its own bundle id, so it installs
+    # beside a stable copy instead of replacing it. "Drift Nightly" does not collide with the
+    # Drift/ QML module directory either (see the note above).
+    set(DRIFT_MACOS_EXECUTABLE "${DRIFT_APP_NAME}")
+    set(DRIFT_MACOS_BUNDLE_ID "${DRIFT_APP_ID}")
     set(DRIFT_MACOS_ICON_FILE "NardotoEditor.icns")
 
     # Not CMake's MACOSX_BUNDLE_* properties: the NS* and LSMinimumSystemVersion keys have none.
@@ -681,12 +978,29 @@ qt_add_resources(drift "drift_app_icon"
     FILES resources/nardoto-editor.png
 )
 
+# Fixed input for the playback diagnostics benchmark, so numbers from two different bug
+# reports are comparable. See resources/diagnostics/README.md for how it is generated.
+qt_add_resources(drift "drift_diagnostics"
+    PREFIX "/diagnostics"
+    BASE resources/diagnostics
+    FILES resources/diagnostics/bench1080p60.mp4
+)
+
 set_source_files_properties(src/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
+# Canvas preset catalog + the (template, quality) -> pixels arithmetic, shared by the desktop
+# layout dialog and the phone layout sheet so the two cannot drift apart again.
+set_source_files_properties(src/qml/LayoutPresets.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
+# How a download job renders as words, shared by the desktop DownloadsWindow and the phone
+# AndroidDownloadsSheet so the two hosts of the same jobs cannot word them differently.
+set_source_files_properties(src/qml/DownloadFormat.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
+# Import + reporting policy, needed by surfaces that have no AssetsPanel to borrow it from.
+set_source_files_properties(src/qml/MediaImport.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
 # App-wide notification queue; the visual host is components/ToastHost.qml.
 set_source_files_properties(src/qml/Toasts.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
 # In-flight lift-and-drop state for the phone asset sheet; the ghost is drawn by
 # AndroidBottomSheet and the drop is performed by AndroidTimeline.
 set_source_files_properties(src/qml/TouchDrag.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
+set_source_files_properties(src/qml/AssetDrag.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
 
 # Lucide icons: use the original scalable SVG sources in QML.
 file(GLOB DRIFT_LUCIDE_ICONS RELATIVE "${CMAKE_SOURCE_DIR}" CONFIGURE_DEPENDS
@@ -696,41 +1010,73 @@ qt_add_qml_module(drift
     URI Drift
     VERSION 1.0
     QML_FILES
+        src/qml/Shell.qml
+        src/qml/LayoutPresets.qml
+        src/qml/MediaImport.qml
         src/qml/Main.qml
+        src/qml/AndroidHomeNav.qml
+        src/qml/AndroidProjectsPage.qml
+        src/qml/AndroidMePage.qml
+        src/qml/AndroidMarket.qml
+        src/qml/AndroidShareTargetSheet.qml
+        src/qml/AndroidLinkImport.qml
+        src/qml/DownloadFormat.qml
+        src/qml/AndroidDownloadsSheet.qml
+        src/qml/components/NavRailButton.qml
         # Touch entry point, loaded instead of Main.qml on Android (see src/main.cpp).
+        src/qml/AndroidLayoutSheet.qml
         src/qml/AndroidMain.qml
+        src/qml/AndroidMoreToolsSheet.qml
+        src/qml/AndroidFadeSheet.qml
+        src/qml/AndroidProjectSheet.qml
         src/qml/AndroidHome.qml
         src/qml/AndroidEditor.qml
         src/qml/AndroidPreview.qml
         src/qml/AndroidTimeline.qml
-        src/qml/AndroidLayoutPicker.qml
         src/qml/AndroidTopBar.qml
         src/qml/AndroidBottomRail.qml
         src/qml/AndroidBottomSheet.qml
         src/qml/AndroidAddMenu.qml
-        src/qml/AndroidEditActions.qml
+        src/qml/AndroidClipToolbar.qml
         src/qml/AndroidMediaPreview.qml
         src/qml/Theme.qml
         src/qml/Toasts.qml
         src/qml/TouchDrag.qml
+        src/qml/AssetDrag.qml
         src/qml/EditorHeader.qml
         src/qml/AssetsPanel.qml
         src/qml/PreviewPanel.qml
+        src/qml/components/preview/TransformGizmo.qml
         src/qml/components/preview/TransformOverlay.qml
+        src/qml/components/preview/PreviewDropOverlay.qml
         src/qml/components/preview/CropOverlay.qml
+        src/qml/components/preview/GuideLayer.qml
+        src/qml/components/preview/GuidesPopover.qml
+        src/qml/components/preview/GuideEditOverlay.qml
+        src/qml/components/preview/MaskOverlay.qml
+        src/qml/components/preview/DepthEffectOverlay.qml
         src/qml/components/preview/PreviewToolbar.qml
+        src/qml/components/preview/Checkerboard.qml
         src/qml/components/preview/AndroidTransformOverlay.qml
         src/qml/components/preview/AndroidCropOverlay.qml
         src/qml/SegmentationWindow.qml
         src/qml/MulticamWindow.qml
         src/qml/DenoiseWindow.qml
+        src/qml/DownloadsWindow.qml
         src/qml/SpeedCurveWindow.qml
         src/qml/FadeCurveWindow.qml
         src/qml/MediaPreviewWindow.qml
         src/qml/PropertiesPanel.qml
         src/qml/components/properties/GeneralInspector.qml
         src/qml/components/properties/TextInspector.qml
+        src/qml/components/properties/TextParamSlots.qml
+        src/qml/components/properties/PaintEditor.qml
+        src/qml/components/properties/GradientStopEditor.qml
+        src/qml/components/properties/ShadingLayerRow.qml
+        src/qml/components/properties/TextAnimPresetTile.qml
+        src/qml/components/properties/TextLookPicker.qml
         src/qml/components/properties/TransformInspector.qml
+        src/qml/components/properties/TransformLayerCard.qml
         src/qml/components/properties/StabilizeInspector.qml
         src/qml/components/properties/AudioInspector.qml
         src/qml/components/properties/AudioEffectsInspector.qml
@@ -739,26 +1085,49 @@ qt_add_qml_module(drift
         src/qml/components/properties/TransitionInspector.qml
         src/qml/components/properties/BlendingInspector.qml
         src/qml/components/properties/ShapeInspector.qml
+        src/qml/components/properties/VectorInspector.qml
+        src/qml/components/properties/Model3DInspector.qml
         src/qml/components/properties/MasksInspector.qml
         src/qml/components/properties/EffectsInspector.qml
+        src/qml/components/properties/FacePropPicker.qml
         src/qml/components/assets/TextAssetsTab.qml
         src/qml/components/assets/ScenesTab.qml
         src/qml/components/assets/MotionTab.qml
         src/qml/components/assets/SubtitlesTab.qml
         src/qml/components/assets/StickersTab.qml
         src/qml/components/assets/ShapesTab.qml
+        src/qml/components/assets/AssetDragSource.qml
+        src/qml/components/assets/MasksTab.qml
         src/qml/components/assets/SoundsTab.qml
-        src/qml/components/assets/SettingsTab.qml
+        src/qml/components/assets/TransitionsTab.qml
         src/qml/components/assets/ShortcutsTab.qml
         src/qml/components/assets/MediaAssetsTab.qml
+        src/qml/components/assets/MarketConsentPanel.qml
+        src/qml/components/assets/MarketTab.qml
+        src/qml/components/assets/MarketSearchField.qml
+        src/qml/components/assets/DriftAssetsHome.qml
+        src/qml/components/assets/DriftAssetCard.qml
+        src/qml/components/assets/DriftAssetDetail.qml
+        src/qml/components/assets/StockBrowser.qml
+        src/qml/components/assets/StockThumb.qml
+        src/qml/components/assets/StockItemDetail.qml
         src/qml/components/assets/BinBreadcrumb.qml
         src/qml/components/assets/AssetCategoryChips.qml
         src/qml/components/assets/EffectStacksSection.qml
         src/qml/components/assets/AssetFavoriteButton.qml
         src/qml/TimelinePanel.qml
         src/qml/components/timeline/TimelineToolbar.qml
+        src/qml/components/timeline/TimelineToolbarCustomizeDialog.qml
+        src/qml/components/timeline/TimelineOverview.qml
         src/qml/components/timeline/TrackHeaderColumn.qml
+        src/qml/components/timeline/TransformSpanBracket.qml
+        src/qml/components/timeline/TransformCoverageOverlay.qml
+        src/qml/components/timeline/VoiceoverControlBar.qml
+        src/qml/components/timeline/AudioMixerStrip.qml
         src/qml/components/timeline/TimelineClipItem.qml
+        src/qml/components/timeline/PlayheadInterpolator.qml
+        src/qml/components/timeline/TimelineTrackArea.qml
+        src/qml/components/timeline/TimelineDropRouter.qml
         src/qml/components/IconGlyph.qml
         src/qml/components/IconButton.qml
         src/qml/components/PanelFrame.qml
@@ -770,8 +1139,9 @@ qt_add_qml_module(drift
         src/qml/components/KeyframeGraph.qml
         src/qml/components/SubtitleCueLane.qml
         src/qml/components/ShortcutCaptureField.qml
-        src/qml/components/ShapePreview.qml
         src/qml/components/ColorSwatchField.qml
+        src/qml/components/ThemedColorDialog.qml
+        src/qml/components/ColorEyedropper.qml
         src/qml/components/EffectBrowser.qml
         src/qml/components/AudioEffectBrowser.qml
         src/qml/components/EffectTemplateBrowser.qml
@@ -790,29 +1160,41 @@ qt_add_qml_module(drift
         src/qml/components/ThemedButton.qml
         src/qml/components/ThemedChip.qml
         src/qml/components/ThemedProgressBar.qml
+        src/qml/components/MediaPill.qml
+        src/qml/components/VfrWarning.qml
         src/qml/components/ThemedLabel.qml
         src/qml/components/ThemedDialog.qml
+        src/qml/components/LazyLoader.qml
         src/qml/components/AddonManagerDialog.qml
         src/qml/components/AddonStartupDialog.qml
         src/qml/components/MissingAddonsDialog.qml
         src/qml/components/UpdateDialog.qml
         src/qml/components/DebugInfoDialog.qml
+        src/qml/components/preview/PlaybackStatsOverlay.qml
         src/qml/components/ProjectSetupDialog.qml
         src/qml/components/LayoutChooserDialog.qml
         src/qml/components/LanguageChooserDialog.qml
+        src/qml/components/AgentAccessControls.qml
         src/qml/components/AgentAccessDialog.qml
         src/qml/components/VideoSizeDialog.qml
         src/qml/components/VideoSizeControls.qml
         src/qml/components/ProjectPropertiesDialog.qml
+        src/qml/components/SettingsPane.qml
+        src/qml/components/SheetActionRow.qml
+        src/qml/components/SheetActionTile.qml
+        src/qml/components/SettingsDialog.qml
+        src/qml/components/PasteAttributesDialog.qml
         src/qml/components/PackageProgressDialog.qml
         src/qml/components/ExportDialog.qml
         src/qml/components/ExportProgressDialog.qml
+        src/qml/components/CollectMediaDialog.qml
         src/qml/components/ReverseProgressDialog.qml
         src/qml/components/SubtitleProgressDialog.qml
         src/qml/components/CircularProgress.qml
         src/qml/components/RecoveryDialog.qml
         src/qml/components/UnsavedChangesDialog.qml
         src/qml/components/RecentProjectsPopup.qml
+        src/qml/components/StartScreen.qml
         src/qml/components/NewTrackMenu.qml
         src/qml/components/ToastHost.qml
         src/qml/components/EmptyState.qml
@@ -828,7 +1210,15 @@ qt_add_qml_module(drift
         src/qml/components/LabelledProgressRing.qml
     RESOURCES
         # UI chrome: interface font and Lucide SVG icons (always needed, including before addons).
-        resources/fonts/Inter.ttf
+        # Static instances rather than the variable Inter: on Windows Qt registers application
+        # fonts through GDI before converting them to a DirectWrite face, and GDI cannot express a
+        # variable instance, so the face Qt rasterised with stopped matching the glyph indices it
+        # had looked up (issues #115, #162). Regenerate with scripts/gen-ui-font.py.
+        resources/fonts/InterUI-Regular.ttf
+        resources/fonts/InterUI-Medium.ttf
+        resources/fonts/InterUI-SemiBold.ttf
+        resources/fonts/InterUI-Bold.ttf
+        resources/fonts/InterUI-Italic.ttf
         ${DRIFT_LUCIDE_ICONS}
 )
 
@@ -878,15 +1268,28 @@ if(ANDROID)
     )
 
     # Qt Network's OpenSSL TLS plugin dlopens libcrypto_3.so / libssl_3.so at runtime.
-    set(_drift_android_ssl_crypto "${DRIFT_PREBUILT}/lib/libcrypto_3.so")
-    set(_drift_android_ssl_ssl "${DRIFT_PREBUILT}/lib/libssl_3.so")
-    if(NOT EXISTS "${_drift_android_ssl_crypto}" OR NOT EXISTS "${_drift_android_ssl_ssl}")
-        message(FATAL_ERROR
-            "Missing OpenSSL shared libs for Qt Network TLS under ${DRIFT_PREBUILT}/lib.\n"
-            "Expected libcrypto_3.so and libssl_3.so (KDAB android_openssl ssl_3 layout).\n"
-            "Rebuild deps with third_party/build-android.sh ${ANDROID_ABI}, or copy the\n"
-            "ssl_3/${ANDROID_ABI}/*.so files from https://github.com/KDAB/android_openssl.")
+    # androiddeployqt files each extra .so under lib/<abi>/ from its ELF architecture, so a
+    # multi-ABI AAB must list the OpenSSL pair for every ABI in QT_ANDROID_ABIS — not only
+    # the toolchain ABI CMake is currently compiling.
+    if(QT_ANDROID_ABIS)
+        set(_drift_packaged_abis ${QT_ANDROID_ABIS})
+    else()
+        set(_drift_packaged_abis ${ANDROID_ABI})
     endif()
+    set(_drift_android_extra_libs "")
+    foreach(_abi IN LISTS _drift_packaged_abis)
+        set(_prebuilt "${CMAKE_SOURCE_DIR}/third_party/prebuilt/android/${_abi}")
+        set(_crypto "${_prebuilt}/lib/libcrypto_3.so")
+        set(_ssl "${_prebuilt}/lib/libssl_3.so")
+        if(NOT EXISTS "${_crypto}" OR NOT EXISTS "${_ssl}")
+            message(FATAL_ERROR
+                "Missing OpenSSL shared libs for Qt Network TLS under ${_prebuilt}/lib.\n"
+                "Expected libcrypto_3.so and libssl_3.so (KDAB android_openssl ssl_3 layout).\n"
+                "Rebuild deps with third_party/build-android.sh ${_abi}, or copy the\n"
+                "ssl_3/${_abi}/*.so files from https://github.com/KDAB/android_openssl.")
+        endif()
+        list(APPEND _drift_android_extra_libs "${_crypto}" "${_ssl}")
+    endforeach()
 
     set(DRIFT_ANDROID_PACKAGE_NAME "com.nardoto.editor" CACHE STRING
         "Identificador do aplicativo Android")
@@ -894,7 +1297,7 @@ if(ANDROID)
         "Launcher label")
     # versionName is PROJECT_VERSION — same string the desktop binary embeds as DRIFT_VERSION.
     # versionCode is the Play-Store integer; default tracks that semver so a desktop bump is an
-    # Android bump too (0.5.1 → 501). CI may override with -DDRIFT_ANDROID_VERSION_CODE=.
+    # Android bump too (0.6.0 → 600). CI may override with -DDRIFT_ANDROID_VERSION_CODE=.
     string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _drift_android_ver "${PROJECT_VERSION}")
     if(_drift_android_ver)
         math(EXPR _drift_android_version_code_default
@@ -914,7 +1317,7 @@ if(ANDROID)
         QT_ANDROID_TARGET_SDK_VERSION 36
         QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
         QT_ANDROID_VERSION_CODE "${DRIFT_ANDROID_VERSION_CODE}"
-        QT_ANDROID_EXTRA_LIBS "${_drift_android_ssl_crypto};${_drift_android_ssl_ssl}"
+        QT_ANDROID_EXTRA_LIBS "${_drift_android_extra_libs}"
     )
 endif()
 
@@ -944,9 +1347,14 @@ if(Qt6LinguistTools_FOUND)
             src/engine/TransitionCatalog.cpp
             src/engine/FontCatalog.cpp
             src/engine/ReverseRenderer.cpp
+            src/engine/ProxyEncoder.cpp
+            src/engine/PreviewProxyRenderer.cpp
             src/engine/MediaEditor.cpp
             src/engine/ProjectBundle.cpp
+            src/engine/FacePropImport.cpp
             src/core/Project.cpp
+            src/core/Transcript.cpp
+            src/core/GuideSet.cpp
             src/core/SrtIO.cpp
             src/core/ShapeStyle.cpp
             src/core/TextStyle.cpp
@@ -958,6 +1366,53 @@ if(Qt6LinguistTools_FOUND)
     )
     if(NOT TARGET update_translations AND TARGET drift_lupdate)
         add_custom_target(update_translations DEPENDS drift_lupdate)
+    endif()
+
+    # An lupdate built before qtdeclarative has no QML parser: it warns "missing qml/javascript
+    # support", skips every .qml, and -no-obsolete then strips every QML string out of i18n/*.ts.
+    # org.kde.Sdk ships exactly that lupdate, and flatpak-builder does not pass CI into its
+    # sandbox, so the Flatpak regenerated its catalogs down to the C++ strings on every build and
+    # shipped a UI that was English apart from the toasts (#167). Probe once and stay off where
+    # lupdate cannot see QML, rather than letting it gut the committed catalogs.
+    if(NOT DEFINED DRIFT_LUPDATE_HAS_QML AND TARGET Qt6::lupdate)
+        get_target_property(_drift_lupdate_exe Qt6::lupdate IMPORTED_LOCATION)
+        if(NOT _drift_lupdate_exe)
+            get_target_property(_drift_lupdate_cfgs Qt6::lupdate IMPORTED_CONFIGURATIONS)
+            foreach(_drift_cfg IN LISTS _drift_lupdate_cfgs)
+                get_target_property(_drift_lupdate_exe Qt6::lupdate IMPORTED_LOCATION_${_drift_cfg})
+                if(_drift_lupdate_exe)
+                    break()
+                endif()
+            endforeach()
+        endif()
+        set(_drift_probe_dir "${CMAKE_CURRENT_BINARY_DIR}/lupdate-qml-probe")
+        file(REMOVE_RECURSE "${_drift_probe_dir}")
+        file(WRITE "${_drift_probe_dir}/probe.qml"
+            "import QtQuick\nItem { property string s: qsTr(\"drift_lupdate_qml_probe\") }\n")
+        if(_drift_lupdate_exe)
+            execute_process(
+                COMMAND "${_drift_lupdate_exe}" probe.qml -ts probe.ts
+                WORKING_DIRECTORY "${_drift_probe_dir}"
+                OUTPUT_QUIET ERROR_QUIET)
+        endif()
+        set(_drift_probe_ts "")
+        if(EXISTS "${_drift_probe_dir}/probe.ts")
+            file(READ "${_drift_probe_dir}/probe.ts" _drift_probe_ts)
+        endif()
+        string(FIND "${_drift_probe_ts}" "drift_lupdate_qml_probe" _drift_probe_hit)
+        if(_drift_probe_hit GREATER -1)
+            set(DRIFT_LUPDATE_HAS_QML ON CACHE INTERNAL "lupdate can parse QML")
+        else()
+            set(DRIFT_LUPDATE_HAS_QML OFF CACHE INTERNAL "lupdate can parse QML")
+        endif()
+    endif()
+
+    if(DRIFT_AUTO_UPDATE_TRANSLATIONS AND NOT DRIFT_LUPDATE_HAS_QML)
+        message(WARNING
+            "lupdate has no QML/JavaScript support; running it would delete every QML string from "
+            "i18n/*.ts and ship English-only .qm files. Not running lupdate as part of this build. "
+            "Install a Qt Linguist build with QML support to refresh the catalogs.")
+        set(DRIFT_AUTO_UPDATE_TRANSLATIONS OFF)
     endif()
 
     # Qt keeps lupdate out of the default build, so a new qsTr() only reaches i18n/*.ts when
@@ -977,8 +1432,11 @@ endif()
 target_compile_definitions(drift PRIVATE
     DRIFT_ADDON_INDEX_URL="${DRIFT_ADDON_INDEX_URL}"
     DRIFT_ADDON_CLIENT_TOKEN="${DRIFT_ADDON_CLIENT_TOKEN}"
+    DRIFT_MARKET_API_URL="${DRIFT_MARKET_API_URL}"
+    DRIFT_MARKET_CLIENT_KEY="${DRIFT_MARKET_CLIENT_KEY}"
     DRIFT_UPDATE_FEED_URL="${DRIFT_UPDATE_FEED_URL}"
-    DRIFT_VERSION="${PROJECT_VERSION}"
+    DRIFT_VERSION="${DRIFT_VERSION_STRING}"
+    DRIFT_DISTRIBUTION="${DRIFT_DISTRIBUTION}"
 )
 
 # Ship a file-based package directory next to the binaries that load the catalog.
@@ -1060,11 +1518,17 @@ function(drift_bundle_onnxruntime target)
 endfunction()
 
 function(drift_bundle_ffmpeg_runtime target)
-    if(NOT WIN32 OR NOT FFMPEG_AVFORMAT_LIBRARY)
+    # FindFFmpeg usa o pkg-config quando ele existe (o vcpkg instala um junto com o Skia); aí só
+    # a variável do pkg-config aponta para a biblioteca, e a do find_library fica vazia.
+    set(_avformat_lib "${FFMPEG_AVFORMAT_LIBRARY}")
+    if(NOT _avformat_lib)
+        set(_avformat_lib "${pkgcfg_lib_PC_AVFORMAT_avformat}")
+    endif()
+    if(NOT WIN32 OR NOT _avformat_lib)
         return()
     endif()
 
-    get_filename_component(_ffmpeg_lib_dir "${FFMPEG_AVFORMAT_LIBRARY}" DIRECTORY)
+    get_filename_component(_ffmpeg_lib_dir "${_avformat_lib}" DIRECTORY)
     get_filename_component(_ffmpeg_root "${_ffmpeg_lib_dir}" DIRECTORY)
     file(GLOB _ffmpeg_runtime "${_ffmpeg_root}/bin/*.dll")
     if(_ffmpeg_runtime)
@@ -1096,6 +1560,25 @@ if(NOT ANDROID)
 # --- install (used by packaging, e.g. Flatpak; the dev workflow runs in-place) ---
 include(GNUInstallDirs)
 
+# Install one freedesktop metadata file under the channel's app id. On stable that is the source
+# file byte for byte. A nightly gets a generated copy with every org.cutwire.Drift occurrence
+# rewritten — the AppStream <id>, its <launchable>, the mime type's <icon> and the desktop file's
+# Icon= all carry that string — and the human-facing name suffixed, so the launcher shows
+# "Drift Nightly" next to a stable entry rather than two identical ones.
+function(drift_install_metadata source destination name)
+    if(DRIFT_CHANNEL STREQUAL "stable")
+        install(FILES "${source}" DESTINATION "${destination}" RENAME "${name}" COMPONENT drift)
+        return()
+    endif()
+    file(READ "${CMAKE_SOURCE_DIR}/${source}" _content)
+    string(REPLACE "com.nardoto.Editor" "${DRIFT_APP_ID}" _content "${_content}")
+    string(REPLACE "Name=Nardoto Editor\n" "Name=${DRIFT_APP_NAME}\n" _content "${_content}")
+    string(REPLACE "<name>Nardoto Editor</name>" "<name>${DRIFT_APP_NAME}</name>" _content "${_content}")
+    set(_generated "${CMAKE_CURRENT_BINARY_DIR}/metadata/${name}")
+    file(WRITE "${_generated}" "${_content}")
+    install(FILES "${_generated}" DESTINATION "${destination}" COMPONENT drift)
+endfunction()
+
 # Everything Drift installs is tagged with the "drift" component, so packaging can ask for the app
 # and nothing else: `cmake --install build --component drift`. JUCE's modules install ~50 MB of
 # their own sources into include/JUCE-<version>, and a plain `cmake --install` has no way to say no
@@ -1115,19 +1598,23 @@ else()
                 DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT drift)
     endforeach()
 
-    # Desktop integration for Flatpak / freedesktop.
-    install(FILES flatpak/com.nardoto.Editor.desktop
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications COMPONENT drift)
-    install(FILES flatpak/com.nardoto.Editor.metainfo.xml
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo COMPONENT drift)
-    install(FILES flatpak/com.nardoto.Editor.xml
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages COMPONENT drift)
+    # Desktop integration for Flatpak / freedesktop. Every one of these is installed under the
+    # channel's app id: flatpak build-export silently drops anything in /app/share whose name does
+    # not start with the app id, so a nightly named after the stable id would export no launcher
+    # entry and no icon at all.
+    drift_install_metadata(flatpak/com.nardoto.Editor.desktop
+        "${CMAKE_INSTALL_DATADIR}/applications" "${DRIFT_APP_ID}.desktop")
+    drift_install_metadata(flatpak/com.nardoto.Editor.metainfo.xml
+        "${CMAKE_INSTALL_DATADIR}/metainfo" "${DRIFT_APP_ID}.metainfo.xml")
+    drift_install_metadata(flatpak/com.nardoto.Editor.xml
+        "${CMAKE_INSTALL_DATADIR}/mime/packages" "${DRIFT_APP_ID}.xml")
     # 1024px source is intentionally skipped: flatpak build-export rejects icons
     # larger than 512x512.
     foreach(_size 64 128 256 512)
         install(FILES
             flatpak/share/icons/hicolor/${_size}x${_size}/apps/com.nardoto.Editor.png
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}x${_size}/apps COMPONENT drift)
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}x${_size}/apps
+            RENAME ${DRIFT_APP_ID}.png COMPONENT drift)
     endforeach()
 endif()
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Configures and builds the APK. Bootstraps the android/ package overlay from the Qt kit's template
+# Configures and builds the APK or AAB. Bootstraps the android/ package overlay from the Qt kit's template
 # on first run, and the native prebuilt dependencies if they are not there yet.
 #
 #   scripts/build.sh [abi] [build-type]
@@ -14,11 +14,21 @@
 #   ANDROID_NDK_ROOT the NDK version the Qt kit was built against, NOT simply the newest installed.
 #                    Mixing NDK majors between Qt, FFmpeg and the app produces libc++ symbol
 #                    errors and dlopen failures that get misattributed to something else.
-#   DRIFT_ANDROID_PACKAGE_NAME  identificador (padrão com.nardoto.editor; CI usa .ci)
-#   DRIFT_ANDROID_APP_NAME      rótulo do lançador (padrão Nardoto Editor)
+#   DRIFT_CHANNEL               stable (default) or nightly; sets the reported version string
+#   DRIFT_BUILD_ID              nightly build stamp, YYYYMMDD.<short sha>
+#   DRIFT_DISTRIBUTION          package type reported to the marketplace: android-github,
+#                               android-play, or source (default, local builds)
+#   DRIFT_ANDROID_PACKAGE_NAME  identificador (padrão com.nardoto.editor.debug numa build local
+#                               que não é Release, com.nardoto.editor na Release; CI usa .ci)
+#   DRIFT_ANDROID_APP_NAME      rótulo do lançador (padrão "Nardoto Editor Debug" / "Nardoto Editor", mesma regra)
 #   DRIFT_ANDROID_VERSION_CODE  optional Play-Store integer; unset → CMake derives from
 #                               PROJECT_VERSION (same semver as desktop)
-#   SKIP_APK=1                  compile the native library only (no APK packaging)
+#   QT_ANDROID_ABIS             semicolon-separated ABI list packaged into the APK/AAB.
+#                               Defaults to the abi argument. A Play Store AAB wants every
+#                               ABI in one bundle, with matching Qt kits as siblings of
+#                               QT_ANDROID_ROOT.
+#   BUILD_AAB=1                 package an Android App Bundle (cmake --target aab) instead of an APK
+#   SKIP_APK=1                  compile the native library only (no APK/AAB packaging)
 set -euo pipefail
 
 ABI="${1:-arm64-v8a}"
@@ -46,13 +56,30 @@ esac
 # The kit ships its own matching host Qt, which beats guessing at a distro layout.
 : "${QT_HOST_PATH:=$HOME/Qt/$QT_VERSION/gcc_64}"
 
-# Package identity. The defaults are the release app; CI overrides PACKAGE_NAME / APP_NAME so
-# test APKs install alongside a release build rather than being refused for a signature mismatch.
+# Package identity. CI overrides PACKAGE_NAME / APP_NAME so test APKs install alongside a
+# release build rather than being refused for a signature mismatch.
 # VERSION_CODE defaults in CMake from PROJECT_VERSION (same semver as desktop); set it only when
 # you need a different integer (e.g. github.run_number for successive CI side-loads).
 # SKIP_APK=1 builds the native library only — used by the push smoke test.
-: "${DRIFT_ANDROID_PACKAGE_NAME:=com.nardoto.editor}"
-: "${DRIFT_ANDROID_APP_NAME:=Nardoto Editor}"
+# BUILD_AAB=1 is the Play Store package; QT_ANDROID_ABIS defaults to the abi argument.
+# A local build defaults to the .debug identity: it is debug-signed by scripts/deploy.sh, so
+# under the release application id the device refuses the update as a signature mismatch.
+# Both CI workflows set these explicitly, and a local `build.sh <abi> Release` still builds the
+# release identity.
+if [ "$BUILD_TYPE" = "Release" ]; then
+    : "${DRIFT_ANDROID_PACKAGE_NAME:=com.nardoto.editor}"
+    : "${DRIFT_ANDROID_APP_NAME:=Nardoto Editor}"
+else
+    : "${DRIFT_ANDROID_PACKAGE_NAME:=com.nardoto.editor.debug}"
+    : "${DRIFT_ANDROID_APP_NAME:=Nardoto Editor Debug}"
+fi
+# The package id and launcher label are set independently above, so the channel here only
+# decides the version string the app reports (0.7.0-nightly.<stamp>).
+: "${DRIFT_CHANNEL:=stable}"
+: "${DRIFT_BUILD_ID:=}"
+: "${DRIFT_DISTRIBUTION:=source}"
+: "${QT_ANDROID_ABIS:=$ABI}"
+: "${BUILD_AAB:=0}"
 : "${SKIP_APK:=0}"
 
 [ -d "$ANDROID_NDK_ROOT" ] || { echo "no NDK at $ANDROID_NDK_ROOT" >&2; exit 1; }
@@ -77,10 +104,17 @@ if [ ! -f "$ROOT/android/AndroidManifest.xml" ]; then
 fi
 
 # --- native dependencies -----------------------------------------------------
-if [ ! -f "$ROOT/third_party/prebuilt/android/$ABI/lib/libavcodec.a" ]; then
-    echo "==> no prebuilt dependencies for $ABI; building them first"
-    "$ROOT/third_party/build-android.sh" "$ABI"
-fi
+IFS=';' read -ra _abis <<< "$QT_ANDROID_ABIS"
+for _abi in "${_abis[@]}"; do
+    if [ ! -f "$ROOT/third_party/prebuilt/android/$_abi/lib/libavcodec.a" ]; then
+        echo "==> no prebuilt dependencies for $_abi; building them first"
+        "$ROOT/third_party/build-android.sh" "$_abi"
+    fi
+    if [ ! -f "$ROOT/third_party/prebuilt/skia/android-$_abi/SkiaConfig.cmake" ]; then
+        echo "==> no prebuilt Skia for $_abi; building it first"
+        "$ROOT/third_party/build-skia.sh" "android-$_abi"
+    fi
+done
 
 # --- configure and build -----------------------------------------------------
 CMAKE_ARGS=(
@@ -89,10 +123,14 @@ CMAKE_ARGS=(
     -DQT_HOST_PATH="$QT_HOST_PATH"
     -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT"
     -DANDROID_NDK_ROOT="$ANDROID_NDK_ROOT"
-    -DQT_ANDROID_ABIS="$ABI"
+    -DQT_ANDROID_ABIS="$QT_ANDROID_ABIS"
     -DDRIFT_BUNDLE_ONNXRUNTIME=OFF
+    -DDRIFT_WITH_SKIA=ON
     -DDRIFT_ANDROID_PACKAGE_NAME="$DRIFT_ANDROID_PACKAGE_NAME"
     -DDRIFT_ANDROID_APP_NAME="$DRIFT_ANDROID_APP_NAME"
+    -DDRIFT_CHANNEL="$DRIFT_CHANNEL"
+    -DDRIFT_BUILD_ID="$DRIFT_BUILD_ID"
+    -DDRIFT_DISTRIBUTION="$DRIFT_DISTRIBUTION"
 )
 if [ -n "${DRIFT_ANDROID_VERSION_CODE:-}" ]; then
     CMAKE_ARGS+=(-DDRIFT_ANDROID_VERSION_CODE="$DRIFT_ANDROID_VERSION_CODE")
@@ -105,8 +143,14 @@ if [ "$SKIP_APK" = "1" ]; then
     echo "==> SKIP_APK=1: native build only (no androiddeployqt / gradle package)"
     exit 0
 fi
-cmake --build "$BUILD" --target apk
-
-echo
-echo "==> APK:"
-find "$BUILD/android-build" -name '*.apk' -newer "$BUILD/CMakeCache.txt" 2>/dev/null || true
+if [ "$BUILD_AAB" = "1" ]; then
+    cmake --build "$BUILD" --target aab
+    echo
+    echo "==> AAB:"
+    find "$BUILD/android-build" -name '*.aab' -newer "$BUILD/CMakeCache.txt" 2>/dev/null || true
+else
+    cmake --build "$BUILD" --target apk
+    echo
+    echo "==> APK:"
+    find "$BUILD/android-build" -name '*.apk' -newer "$BUILD/CMakeCache.txt" 2>/dev/null || true
+fi

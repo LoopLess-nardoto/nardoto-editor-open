@@ -24,7 +24,7 @@ AbstractButton {
 
     Accessible.role: Accessible.Button
     Accessible.name: qsTr("Shortcut for %1").arg(root.actionId)
-    Accessible.description: root.shortcut.length > 0 ? root.shortcut : qsTr("Not set")
+    Accessible.description: root.shortcut.length > 0 ? Theme.shortcutDisplay(root.shortcut) : qsTr("Not set")
     Accessible.onPressAction: root.arm()
 
     function arm() {
@@ -50,56 +50,8 @@ AbstractButton {
         }
     }
 
-    function keyName(key) {
-        const named = ({
-            0x01000000: "Escape",
-            0x01000003: "Backspace",
-            0x01000004: "Return",
-            0x01000005: "Enter",
-            0x01000006: "Insert",
-            0x01000007: "Delete",
-            0x01000010: "Home",
-            0x01000011: "End",
-            0x01000012: "Left",
-            0x01000013: "Up",
-            0x01000014: "Right",
-            0x01000015: "Down",
-            0x01000016: "PageUp",
-            0x01000017: "PageDown",
-            0x01000020: "Shift",
-            0x01000021: "Control",
-            0x01000023: "Alt",
-            0x01000024: "Meta",
-            0x20: "Space",
-            0x09: "Tab"
-        })
-        if (named[key])
-            return named[key]
-        if (key >= Qt.Key_F1 && key <= Qt.Key_F12)
-            return "F" + (key - Qt.Key_F1 + 1)
-        if (key >= Qt.Key_0 && key <= Qt.Key_9)
-            return String.fromCharCode(key)
-        if (key >= Qt.Key_A && key <= Qt.Key_Z)
-            return String.fromCharCode(key)
-        return ""
-    }
-
     function chordFromEvent(event) {
-        const name = keyName(event.key)
-        if (!name || name === "Shift" || name === "Control" || name === "Alt" || name === "Meta")
-            return ""
-
-        let parts = []
-        if (event.modifiers & Qt.ControlModifier)
-            parts.push("Ctrl")
-        if (event.modifiers & Qt.AltModifier)
-            parts.push("Alt")
-        if (event.modifiers & Qt.ShiftModifier)
-            parts.push("Shift")
-        if (event.modifiers & Qt.MetaModifier)
-            parts.push("Meta")
-        parts.push(name)
-        return parts.join("+")
+        return EditorState.shortcutChord(event.key, event.modifiers)
     }
 
     contentItem: Text {
@@ -108,7 +60,9 @@ AbstractButton {
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
         text: root.capturing ? qsTr("Press keys…")
-                             : (root.shortcut.length > 0 ? root.shortcut : qsTr("Click to set"))
+                             : (root.shortcut.length > 0
+                                ? Theme.shortcutDisplay(root.shortcut)
+                                : qsTr("Click to set"))
         color: root.capturing ? Theme.primary : Theme.panelForeground
         font.family: Theme.monoFontFamily
         font.pixelSize: Theme.fontSizeXs
@@ -146,7 +100,8 @@ AbstractButton {
         // binding it twice would make Qt fire neither.
         const clash = EditorState.setShortcut(root.actionId, chord)
         if (clash.length > 0)
-            Toasts.warning(qsTr("“%1” is already used by %2.").arg(chord).arg(clash))
+            Toasts.warning(qsTr("“%1” is already used by %2.")
+                           .arg(Theme.shortcutDisplay(chord)).arg(clash))
         root.capturing = false
         event.accepted = true
     }

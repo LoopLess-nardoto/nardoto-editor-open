@@ -3,6 +3,9 @@
 #include "ClipReader.h"
 #include "Exporter.h"
 #include "GlRuntime.h"
+#include "GpuCompositor.h"
+#include "GpuDevice.h"
+#include "GpuPreference.h"
 #include "HwAccel.h"
 #include "OrtRuntime.h"
 #include "VaapiZeroCopy.h"
@@ -24,6 +27,18 @@
 #include <QThread>
 #include <QVariantList>
 #include <utility>
+
+#if defined(Q_OS_WIN)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(Q_OS_MACOS)
+#include <sys/sysctl.h>
+#endif
 
 #ifndef DRIFT_VERSION
 #define DRIFT_VERSION "0.0.0"
@@ -64,24 +79,6 @@ QString readKeyValueFile(const QString &path, const QString &key)
     return {};
 }
 
-QString readTrimmedFile(const QString &path)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return {};
-    return QString::fromUtf8(file.readAll().trimmed());
-}
-
-quint32 readSysfsHex(const QString &path)
-{
-    QString text = readTrimmedFile(path);
-    if (text.startsWith(QLatin1String("0x"), Qt::CaseInsensitive))
-        text = text.mid(2);
-    bool ok = false;
-    const quint32 value = text.toUInt(&ok, 16);
-    return ok ? value : 0;
-}
-
 QString osReleasePretty(const QString &path)
 {
     const QString pretty = readKeyValueFile(path, QStringLiteral("PRETTY_NAME"));
@@ -117,6 +114,42 @@ QString cpuModel()
         }
         if (!hardware.isEmpty())
             return hardware;
+    }
+#elif defined(Q_OS_WIN)
+    // Where the kernel publishes what CPUID reported. Reports pasted from Windows used to say
+    // nothing but "x86_64", which cannot distinguish the machines these bugs turn up on.
+    {
+        HKEY key = nullptr;
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                          L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0,
+                          KEY_QUERY_VALUE, &key)
+            == ERROR_SUCCESS) {
+            wchar_t name[256] = {};
+            DWORD bytes = sizeof(name);
+            DWORD type = 0;
+            const LSTATUS rc =
+                RegQueryValueExW(key, L"ProcessorNameString", nullptr, &type,
+                                 reinterpret_cast<LPBYTE>(name), &bytes);
+            RegCloseKey(key);
+            if (rc == ERROR_SUCCESS && type == REG_SZ) {
+                const QString value = QString::fromWCharArray(name).trimmed();
+                if (!value.isEmpty())
+                    return value;
+            }
+        }
+    }
+#elif defined(Q_OS_MACOS)
+    {
+        size_t size = 0;
+        if (sysctlbyname("machdep.cpu.brand_string", nullptr, &size, nullptr, 0) == 0 && size > 0) {
+            QByteArray brand(int(size), '\0');
+            if (sysctlbyname("machdep.cpu.brand_string", brand.data(), &size, nullptr, 0) == 0) {
+                // sysctl counts the terminator in `size`; constData() stops at it.
+                const QString value = QString::fromUtf8(brand.constData()).trimmed();
+                if (!value.isEmpty())
+                    return value;
+            }
+        }
     }
 #endif
     return QSysInfo::currentCpuArchitecture();
@@ -167,73 +200,7 @@ QString osPretty()
     return QSysInfo::prettyProductName();
 }
 
-QString pciVendorName(quint16 id)
-{
-    switch (id) {
-    case 0x8086:
-        return QStringLiteral("Intel");
-    case 0x10de:
-        return QStringLiteral("NVIDIA");
-    case 0x1002:
-    case 0x1022:
-        return QStringLiteral("AMD");
-    case 0x14e4:
-        return QStringLiteral("Broadcom");
-    case 0x1af4:
-        return QStringLiteral("Virtio");
-    case 0x15ad:
-        return QStringLiteral("VMware");
-    case 0x1234:
-    case 0x1b36:
-        return QStringLiteral("QEMU");
-    case 0x13b5:
-        return QStringLiteral("ARM");
-    case 0x106b:
-        return QStringLiteral("Apple");
-    case 0x17cb:
-        return QStringLiteral("Qualcomm");
-    case 0x1414:
-        return QStringLiteral("Microsoft");
-    default:
-        return {};
-    }
-}
-
-QString driverNameAt(const QString &deviceDir)
-{
-    const QFileInfo link(deviceDir + QStringLiteral("/driver"));
-    if (!link.exists())
-        return {};
-    return QFileInfo(link.symLinkTarget()).fileName();
-}
-
-QString nvidiaModelForSlot(const QString &slot)
-{
-    QFile file(QStringLiteral("/proc/driver/nvidia/gpus/%1/information").arg(slot));
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return {};
-    while (!file.atEnd()) {
-        const QByteArray line = file.readLine();
-        if (!line.startsWith("Model:"))
-            continue;
-        const int colon = line.indexOf(':');
-        if (colon < 0)
-            continue;
-        return QString::fromUtf8(line.mid(colon + 1).trimmed());
-    }
-    return {};
-}
-
-struct GpuAdapter {
-    QString slot;
-    QString vendor;
-    quint16 vendorId = 0;
-    quint16 deviceId = 0;
-    QString driver;
-    QString model;
-};
-
-QString pciIdString(const GpuAdapter &gpu)
+QString pciIdString(const drift::gpu::Adapter &gpu)
 {
     if (gpu.vendorId == 0 && gpu.deviceId == 0)
         return {};
@@ -243,9 +210,9 @@ QString pciIdString(const GpuAdapter &gpu)
         .toUpper();
 }
 
-QString formatGpu(const GpuAdapter &gpu)
+QString formatGpu(const drift::gpu::Adapter &gpu)
 {
-    QString head = gpu.model;
+    QString head = gpu.name;
     if (head.isEmpty() && !gpu.vendor.isEmpty())
         head = QStringLiteral("%1 Graphics").arg(gpu.vendor);
     if (head.isEmpty())
@@ -261,108 +228,140 @@ QString formatGpu(const GpuAdapter &gpu)
     return QStringLiteral("%1 (%2)").arg(head, bits.join(QStringLiteral(", ")));
 }
 
-GpuAdapter gpuFromSysfsDevice(const QString &deviceDir, const QString &slot)
+struct OpenGlInfo
 {
-    GpuAdapter gpu;
-    gpu.slot = slot;
-    gpu.vendorId = static_cast<quint16>(readSysfsHex(deviceDir + QStringLiteral("/vendor")));
-    gpu.deviceId = static_cast<quint16>(readSysfsHex(deviceDir + QStringLiteral("/device")));
-    gpu.vendor = pciVendorName(gpu.vendorId);
-    if (gpu.vendor.isEmpty() && gpu.vendorId)
-        gpu.vendor = QStringLiteral("PCI %1").arg(gpu.vendorId, 4, 16, QLatin1Char('0')).toUpper();
-    gpu.driver = driverNameAt(deviceDir);
-    if (const QString label = readTrimmedFile(deviceDir + QStringLiteral("/label")); !label.isEmpty())
-        gpu.model = label;
-    else if (const QString product = readTrimmedFile(deviceDir + QStringLiteral("/product_name"));
-             !product.isEmpty())
-        gpu.model = product;
-    if (gpu.model.isEmpty() && !slot.isEmpty())
-        gpu.model = nvidiaModelForSlot(slot);
-    return gpu;
-}
+    QString renderer; // "AMD Radeon RX 6600 (ATI Technologies Inc.)"
+    int major = 0;
+    int minor = 0;
+    bool isEs = false;
+    bool core = false;
+    bool software = false;
+    bool valid = false;
+};
 
-QList<GpuAdapter> enumerateGpus()
+// What OpenGL this process actually got. The version matters as much as the
+// renderer — a report that said only "AMD Radeon RX 6600" could not distinguish a
+// healthy machine from one Qt had quietly put on a 3.0 software rasterizer — so
+// prefer the scene graph's own context, which is the format GlRuntime inherits,
+// and fall back to a probe context that does not insist on 3.3 so a machine below
+// the floor still reports what it has instead of nothing at all.
+OpenGlInfo openglInfo()
 {
-    QList<GpuAdapter> gpus;
-    QSet<QString> seen;
-
-    const auto addGpu = [&](GpuAdapter gpu) {
-        const QString key = !gpu.slot.isEmpty() ? gpu.slot : pciIdString(gpu);
-        if (key.isEmpty() || seen.contains(key))
-            return;
-        if (gpu.vendorId == 0 && gpu.driver.isEmpty())
-            return;
-        seen.insert(key);
-        gpus.append(std::move(gpu));
-    };
-
-#if defined(Q_OS_LINUX)
-    const QDir drmDir(QStringLiteral("/sys/class/drm"));
-    const QRegularExpression cardRe(QStringLiteral("^card\\d+$"));
-    const QFileInfoList cards = drmDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QFileInfo &card : cards) {
-        if (!cardRe.match(card.fileName()).hasMatch())
-            continue;
-        const QString deviceDir = card.absoluteFilePath() + QStringLiteral("/device");
-        QString slot = QFileInfo(QFileInfo(deviceDir).canonicalFilePath()).fileName();
-        if (!slot.contains(QLatin1Char(':')))
-            slot.clear();
-        addGpu(gpuFromSysfsDevice(deviceDir, slot));
-    }
-
-    const QDir pciDir(QStringLiteral("/sys/bus/pci/devices"));
-    const QFileInfoList devices = pciDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QFileInfo &device : devices) {
-        const quint32 pciClass = readSysfsHex(device.absoluteFilePath() + QStringLiteral("/class"));
-        if ((pciClass >> 16) != 0x03)
-            continue;
-        addGpu(gpuFromSysfsDevice(device.absoluteFilePath(), device.fileName()));
-    }
-#endif
-    return gpus;
-}
-
-QString openglRenderer()
-{
+    OpenGlInfo info;
     if (!qobject_cast<QGuiApplication *>(QCoreApplication::instance()))
-        return {};
+        return info;
+
+    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
+    QOpenGLContext *shared = QOpenGLContext::globalShareContext();
+    if (shared && shared->isValid())
+        format = shared->format();
 
     QOffscreenSurface surface;
-    surface.setFormat(QSurfaceFormat::defaultFormat());
+    surface.setFormat(format);
     surface.create();
     if (!surface.isValid())
-        return {};
+        return info;
 
     QOpenGLContext ctx;
     ctx.setFormat(surface.format());
-    if (!ctx.create() || !ctx.makeCurrent(&surface))
-        return {};
+    if (shared && shared->isValid())
+        ctx.setShareContext(shared);
+    if (!ctx.create()) {
+        // The requested version is the thing that failed; ask for whatever exists.
+        ctx.setFormat(QSurfaceFormat());
+        if (!ctx.create())
+            return info;
+    }
+    if (!ctx.makeCurrent(&surface))
+        return info;
 
-    QString renderer;
     if (QOpenGLFunctions *fn = ctx.functions()) {
         const char *glRenderer = reinterpret_cast<const char *>(fn->glGetString(GL_RENDERER));
         const char *glVendor = reinterpret_cast<const char *>(fn->glGetString(GL_VENDOR));
         if (glRenderer)
-            renderer = QString::fromUtf8(glRenderer);
+            info.renderer = QString::fromUtf8(glRenderer);
+        info.software = drift::gl::isSoftwareRenderer(info.renderer);
         if (glVendor) {
             const QString vendor = QString::fromUtf8(glVendor);
-            if (!vendor.isEmpty() && !renderer.contains(vendor, Qt::CaseInsensitive))
-                renderer = renderer.isEmpty() ? vendor : QStringLiteral("%1 (%2)").arg(renderer, vendor);
+            if (!vendor.isEmpty() && !info.renderer.contains(vendor, Qt::CaseInsensitive)) {
+                info.renderer = info.renderer.isEmpty()
+                    ? vendor
+                    : QStringLiteral("%1 (%2)").arg(info.renderer, vendor);
+            }
         }
     }
+    info.major = ctx.format().majorVersion();
+    info.minor = ctx.format().minorVersion();
+    info.isEs = ctx.isOpenGLES();
+    info.core = ctx.format().profile() == QSurfaceFormat::CoreProfile;
+    info.valid = true;
     ctx.doneCurrent();
-    return renderer;
+    return info;
+}
+
+QString openglLabel(const OpenGlInfo &info)
+{
+    if (!info.valid)
+        return {};
+    QString version;
+    if (info.major > 0) {
+        version = (info.isEs ? QStringLiteral("OpenGL ES %1.%2") : QStringLiteral("OpenGL %1.%2"))
+                      .arg(info.major)
+                      .arg(info.minor);
+        if (info.core)
+            version += QStringLiteral(" core");
+    }
+    if (info.renderer.isEmpty())
+        return version;
+    if (version.isEmpty())
+        return info.renderer;
+    return QStringLiteral("%1 — %2").arg(info.renderer, version);
+}
+
+// Why the preview can or cannot draw. Forces a bring-up attempt so the row is
+// meaningful even when the user opens this before touching the timeline.
+QString gpuCompositorLabel()
+{
+    if (!qobject_cast<QGuiApplication *>(QCoreApplication::instance()))
+        return trReport("Not available");
+
+    GpuCompositor::isAvailable();
+    const drift::gl::GlStatusInfo info = GpuCompositor::status();
+    switch (info.status) {
+    case drift::gl::GlStatus::Ready:
+        return trReport("Ready");
+    case drift::gl::GlStatus::VersionTooLow:
+        return trReport("OpenGL %1.%2 is below the 3.3 minimum")
+            .arg(info.major)
+            .arg(info.minor);
+    case drift::gl::GlStatus::NoShareContext:
+        return trReport("No shared OpenGL context");
+    case drift::gl::GlStatus::SurfaceFailed:
+        return trReport("Offscreen surface creation failed");
+    case drift::gl::GlStatus::ContextFailed:
+        return trReport("OpenGL context creation failed");
+    case drift::gl::GlStatus::MakeCurrentFailed:
+        return trReport("Could not make the OpenGL context current");
+    case drift::gl::GlStatus::NoFunctions:
+        return trReport("OpenGL functions unavailable");
+    case drift::gl::GlStatus::ShaderLinkFailed:
+        return trReport("Shader compilation failed");
+    case drift::gl::GlStatus::NoApplication:
+    case drift::gl::GlStatus::NotAttempted:
+        break;
+    }
+    return trReport("Unknown");
 }
 
 // The backend the preview decoder would land on here: the first one this platform
 // offers whose device actually opens. ClipReader walks the same list per clip.
 drift::hwaccel::Backend activeDecodeBackend()
 {
-    for (const drift::hwaccel::Backend backend : drift::hwaccel::decodeBackendOrder()) {
-        if (drift::hwaccel::deviceAvailable(drift::hwaccel::deviceType(backend)))
-            return backend;
-    }
-    return drift::hwaccel::Backend::None;
+    // availableDecodeBackends() rather than a deviceAvailable() walk: MediaCodec needs a
+    // different probe (its device init succeeds with no decoder present), and that function is
+    // where that lives. It also keeps this in step with what the preview picker offers.
+    const QList<drift::hwaccel::Backend> available = drift::hwaccel::availableDecodeBackends();
+    return available.isEmpty() ? drift::hwaccel::Backend::None : available.first();
 }
 
 const AVCodec *findNamedEncoder(const char *const *names)
@@ -372,48 +371,6 @@ const AVCodec *findNamedEncoder(const char *const *names)
             return codec;
     }
     return nullptr;
-}
-
-// MediaCodec is Android's only hardware decode path — it is not one of HwAccel's device
-// backends (those are the desktop VAAPI/NVDEC/D3D11VA/VideoToolbox families), so it needs
-// its own probe purely for this report. ClipReader's own decode routing is unaffected.
-const AVCodec *findMediaCodecDecoder(AVCodecID id)
-{
-    const char *name = nullptr;
-    switch (id) {
-    case AV_CODEC_ID_H264:
-        name = "h264_mediacodec";
-        break;
-    case AV_CODEC_ID_HEVC:
-        name = "hevc_mediacodec";
-        break;
-    case AV_CODEC_ID_VP9:
-        name = "vp9_mediacodec";
-        break;
-    case AV_CODEC_ID_VP8:
-        name = "vp8_mediacodec";
-        break;
-    case AV_CODEC_ID_AV1:
-        name = "av1_mediacodec";
-        break;
-    default:
-        return nullptr;
-    }
-    return avcodec_find_decoder_by_name(name);
-}
-
-bool mediaCodecDecodeAvailable()
-{
-#if defined(Q_OS_ANDROID)
-    if (qEnvironmentVariableIsSet("DRIFT_NO_MEDIACODEC"))
-        return false;
-    return findMediaCodecDecoder(AV_CODEC_ID_H264) != nullptr
-           || findMediaCodecDecoder(AV_CODEC_ID_HEVC) != nullptr
-           || findMediaCodecDecoder(AV_CODEC_ID_VP9) != nullptr
-           || findMediaCodecDecoder(AV_CODEC_ID_AV1) != nullptr;
-#else
-    return false;
-#endif
 }
 
 QString decodeModeLabel()
@@ -434,7 +391,7 @@ QString decodeModeLabel()
 #if defined(Q_OS_ANDROID)
     // Auto on Android means the MediaCodec heuristic, not the HwAccel backend probe — naming it
     // is what distinguishes "no hardware path exists here" from "the heuristic declined".
-    if (mediaCodecDecodeAvailable())
+    if (drift::hwaccel::mediaCodecDecodeAvailable())
         return trReport("Auto (MediaCodec)");
 #endif
     return trReport("Auto");
@@ -453,7 +410,10 @@ QString activeDecodeLabel()
         : QString::fromLatin1(drift::hwaccel::name(*active));
     if (ClipReader::hardwareFallbackCount() == 0)
         return base;
-    return QStringLiteral("%1 — %2").arg(base, trReport("hardware decoding failed"));
+    const QString failed = trReport("hardware decoding failed");
+    const QString why = ClipReader::lastHardwareFailure();
+    return why.isEmpty() ? QStringLiteral("%1 — %2").arg(base, failed)
+                         : QStringLiteral("%1 — %2: %3").arg(base, failed, why);
 }
 
 QVariantMap systemRow(const QString &label, const QString &value)
@@ -476,13 +436,13 @@ bool flatpakExtensionMounted(const QString &subdir)
     return false;
 }
 
-bool gpuIsNvidia(const GpuAdapter &gpu)
+bool gpuIsNvidia(const drift::gpu::Adapter &gpu)
 {
     return gpu.vendorId == 0x10de || gpu.driver == QLatin1String("nvidia")
            || gpu.vendor.compare(QLatin1String("NVIDIA"), Qt::CaseInsensitive) == 0;
 }
 
-bool gpuIsAmd(const GpuAdapter &gpu)
+bool gpuIsAmd(const drift::gpu::Adapter &gpu)
 {
     return gpu.vendorId == 0x1002 || gpu.vendorId == 0x1022
            || gpu.driver == QLatin1String("amdgpu") || gpu.driver == QLatin1String("radeon")
@@ -497,6 +457,10 @@ QString previewUploadLabel()
         return QStringLiteral("CUDA interop");
     case Path::VaapiDmaBuf:
         return QStringLiteral("VAAPI dma-buf");
+    case Path::MediaCodecImage:
+        return QStringLiteral("MediaCodec image");
+    case Path::D3d11Interop:
+        return QStringLiteral("D3D11 interop");
     case Path::CpuRoundTrip:
         return QStringLiteral("CPU round-trip");
     case Path::None:
@@ -507,10 +471,31 @@ QString previewUploadLabel()
 
 QString zeroCopyLabel()
 {
-    if (!drift::vaapiZeroCopyEnabled())
+    // What actually happened to the last frame, not what the setting allows: this row used to
+    // read "Active" whenever VAAPI was not switched off, including on Windows, where nothing had
+    // been imported at all.
+    using Path = drift::gl::GlRuntime::PreviewUploadPath;
+    switch (drift::gl::GlRuntime::lastPreviewUploadPath()) {
+    case Path::CudaInterop:
+    case Path::VaapiDmaBuf:
+    case Path::MediaCodecImage:
+    case Path::D3d11Interop:
+        return QStringLiteral("%1 (%2)").arg(trReport("Active"), previewUploadLabel());
+    case Path::CpuRoundTrip:
+    case Path::None:
+        break;
+    }
+    const QString reason = drift::gl::GlRuntime::lastZeroCopyDeclineReason();
+    if (!reason.isEmpty())
+        return reason;
+#if defined(Q_OS_WIN)
+    if (!drift::d3d11ZeroCopyEnabled())
         return trReport("Off");
-    const QString reason = drift::gl::GlRuntime::lastVaapiImportReason();
-    return reason.isEmpty() ? trReport("Active") : reason;
+#else
+    if (drift::vaapiZeroCopyMode() == drift::VaapiZeroCopyMode::Off)
+        return trReport("Off");
+#endif
+    return trReport("Not engaged");
 }
 
 QVariantMap hintRow(const QString &id, const QString &title, const QString &detail,
@@ -534,10 +519,11 @@ QVariantMap DebugReport::collect()
     const QString package = packageKind();
     const drift::hwaccel::Backend backend = activeDecodeBackend();
     const AVHWDeviceType backendType = drift::hwaccel::deviceType(backend);
-    // HwAccel's backend list never includes MediaCodec, so on Android it always resolves to
-    // None here even when the device decodes in hardware — check that path separately.
-    const bool mediaCodecOk = mediaCodecDecodeAvailable();
-    const bool hwDecodeOk = backend != drift::hwaccel::Backend::None || mediaCodecOk;
+    // MediaCodec is in the backend list now, so `backend` names it directly on Android. Kept as
+    // its own flag because the per-codec probe below still has to ask for the *_mediacodec
+    // decoder by name — those are not reachable through a hardware device context.
+    const bool mediaCodecOk = backend == drift::hwaccel::Backend::MediaCodec;
+    const bool hwDecodeOk = backend != drift::hwaccel::Backend::None;
 
     struct CodecSpec {
         const char *name;
@@ -556,7 +542,7 @@ QVariantMap DebugReport::collect()
         const AVCodec *software = avcodec_find_decoder(spec.id);
         const AVCodec *hardware = drift::hwaccel::findDecoder(spec.id, backendType, nullptr);
         if (!hardware && mediaCodecOk)
-            hardware = findMediaCodecDecoder(spec.id);
+            hardware = drift::hwaccel::findMediaCodecDecoder(spec.id);
         QVariantMap row;
         row.insert(QStringLiteral("name"), QString::fromLatin1(spec.name));
         row.insert(QStringLiteral("software"), software != nullptr);
@@ -589,32 +575,38 @@ QVariantMap DebugReport::collect()
     };
 
     const QVariantList exportCodecs = Exporter::videoCodecs();
-    auto firstHwEncoder = [&exportCodecs](const char *prefix) -> QVariantMap {
+    // Every usable one, not the first. The table used to print whichever vendor came first in
+    // Exporter's static order — always NVENC where it exists — which reads as "AMD H.264 is
+    // missing" on a machine that has it, and sent this exact bug down the wrong path.
+    auto hwEncoders = [&exportCodecs](const char *prefix) -> QStringList {
         const QString pre = QString::fromLatin1(prefix);
+        QStringList names;
         for (const QVariant &v : exportCodecs) {
             const QVariantMap m = v.toMap();
             if (!m.value(QStringLiteral("hardware")).toBool())
                 continue;
             if (!m.value(QStringLiteral("id")).toString().startsWith(pre))
                 continue;
-            if (m.value(QStringLiteral("available")).toBool())
-                return m;
+            if (!m.value(QStringLiteral("available")).toBool())
+                continue;
+            const QString name = m.value(QStringLiteral("encoderName")).toString();
+            if (!name.isEmpty() && !names.contains(name))
+                names.append(name);
         }
-        return {};
+        return names;
     };
 
     QVariantList encoders;
     for (const EncoderSpec &spec : kEncoders) {
         const AVCodec *software = findNamedEncoder(spec.softwareNames);
-        const QVariantMap hw = firstHwEncoder(spec.hwIdPrefix);
+        const QStringList hw = hwEncoders(spec.hwIdPrefix);
         QVariantMap row;
         row.insert(QStringLiteral("name"), QString::fromLatin1(spec.name));
         row.insert(QStringLiteral("software"), software != nullptr);
         row.insert(QStringLiteral("hardware"), !hw.isEmpty());
         row.insert(QStringLiteral("softwareEncoder"),
                    software ? QString::fromUtf8(software->name) : QString());
-        row.insert(QStringLiteral("hardwareEncoder"),
-                   hw.value(QStringLiteral("encoderName")).toString());
+        row.insert(QStringLiteral("hardwareEncoder"), hw.join(QStringLiteral(", ")));
         encoders.append(row);
     }
 
@@ -642,7 +634,7 @@ QVariantMap DebugReport::collect()
     system.append(systemRow(trReport("CPU"), cpuModel()));
     system.append(systemRow(trReport("CPU threads"), QString::number(QThread::idealThreadCount())));
 
-    const QList<GpuAdapter> gpus = enumerateGpus();
+    const QList<drift::gpu::Adapter> gpus = drift::gpu::enumerateAdapters();
     if (gpus.isEmpty()) {
         system.append(systemRow(trReport("GPU"), trReport("Unknown")));
     } else if (gpus.size() == 1) {
@@ -652,8 +644,17 @@ QVariantMap DebugReport::collect()
             system.append(systemRow(trReport("GPU %1").arg(i + 1), formatGpu(gpus.at(i))));
         }
     }
-    if (const QString gl = openglRenderer(); !gl.isEmpty())
+    const OpenGlInfo glInfo = openglInfo();
+    if (const QString gl = openglLabel(glInfo); !gl.isEmpty())
         system.append(systemRow(QStringLiteral("OpenGL"), gl));
+    // Its own row rather than a suffix on the one above: this is the line worth
+    // grepping for in a pasted report.
+    if (glInfo.valid) {
+        system.append(systemRow(trReport("OpenGL driver"),
+                                glInfo.software ? trReport("Software rasterizer")
+                                                : trReport("Hardware")));
+    }
+    system.append(systemRow(trReport("GPU compositor"), gpuCompositorLabel()));
 
     system.append(systemRow(trReport("Qt"), QString::fromLatin1(qVersion())));
     system.append(systemRow(trReport("FFmpeg"), QString::fromUtf8(av_version_info())));
@@ -681,6 +682,22 @@ QVariantMap DebugReport::collect()
     }
     system.append(systemRow(trReport("Preview upload"), previewUploadLabel()));
     system.append(systemRow(trReport("Zero-copy"), zeroCopyLabel()));
+#if defined(Q_OS_WIN)
+    if (drift::gpu::preferenceSupported()) {
+        QString preference = trReport("Windows default");
+        switch (drift::gpu::storedPreference()) {
+        case drift::gpu::Preference::PowerSaving:
+            preference = trReport("Power saving");
+            break;
+        case drift::gpu::Preference::HighPerformance:
+            preference = trReport("High performance");
+            break;
+        case drift::gpu::Preference::Auto:
+            break;
+        }
+        system.append(systemRow(trReport("Preferred GPU"), preference));
+    }
+#endif
     system.append(systemRow(trReport("Locale"), QLocale::system().name()));
     if (drift::hwaccel::disabledByEnv())
         system.append(systemRow(QStringLiteral("DRIFT_NO_HWACCEL"), trReport("Set")));
@@ -700,7 +717,7 @@ QVariantMap DebugReport::collect()
                 QStringLiteral("flatpak install org.freedesktop.Platform.codecs-extra")));
         }
         bool nvidia = false;
-        for (const GpuAdapter &gpu : gpus) {
+        for (const drift::gpu::Adapter &gpu : gpus) {
             if (gpuIsNvidia(gpu)) {
                 nvidia = true;
                 break;
@@ -716,7 +733,7 @@ QVariantMap DebugReport::collect()
         }
     }
     bool amd = false;
-    for (const GpuAdapter &gpu : gpus) {
+    for (const drift::gpu::Adapter &gpu : gpus) {
         if (gpuIsAmd(gpu)) {
             amd = true;
             break;
@@ -729,6 +746,38 @@ QVariantMap DebugReport::collect()
                      "without a DRM modifier, so Nardoto Editor refuses zero-copy preview and copies "
                      "each frame through system memory. Vega, Navi and newer can enable "
                      "Settings → Preview → Faster preview.")));
+    }
+    if (GpuCompositor::previewGpuIsLimited()) {
+        hints.append(hintRow(
+            QStringLiteral("limited-preview-gpu"),
+            trReport("This graphics chip keeps preview on software decode"),
+            trReport("Sandy Bridge and Ivy Bridge Intel GPUs (HD 2000–4000) cannot keep "
+                     "hardware-decoded frames on the GPU for preview without flashing. "
+                     "Auto decode stays on the CPU and playback composites one frame at a "
+                     "time. Pick Hardware in the preview toolbar only if you want to try "
+                     "it anyway.")));
+    }
+    // The whole of issue #139: Qt's GPU blacklist matches a card it failed to
+    // identify, loads its bundled llvmpipe, and the preview goes black on hardware
+    // that would have run it fine.
+    if (glInfo.software || GpuCompositor::status().status == drift::gl::GlStatus::VersionTooLow) {
+#if defined(Q_OS_WIN)
+        hints.append(hintRow(
+            QStringLiteral("software-opengl"),
+            trReport("Preview is running on a software OpenGL driver"),
+            trReport("Windows loaded Qt's bundled software renderer instead of your graphics "
+                     "card. It only provides OpenGL 3.0, below the 3.3 the preview needs, so "
+                     "the picture stays black. Update your graphics driver; if that does not "
+                     "help, start Drift with QT_OPENGL=desktop."),
+            QStringLiteral("set QT_OPENGL=desktop")));
+#else
+        hints.append(hintRow(
+            QStringLiteral("software-opengl"),
+            trReport("Preview is running on a software OpenGL driver"),
+            trReport("OpenGL is being rendered on the CPU rather than the GPU, which the "
+                     "preview may be too old to use. Check that a Mesa driver for your card is "
+                     "installed and that LIBGL_ALWAYS_SOFTWARE is not set.")));
+#endif
     }
     if (ortRuntimes.isEmpty()) {
         hints.append(hintRow(

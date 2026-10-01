@@ -24,11 +24,20 @@ Popup {
         Haptics.press()
     }
 
+    // Adjustment tracks carry a kind, so they go through their own call rather than widening
+    // addTrack()'s type whitelist with compound strings.
+    function addTrackOfType(type) {
+        if (type.indexOf("adjustment:") === 0)
+            EditorState.addAdjustmentTrack(type.substring("adjustment:".length))
+        else
+            EditorState.addTrack(type)
+    }
+
     function addHighlighted() {
         if (highlightIndex < 0 || highlightIndex >= trackTypes.length)
             return
         Haptics.confirm()
-        EditorState.addTrack(trackTypes[highlightIndex].type)
+        root.addTrackOfType(trackTypes[highlightIndex].type)
         root.close()
     }
 
@@ -71,12 +80,29 @@ Popup {
         }
     }
 
-    readonly property var trackTypes: [
+    readonly property bool hasVisualTrack: {
+        const tracks = EditorState.tracks
+        for (let i = 0; i < tracks.length; ++i) {
+            if (["video", "text", "subtitle", "shape"].indexOf(tracks[i].type) !== -1)
+                return true
+        }
+        return false
+    }
+    readonly property var trackTypes: allTrackTypes.filter((t) => !t.needsVisualTrack || hasVisualTrack)
+    readonly property var allTrackTypes: [
         { type: "video", label: qsTr("Video"), icon: Theme.icons.film },
         { type: "audio", label: qsTr("Audio"), icon: Theme.icons.music },
         { type: "text", label: qsTr("Text"), icon: Theme.icons.type },
         { type: "subtitle", label: qsTr("Subtitle"), icon: Theme.icons.captions },
         { type: "shape", label: qsTr("Graphic"), icon: Theme.icons.shapes },
+        // Standalone adjustment tracks. These apply to everything composited below them; drag
+        // one onto a track to nest it there instead and scope it to that track alone.
+        { type: "adjustment:videoEffects", label: qsTr("Adjustment"), icon: Theme.icons.wand },
+        { type: "adjustment:audioEffects", label: qsTr("Audio adjustment"),
+          icon: Theme.icons.audioLines },
+        // A transform layer moves the tracks below it, so it is only offered once there is one.
+        { type: "adjustment:transform", label: qsTr("Transform"), icon: Theme.icons.maximize,
+          needsVisualTrack: true },
     ]
 
     background: Rectangle {
@@ -176,7 +202,7 @@ Popup {
                     onEntered: root.highlightIndex = trackTypeRow.index
                     onClicked: {
                         Haptics.confirm()
-                        EditorState.addTrack(trackTypeRow.modelData.type)
+                        root.addTrackOfType(trackTypeRow.modelData.type)
                         root.close()
                     }
                 }

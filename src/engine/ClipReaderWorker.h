@@ -5,6 +5,8 @@
 #include "core/Time.h"
 
 #include <QAtomicInt>
+#include <QElapsedTimer>
+#include <QHash>
 #include <QImage>
 #include <QMutex>
 #include <QObject>
@@ -13,10 +15,10 @@
 
 #include <map>
 #include <memory>
-#include <vector>
 
-// Owns the ClipReaders for one media path on a dedicated thread; all decode calls are serialized
-// here. Readers keep their own frame caches, so this class holds no cache of its own.
+// Owns ClipReaders for one media path on a dedicated thread; all decode calls are serialized
+// here. Readers keep their own frame caches, so this class holds no cache of its own. The pool
+// gives each video stream a worker of its own (see ClipReaderPool); audio shares one per path.
 //
 // There is one reader per stream id rather than one per path. A ClipReader carries a decode
 // position, and both its audio and video fast paths assume the next request continues where the
@@ -48,10 +50,15 @@ public slots:
     void closePath();
     QImage decodeVideo(quint64 streamId, drift::TimeUs sourceUs, int maxWidth, int maxHeight,
                        const QString &stabilizePath = QString(), int stabilizeSmoothing = 15,
-                       bool stabilizeTripod = false);
+                       bool stabilizeTripod = false, int rotationCorrection = 0);
     PreviewVideoFrame decodePreviewVideo(quint64 streamId, drift::TimeUs sourceUs, int maxWidth,
                                          int maxHeight, const QString &stabilizePath = QString(),
-                                         int stabilizeSmoothing = 15, bool stabilizeTripod = false);
+                                         int stabilizeSmoothing = 15, bool stabilizeTripod = false,
+                                         int rotationCorrection = 0, bool approximate = false,
+                                         quintptr session = 0);
+    // The streams on this path that `session` (one compositor thread) reads for the frame it is
+    // building. A reader of that session outside the set is free to be handed to a new stream.
+    void setActiveStreams(quintptr session, const QList<quint64> &streams);
     int decodeAudio(quint64 streamId, drift::TimeUs sourceStartUs, int sampleCount,
                     int outputSampleRate, float *interleavedStereoOut, int audioStreamOrdinal = 0);
     void prefetchNextVideo(quint64 streamId, int maxWidth, int maxHeight);
@@ -60,16 +67,31 @@ public slots:
     void resetVideoDecoders();
 
 private:
-    // Only clips overlapping right now need concurrent readers, and that is a handful at most.
-    // Past the cap the least recently used one is closed, which costs it a seek if it comes back.
-    static constexpr size_t kMaxStreams = 4;
+    // A reader nobody has asked for in this long belongs to a clip that is no longer playing. It
+    // is closed, which frees its decoder and, for a hardware one, its surface pool; coming back
+    // costs a reopen and a seek.
+    static constexpr qint64 kIdleEvictMs = 10'000;
+    // Only clips overlapping right now need concurrent readers. Past this many the least recently
+    // used one is closed, unless more than that are in use right now: a reader asked for within
+    // kActiveWindowMs is one of those, and evicting it would only thrash.
+    static constexpr size_t kMinStreams = 4;
+    static constexpr qint64 kActiveWindowMs = 1'000;
+
+    struct ReaderEntry
+    {
+        std::unique_ptr<ClipReader> reader;
+        qint64 lastUseMs = 0;
+        // Compositor thread that last read through this reader, 0 for everything else.
+        quintptr session = 0;
+    };
+    QHash<quintptr, QList<quint64>> m_activeStreams;
 
     // Call with m_mutex held.
-    ClipReader *readerFor(quint64 streamId, int audioStreamOrdinal = 0);
+    ClipReader *readerFor(quint64 streamId, int audioStreamOrdinal = 0, quintptr session = 0);
 
     QString m_path;
-    std::map<quint64, std::unique_ptr<ClipReader>> m_readers;
-    std::vector<quint64> m_lru; // most recently used last
+    std::map<quint64, ReaderEntry> m_readers;
+    QElapsedTimer m_clock;
     QMutex m_mutex;
 
     QMutex m_prefetchMutex;

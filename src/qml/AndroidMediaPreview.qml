@@ -29,7 +29,11 @@ Item {
     property real durationSeconds: 0
     property int sourceWidth: 0
     property int sourceHeight: 0
+    // Native: the file's own probed display-matrix rotation. Override: the bin-preview
+    // correction, -1 when none. Effective is whichever of the two actually applies.
     property int rotationDegrees: 0
+    property int rotationOverride: -1
+    property int effectiveRotation: 0
 
     property real inSeconds: 0
     property real outSeconds: 0
@@ -37,6 +41,13 @@ Item {
     property real cropY: 0
     property real cropW: 1
     property real cropH: 1
+    property bool cropRatioLocked: true
+
+    // The trim already saved non-destructively on the asset (AssetLibrary::setAssetTrim) — the
+    // baseline "no edit yet" reverts to, since a plain trim never re-encodes the file and so is
+    // never reflected in durationSeconds the way an old encode-based save used to be.
+    property real persistedInSeconds: 0
+    property real persistedOutSeconds: 0
 
     // "trim" | "crop". Crop starts off: the handles used to be live over the picture the
     // moment the screen opened, with nothing saying what they were.
@@ -50,21 +61,21 @@ Item {
     readonly property bool canPlay: !isImage
 
     readonly property int displayW: {
-        const rot = Math.abs(root.rotationDegrees)
+        const rot = Math.abs(root.effectiveRotation)
         return (rot === 90 || rot === 270) ? root.sourceHeight : root.sourceWidth
     }
     readonly property int displayH: {
-        const rot = Math.abs(root.rotationDegrees)
+        const rot = Math.abs(root.effectiveRotation)
         return (rot === 90 || rot === 270) ? root.sourceWidth : root.sourceHeight
     }
 
     readonly property bool cropDirty: cropX > 0.001 || cropY > 0.001
                                       || cropW < 0.999 || cropH < 0.999
     readonly property bool trimDirty: canTrim
-                                      && (inSeconds > 0.02
-                                          || outSeconds < durationSeconds - 0.02)
+                                      && (Math.abs(inSeconds - persistedInSeconds) > 0.02
+                                          || Math.abs(outSeconds - persistedOutSeconds) > 0.02)
     readonly property bool dirty: cropDirty || trimDirty
-    readonly property bool saving: EditorState.editingAsset
+    readonly property bool saving: EditorState.editingAsset && !EditorState.assetEditIsConversion
     readonly property real position: EditorState.assetPreviewPosition
 
     function openFor(index) {
@@ -73,6 +84,7 @@ Item {
             root.closed()
             return
         }
+        EditorState.assetPreviewWindowOpen = true
         root.assetIndex = index
         root.assetId = asset.id || ""
         root.kind = asset.kind || ""
@@ -83,25 +95,77 @@ Item {
         root.sourceWidth = asset.width || 0
         root.sourceHeight = asset.height || 0
         root.rotationDegrees = asset.rotationDegrees || 0
+        root.rotationOverride = (asset.rotationOverride === undefined || asset.rotationOverride === null)
+                                 ? -1 : asset.rotationOverride
+        root.effectiveRotation = (asset.effectiveRotation === undefined || asset.effectiveRotation === null)
+                                  ? root.rotationDegrees : asset.effectiveRotation
+        root.persistedInSeconds = asset.trimInSeconds || 0
+        root.persistedOutSeconds = (asset.trimOutSeconds === undefined || asset.trimOutSeconds === null
+                                     || asset.trimOutSeconds < 0)
+                                    ? root.durationSeconds : asset.trimOutSeconds
         root.mode = "trim"
         resetEdits()
+        if (root.isVideo) {
+            const frame = asset.sourceFrame
+            if (frame) {
+                root.cropX = frame.x; root.cropY = frame.y
+                root.cropW = frame.width; root.cropH = frame.height
+            }
+        }
         EditorState.beginAssetPreview(index)
+    }
+
+    // Steps the bin's rotation correction by 90° and reopens the preview session so the player's
+    // decoder picks up the new correction. Video only: image/audio clips have no lossless
+    // pixel-rotation path on the timeline (see AppController::applyAssetLayout).
+    function rotate90() {
+        if (root.assetIndex < 0 || !root.isVideo)
+            return
+        EditorState.setAssetRotation(root.assetIndex, (root.effectiveRotation + 90) % 360)
+    }
+
+    // Picks up a rotation change from wherever it came from (the button above, or an undo) and
+    // reopens the preview session at the same spot so the decoder applies it.
+    function applyRotationFromAsset(asset) {
+        const nextOverride = (asset.rotationOverride === undefined || asset.rotationOverride === null)
+                              ? -1 : asset.rotationOverride
+        const next = (asset.effectiveRotation === undefined || asset.effectiveRotation === null)
+                      ? root.rotationDegrees : asset.effectiveRotation
+        if (nextOverride === root.rotationOverride && next === root.effectiveRotation)
+            return
+        const wasPlaying = EditorState.assetPreviewPlaying
+        const at = root.position
+        root.rotationOverride = nextOverride
+        root.effectiveRotation = next
+        EditorState.beginAssetPreview(root.assetIndex)
+        root.seekTo(at)
+        if (wasPlaying)
+            EditorState.playAssetPreview()
     }
 
     function close() {
         EditorState.pauseAssetPreview()
         EditorState.endAssetPreview()
         root.assetIndex = -1
+        EditorState.assetPreviewWindowOpen = false
         root.closed()
     }
 
     function resetEdits() {
-        root.inSeconds = 0
-        root.outSeconds = Math.max(0, root.durationSeconds)
+        root.inSeconds = root.persistedInSeconds
+        root.outSeconds = root.persistedOutSeconds
         root.cropX = 0
         root.cropY = 0
         root.cropW = 1
         root.cropH = 1
+    }
+
+    function lockCropRatioFromWidth() {
+        const size = Math.max(0.08, Math.min(1, root.cropW))
+        root.cropX = Math.max(0, Math.min(1 - size, root.cropX))
+        root.cropY = Math.max(0, Math.min(1 - size, root.cropY))
+        root.cropW = size
+        root.cropH = size
     }
 
     function formatTime(seconds) {
@@ -150,11 +214,26 @@ Item {
     Connections {
         target: EditorState
         function onAssetEditFinished(ok, message) {
-            if (ok)
+            // A background frame-rate conversion is not this sheet's save.
+            if (ok && !EditorState.assetEditIsConversion)
                 root.close()
         }
         function onProjectReset() {
             root.close()
+        }
+    }
+
+    // The rotated thumbnail/filmstrip regenerate on a background job (MediaThumbnail::generate),
+    // so the strip below needs to pick up the new file once it lands.
+    Connections {
+        target: AssetLibrary
+        function onAssetMetadataChanged(assetId) {
+            if (assetId !== root.assetId)
+                return
+            root.filmstripPath = AssetLibrary.filmstripAt(root.assetIndex)
+            const asset = AssetLibrary.assetAt(root.assetIndex)
+            if (asset && asset.id === root.assetId)
+                root.applyRotationFromAsset(asset)
         }
     }
 
@@ -448,6 +527,24 @@ Item {
                             let ny = startY
                             let nw = startW
                             let nh = startH
+                            if (root.cropRatioLocked) {
+                                let size
+                                if (modelData.dx !== 0 && modelData.dy !== 0)
+                                    size = Math.abs(dx) >= Math.abs(dy)
+                                           ? startW + modelData.dx * dx
+                                           : startH + modelData.dy * dy
+                                else if (modelData.dx !== 0)
+                                    size = startW + modelData.dx * dx
+                                else
+                                    size = startH + modelData.dy * dy
+                                size = Math.max(cropHost.minFrac, Math.min(1, size))
+                                nx = modelData.dx < 0 ? startX + startW - size
+                                   : modelData.dx > 0 ? startX : startX + (startW - size) / 2
+                                ny = modelData.dy < 0 ? startY + startH - size
+                                   : modelData.dy > 0 ? startY : startY + (startH - size) / 2
+                                cropHost.setCrop(nx, ny, size, size)
+                                return
+                            }
                             if (modelData.dx < 0) {
                                 nx = startX + dx
                                 nw = startW - dx
@@ -466,6 +563,27 @@ Item {
                         onCanceled: Haptics.drop()
                     }
                 }
+            }
+        }
+
+        IconButton {
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: Theme.spacingSm
+            z: 4
+            visible: root.isVideo && root.mode === "crop"
+            glyph: root.cropRatioLocked ? Theme.icons.lock : Theme.icons.lockOpen
+            tooltip: root.cropRatioLocked
+                     ? qsTr("Unlock source frame ratio")
+                     : qsTr("Lock source frame ratio")
+            active: root.cropRatioLocked
+            buttonSize: 36
+            iconSize: Theme.iconSizeSm
+            variant: "ghost"
+            onClicked: {
+                root.cropRatioLocked = !root.cropRatioLocked
+                if (root.cropRatioLocked)
+                    root.lockCropRatioFromWidth()
             }
         }
 
@@ -572,6 +690,16 @@ Item {
             }
         }
 
+        ThemedButton {
+            width: parent.width
+            height: Theme.controlHeight
+            visible: root.isVideo
+            variant: "secondary"
+            text: qsTr("Rotate")
+            enabled: !root.saving
+            onClicked: root.rotate90()
+        }
+
         // ----- Trim -------------------------------------------------------------------------
         Column {
             width: parent.width
@@ -611,6 +739,7 @@ Item {
                     filmstripPath: root.filmstripPath
                     frameWidth: Math.max(1, width / frameCount)
                     sourcePath: root.sourcePath
+                    rotationCorrection: (root.effectiveRotation - root.rotationDegrees + 360) % 360
                     inPoint: 0
                     outPoint: root.durationSeconds
                     sourceDuration: root.durationSeconds
@@ -753,9 +882,9 @@ Item {
                     text: qsTr("Undo trim")
                     enabled: root.trimDirty && !root.saving
                     onClicked: {
-                        root.inSeconds = 0
-                        root.outSeconds = Math.max(0, root.durationSeconds)
-                        root.seekTo(0)
+                        root.inSeconds = root.persistedInSeconds
+                        root.outSeconds = root.persistedOutSeconds
+                        root.seekTo(root.inSeconds)
                     }
                 }
             }
@@ -800,7 +929,7 @@ Item {
                   ? (EditorState.assetEditStatus.length > 0
                      ? EditorState.assetEditStatus : qsTr("Saving…"))
                   : root.dirty
-                    ? qsTr("Save keeps your changes as a new file in this project.")
+                    ? (root.isVideo ? qsTr("Save keeps the original video and stores this framing.") : qsTr("Save keeps your changes as a new file in this project."))
                     : qsTr("Nothing changed yet. Trim or crop above, or go back and drag this onto the timeline.")
         }
     }

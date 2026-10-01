@@ -12,7 +12,9 @@ Row {
     signal navigate(string folderId)
 
     spacing: 4
-    visible: BinFolderModel.count > 0
+    // At the bin root the trail is just "Media", which the panel header already
+    // says — so the crumb only appears once it has somewhere to navigate back from.
+    visible: BinFolderModel.count > 0 && root.currentFolderId !== ""
     // Row sizes itself from its Repeater's content regardless of `visible`; collapse it
     // explicitly so an invisible breadcrumb doesn't leave a gap before the search field.
     height: visible ? implicitHeight : 0
@@ -31,8 +33,12 @@ Row {
     readonly property var trail: {
         void root._refreshTick
         const chain = []
+        const visited = new Set()
         let id = root.currentFolderId
-        while (id !== "") {
+        // Project deserialization doesn't reject a self- or mutually-parented folder; an
+        // undetected cycle here would spin forever and hang the UI, so bail on a repeat id.
+        while (id !== "" && !visited.has(id)) {
+            visited.add(id)
             const folder = BinFolderModel.folderById(id)
             if (!folder || Object.keys(folder).length === 0)
                 break

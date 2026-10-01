@@ -51,6 +51,7 @@ ThemedDialog {
     property var currentAudioCodec: ({})
 
     readonly property bool videoLossless: !!(currentVideoCodec && currentVideoCodec.lossless)
+    readonly property bool videoHasAlpha: !!(currentVideoCodec && currentVideoCodec.hasAlpha)
     readonly property bool videoSupportsCrf: !!(currentVideoCodec && currentVideoCodec.supportsCrf)
     readonly property bool videoSupportsBitrate: !!(currentVideoCodec && currentVideoCodec.supportsBitrate)
     readonly property bool videoSupportsPreset: !!(currentVideoCodec && currentVideoCodec.supportsPreset)
@@ -330,8 +331,12 @@ ThemedDialog {
         var suffix = EditorState.exportDefaultSuffix(container, isAudioOnly)
         var dialogTitle = isGifExport ? qsTr("Export GIF")
                 : isAudioOnly ? qsTr("Export Audio") : qsTr("Export Video")
+        // SAF offers no overwrite, so a repeated default name would only ever pick up " (1)".
+        var suggestedName = Qt.platform.os === "android"
+                ? EditorState.projectName + " " + Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss")
+                : EditorState.projectName
         var url = FileDialogs.saveFile(dialogTitle, filters,
-                                       EditorState.projectName, suffix,
+                                       suggestedName, suffix,
                                        EditorState.lastExportFolder())
         if (url != "") {
             EditorState.exportWithSettings(url, buildSettings())
@@ -581,6 +586,13 @@ ThemedDialog {
                                 root.refreshCodecMeta()
                                 root.syncComboIndices()
                             }
+                        }
+
+                        ThemedLabel {
+                            width: parent.width
+                            visible: root.videoHasAlpha
+                            wrapMode: Text.WordWrap
+                            text: qsTr("Keeps a transparent canvas. Set the project background to Transparent so holes stay empty.")
                         }
                     }
 

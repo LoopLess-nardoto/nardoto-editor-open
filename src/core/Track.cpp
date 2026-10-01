@@ -15,6 +15,8 @@ QString trackTypeToString(TrackType type)
         return QStringLiteral("subtitle");
     case TrackType::Shape:
         return QStringLiteral("shape");
+    case TrackType::Adjustment:
+        return QStringLiteral("adjustment");
     }
     return QStringLiteral("video");
 }
@@ -29,7 +31,31 @@ TrackType trackTypeFromString(const QString &type)
         return TrackType::Subtitle;
     if (type == QStringLiteral("shape"))
         return TrackType::Shape;
+    if (type == QStringLiteral("adjustment"))
+        return TrackType::Adjustment;
     return TrackType::Video;
+}
+
+QString adjustmentScopeToString(AdjustmentScope scope)
+{
+    switch (scope) {
+    case AdjustmentScope::AllBelow:
+        return QStringLiteral("allBelow");
+    case AdjustmentScope::ParentTrack:
+        return QStringLiteral("parentTrack");
+    case AdjustmentScope::Range:
+        return QStringLiteral("range");
+    }
+    return QStringLiteral("allBelow");
+}
+
+AdjustmentScope adjustmentScopeFromString(const QString &scope)
+{
+    if (scope == QStringLiteral("parentTrack"))
+        return AdjustmentScope::ParentTrack;
+    if (scope == QStringLiteral("range"))
+        return AdjustmentScope::Range;
+    return AdjustmentScope::AllBelow;
 }
 
 bool Track::allowsClipType(ClipType clipType) const
@@ -42,11 +68,23 @@ bool Track::allowsClipType(ClipType clipType) const
     case TrackType::Subtitle:
         return clipType == ClipType::Subtitle;
     case TrackType::Shape:
-        return clipType == ClipType::Image || clipType == ClipType::Shape;
+        return clipType == ClipType::Image || clipType == ClipType::Shape
+            || clipType == ClipType::Vector || clipType == ClipType::Model3d;
     case TrackType::Video:
-        return clipType == ClipType::Video;
+        return clipType == ClipType::Video || clipType == ClipType::Composite;
+    case TrackType::Adjustment:
+        return clipType == ClipType::Adjustment;
     }
     return false;
+}
+
+bool Track::acceptsClip(const Clip &clip) const
+{
+    if (!allowsClipType(clip.type))
+        return false;
+    if (clip.type != ClipType::Adjustment)
+        return true;
+    return (clip.adjustmentKind == AdjustmentKind::Transform) == isTransformLayer();
 }
 
 } // namespace drift

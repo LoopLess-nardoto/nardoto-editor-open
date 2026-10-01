@@ -20,28 +20,52 @@ Dialog {
     // Set false for dialogs where Enter must not commit (destructive confirms).
     property bool acceptOnReturn: true
 
+    // A Popup is not an Item, so SafeArea cannot attach to the dialog; the overlay fills
+    // the window and does carry them. Without this a full-height dialog on a phone still
+    // ran under the status bar at the top and the gesture pill at the bottom, which is
+    // where the footer buttons are.
+    // Overlay.overlay is non-null once the dialog is parented, but SafeArea itself is only
+    // populated once that overlay is actually attached to a window — briefly undefined for
+    // every dialog preloaded at startup, before any window is shown.
+    readonly property var _safeMargins: (Overlay.overlay && Overlay.overlay.SafeArea)
+                                         ? Overlay.overlay.SafeArea.margins : undefined
+    readonly property real safeTop: _safeMargins ? _safeMargins.top : 0
+    readonly property real safeBottom: _safeMargins ? _safeMargins.bottom : 0
+    readonly property real safeLeft: _safeMargins ? _safeMargins.left : 0
+    readonly property real safeRight: _safeMargins ? _safeMargins.right : 0
+    readonly property real safeWidth: Math.max(
+        0, (Overlay.overlay ? Overlay.overlay.width : preferredWidth) - safeLeft - safeRight)
+    readonly property real safeHeight: Math.max(
+        0, (Overlay.overlay ? Overlay.overlay.height : 720) - safeTop - safeBottom)
+
     modal: true
-    anchors.centerIn: Overlay.overlay
+    // A popup positions itself relative to the item it is declared in, so a dialog owned by
+    // a panel deep in a scrolled column lands wherever that item is — off-screen, with only
+    // the scrim showing. Parent every dialog to the overlay so x/y below mean window space.
+    parent: Overlay.overlay
+    // Centred in the safe area rather than in the window. Popup.anchors carries `centerIn`
+    // and nothing else — no offsets — so the position is computed instead: the insets are
+    // rarely equal, and a window-centred dialog at full clamped height still ran under
+    // whichever bar was the taller.
+    x: Math.round(root.safeLeft + (root.safeWidth - width) / 2)
+    y: Math.round(root.safeTop + (root.safeHeight - height) / 2)
     standardButtons: Dialog.NoButton
     padding: Theme.spacing2xl
 
-    width: Math.min(preferredWidth,
-                    (Overlay.overlay ? Overlay.overlay.width : preferredWidth) - Theme.dialogMargin)
+    width: Math.min(preferredWidth, root.safeWidth - Theme.dialogMargin)
 
     // Height was never clamped, only width. A tall dialog centered in the overlay
     // therefore overflowed both edges, and since the footer is the last thing laid
     // out, its buttons went off-screen with no way to scroll to them — Cancel was
     // reachable only by Escape. Clamping shrinks the content area instead, so the
     // title and the footer buttons always stay on screen.
-    height: Math.min(implicitHeight,
-                     (Overlay.overlay ? Overlay.overlay.height : implicitHeight) - Theme.dialogMargin)
+    height: Math.min(implicitHeight, root.safeHeight - Theme.dialogMargin)
 
     // Room a contentItem may occupy before the dialog would be clamped. Content
     // that can grow without bound (long option lists, disclosure sections) should
     // put itself in a Flickable capped at this, so it scrolls rather than crops.
     readonly property real availableContentHeight: {
-        const overlayHeight = Overlay.overlay ? Overlay.overlay.height : 720
-        return Math.max(120, overlayHeight - Theme.dialogMargin
+        return Math.max(120, root.safeHeight - Theme.dialogMargin
                              - dialogHeader.implicitHeight - dialogFooter.implicitHeight
                              - topPadding - bottomPadding)
     }

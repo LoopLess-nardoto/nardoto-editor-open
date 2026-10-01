@@ -1,6 +1,7 @@
 #pragma once
 
 #include "HwAccel.h"
+#include "MediaCodecImagePool.h"
 #include "PreviewVideoFrame.h"
 #include "core/Time.h"
 
@@ -10,6 +11,7 @@
 #include <QString>
 #include <QVector>
 
+#include <limits>
 #include <optional>
 
 extern "C" {
@@ -38,9 +40,6 @@ public:
 
     bool hasVideo() const { return m_videoStream >= 0; }
     bool hasAudio() const { return m_audioStream >= 0; }
-    // Fonte de vídeo com canal alfa (ex.: ProRes 4444). Nesse caso a prévia NV12 e o
-    // decodificador de hardware ficam de fora e o quadro sai em RGBA com transparência.
-    bool hasAlpha() const { return m_hasAlpha; }
 
     // maxWidth/maxHeight bound the decode buffer; they are a hint, not an exact
     // size. The reader fits the source into that box (never upscaling) and keeps
@@ -50,7 +49,11 @@ public:
     bool readVideoFrameAt(drift::TimeUs sourceUs, QImage &out, int maxWidth, int maxHeight);
     // Same seek/decode path as readVideoFrameAt, but returns an AVFrame handle for
     // the preview compositor (hardware surfaces stay on the GPU).
-    bool readPreviewVideoFrame(drift::TimeUs sourceUs, PreviewVideoFrame &out, int maxWidth, int maxHeight);
+    // With `approximate` (a scrub in progress) the reader may return the nearest frame that is
+    // cheap to reach — a cached one, a few frames of forward decode, or the keyframe at or before
+    // the time — instead of decoding forward through the GOP to the exact frame.
+    bool readPreviewVideoFrame(drift::TimeUs sourceUs, PreviewVideoFrame &out, int maxWidth, int maxHeight,
+                               bool approximate = false);
     // Decode one frame past the current position into the cache, to overlap
     // decode with the caller's compositing work. Match the format of the last
     // read so prefetch does not consume a frame the other format still needs.
@@ -70,6 +73,22 @@ public:
     // exist when clips cut from one file overlap; each still keeps a cache, so without this the
     // memory ceiling would multiply by the number of them.
     void setPreviewCacheShare(int shares) { m_previewCacheShares = qMax(1, shares); }
+    // Extra quarter-turns applied on top of the source's own probed display-matrix rotation for
+    // every subsequent decode (see Clip::rotationCorrection). Applied per-call like
+    // setStabilizeParams, not gated behind open()'s reopen guard, so a change takes effect on the
+    // very next frame.
+    void setRotationCorrection(int degrees)
+    {
+        if (m_rotationCorrection == degrees)
+            return;
+        m_rotationCorrection = degrees;
+        // Cached frames are keyed by source PTS only, never by orientation. applyDecodeSize's
+        // size-based invalidation happens to catch a 90<->270 swap (the decode target transposes)
+        // but not a 0<->180 change (same size, still wrong-side-up) — clear both explicitly so
+        // every rotation change is covered, not just the ones that also happen to resize.
+        m_videoCache.clear();
+        m_previewCache.clear();
+    }
 
     // Diagnostics, summed over every reader in this process. A reader asked for a position its
     // cursor is not near has to decode its way there from the preceding keyframe, so this is what
@@ -89,6 +108,18 @@ public:
     // the distinction is visible, and it is the one place the auto-probe can pick the
     // worse of the two.
     enum class HardwareDecodeMode { Auto, Software, Hardware };
+
+    // What the hardware get_format callback is asked for, handed over through
+    // AVCodecContext::opaque. Public only so that callback, a free function, can name it.
+    struct HwFormatRequest
+    {
+        AVPixelFormat pixFmt = AV_PIX_FMT_NONE;
+        // A driver's hard limit on the whole surface pool; 0 when there is none.
+        int maxSurfaces = 0;
+        // Extra surfaces the capped pool actually got, -1 when no cap was applied. get_format
+        // runs on the thread that feeds the decoder, which is the thread that reads this.
+        int spareSurfaces = -1;
+    };
     static void setHardwareDecodeMode(HardwareDecodeMode mode,
                                       drift::hwaccel::Backend backend = drift::hwaccel::Backend::None);
     static HardwareDecodeMode hardwareDecodeMode();
@@ -103,6 +134,36 @@ public:
     // Times a reader gave up on hardware mid-decode and went sticky-software. Silent
     // otherwise: the preview just gets slower and nothing says why.
     static quint64 hardwareFallbackCount();
+    // How many video streams the current composite reads at once. Software decoders opened
+    // after this split the machine's cores between them instead of each taking all of them.
+    static void setActiveVideoStreams(int count);
+    static bool zeroCopyProven();
+    // Why the most recent of those happened: backend, codec, the failing call's error and the
+    // last error FFmpeg logged. Empty while nothing has fallen back.
+    static QString lastHardwareFailure();
+
+    // For drift::diag::ProbeScope alone: the raw stored backend (-1 for "nothing yet") and the
+    // means to put both counters back after a diagnostics sweep has written its own answers
+    // over them. Nothing else should be setting what the last decoder landed on.
+    static int activeDecodeBackendRaw();
+    static void setActiveDecodeBackendRaw(int backend);
+    static void setHardwareFallbackCount(quint64 count);
+
+#ifdef Q_OS_ANDROID
+    // Called by the GL importer when a latched gralloc buffer cannot be bound. Process-wide and
+    // sticky: there is no CPU copy to fall back on for the frame in flight, so the only recovery
+    // is that every decoder opened afterwards skips the surface path.
+    static void noteMediaCodecImportFailure();
+    static bool mediaCodecImportFailed();
+
+    // Whether new decoders may render into an image surface. Export sets this false for its
+    // duration: a surface frame is sampled through samplerExternalOES, where the *driver*
+    // performs YUV->RGB from the buffer's dataspace, so the colour matrix is neither ours nor
+    // necessarily the one the desktop compositor uses. Fine for a preview, not for an encode
+    // that has to match every other platform. See drift::MediaCodecSurfaceDecodeBlock.
+    static void setSurfaceDecodeAllowed(bool allowed);
+    static bool surfaceDecodeAllowed();
+#endif
 
 private:
     bool ensureVideoDecoder();
@@ -111,7 +172,10 @@ private:
     bool openHardwareDecoderWith(drift::hwaccel::Backend backend);
     bool tryOpenHardwareDecoder();
 #ifdef Q_OS_ANDROID
-    bool tryOpenMediaCodecDecoder();
+    bool tryOpenMediaCodecDecoder(HardwareDecodeMode mode);
+    // Renders one AV_PIX_FMT_MEDIACODEC frame to the image surface and leaves the result in
+    // m_mcLatched. False means the surface path has failed and the caller must fall back.
+    bool latchMediaCodecFrame(AVFrame *src);
 #endif
     bool hardwareDecodeIsWorthIt() const;
     void teardownVideoDecoder();
@@ -132,6 +196,10 @@ private:
                                 bool *hwFailure);
     bool decodePreviewVideoFrameAtOnce(drift::TimeUs sourceUs, PreviewVideoFrame &out, int maxWidth,
                                        int maxHeight, bool *hwFailure);
+    bool decodePreviewVideoFrameApprox(drift::TimeUs sourceUs, PreviewVideoFrame &out, int maxWidth,
+                                       int maxHeight, bool *hwFailure);
+    // Keyframe at or before the time, from the demuxer's index; -1 when the container has none.
+    drift::TimeUs keyframeAtOrBeforeUs(drift::TimeUs sourceUs) const;
     bool seekVideoStream(drift::TimeUs sourceUs);
     bool seekAudioStream(drift::TimeUs sourceUs);
 
@@ -146,7 +214,20 @@ private:
     bool coverHolds(drift::TimeUs sourceUs) const;
     void promotePeekToCover();
     bool refVideoFrame(AVFrame *&dst, const AVFrame *src);
-    bool advanceVideoTo(drift::TimeUs sourceUs, int maxWidth, int maxHeight, bool *hwFailure);
+    struct AdvanceLimits
+    {
+        // Stop after this many decoded frames, wherever they land. The last one becomes the
+        // cover, so the caller gets the closest frame it could afford.
+        int maxFrames = std::numeric_limits<int>::max();
+        // Seek even if decoding forward from the current position would get there.
+        bool forceSeek = false;
+    };
+    bool advanceVideoTo(drift::TimeUs sourceUs, int maxWidth, int maxHeight, bool *hwFailure)
+    {
+        return advanceVideoTo(sourceUs, maxWidth, maxHeight, hwFailure, AdvanceLimits());
+    }
+    bool advanceVideoTo(drift::TimeUs sourceUs, int maxWidth, int maxHeight, bool *hwFailure,
+                        const AdvanceLimits &limits);
 
     // Decode size fitted into the caller's box, quantized so small preview
     // resizes don't churn the sws context and the frame cache.
@@ -156,10 +237,17 @@ private:
     bool lookupCachedFrame(drift::TimeUs sourceUs, QImage &out) const;
     void storeCachedFrame(drift::TimeUs ptsUs, const QImage &image);
     bool lookupCachedPreview(drift::TimeUs sourceUs, PreviewVideoFrame &out) const;
+    // The cached frame latest in [loUs, hiUs] (plus the usual tolerance past hiUs).
+    bool lookupNearestCachedPreviewInRange(drift::TimeUs loUs, drift::TimeUs hiUs,
+                                           PreviewVideoFrame &out) const;
     void storeCachedPreview(drift::TimeUs ptsUs, const PreviewVideoFrame &frame);
     int previewCacheCapacity() const;
+    drift::TimeUs nextPrefetchTargetUs() const;
     void trimPreviewCache();
     bool wantsMorePreviewReadAhead() const;
+
+    // Stores and logs why hardware decode is being abandoned; see lastHardwareFailure().
+    void recordHardwareFailure(const QString &what);
 
     QString m_path;
     struct AVFormatContext *m_fmt = nullptr;
@@ -168,6 +256,7 @@ private:
     struct AVBufferRef *m_hwDeviceCtx = nullptr;
     struct SwsContext *m_sws = nullptr;
     struct SwsContext *m_swsNv12 = nullptr;
+    struct SwsContext *m_swsRgba = nullptr;
     struct SwrContext *m_swr = nullptr;
     int m_videoStream = -1;
     int m_audioStream = -1;
@@ -175,7 +264,8 @@ private:
     // Source display-matrix rotation (0/90/180/270), applied to every decoded frame
     // so everything downstream sees upright pixels.
     int m_sourceRotation = 0;
-    bool m_hasAlpha = false;
+    int m_rotationCorrection = 0;
+    int effectiveRotation() const { return ((m_sourceRotation + m_rotationCorrection) % 360 + 360) % 360; }
     int m_outputSampleRate = 48000;
     bool m_hwAccelActive = false;
     bool m_hwAccelDisabled = false; // sticky after a failed hardware decode
@@ -185,8 +275,21 @@ private:
     // legitimately return EAGAIN, and a decode error is recoverable by reopening in software.
     // Always false off Android.
     bool m_mediaCodecActive = false;
+#ifdef Q_OS_ANDROID
+    // Zero-copy MediaCodec: the decoder renders into m_mcImages' surface and every frame is
+    // latched out of it as a gralloc buffer, so nothing is ever copied to system memory.
+    // Opt-in (preview/mediaCodecZeroCopy) and preview-only — see tryOpenMediaCodecDecoder.
+    std::shared_ptr<drift::MediaCodecImagePool> m_mcImages;
+    // Scratch holding the most recently latched frame, so the decode loop can unref it exactly
+    // the way it unrefs a normally decoded one.
+    AVFrame *m_mcLatched = nullptr;
+    bool m_mcSurfaceMode = false;
+    // Sticky once this reader has had to serve a QImage, which a surface-mode decoder cannot do.
+    bool m_mcSurfaceDisabled = false;
+#endif
     drift::hwaccel::Backend m_hwBackend = drift::hwaccel::Backend::None;
     AVPixelFormat m_hwPixFmt = AV_PIX_FMT_NONE;
+    HwFormatRequest m_hwFormatRequest;
 
     // Surface-scaler graph, rebuilt when the decode size or the decoder's frame
     // pool changes. m_hwScalerFailed is sticky: a backend with no scaler, or a
@@ -237,6 +340,13 @@ private:
     int m_decodeH = 0;
     drift::TimeUs m_sourceFrameDurationUs = 0; // 0 until the stream is opened
     static constexpr drift::TimeUs kForwardSeekThresholdUs = 2 * drift::kUsPerSecond;
+    // How far a scrub step may decode forward to stay exact, and how far it steps through a GOP
+    // when it cannot. Phones decode a frame in several milliseconds; desktops in one or two.
+#ifdef Q_OS_ANDROID
+    static constexpr int kScrubForwardFrames = 4;
+#else
+    static constexpr int kScrubForwardFrames = 6;
+#endif
 
     // Cover = last source frame at or before the request; peek = the next one.
     // Playback holds cover until peek's PTS, so VFR gaps do not re-seek.
@@ -265,8 +375,27 @@ private:
     // Hardware surfaces live in FFmpeg's decoder pool. Holding 2 s of them would
     // exhaust extra_hw_frames and stall decode, so the GPU ring is short. Cover
     // and peek each hold one extra ref on top of the cache.
-    static constexpr int kMaxHwCachedFrames = 8;
-    static constexpr int kHwExtraFrames = 16;
+    //
+    // Sized by time rather than by a flat frame count: a fixed 8 frames is a quarter second
+    // of 30 fps material but only an eighth of 60 fps, so the buffer shrank exactly where
+    // the frame budget was already halved. The cap is what the surface pool can spare, so
+    // high frame rates get as much wall time as the pool allows rather than half of it.
+    static constexpr drift::TimeUs kHwPreviewReadAheadUs = 300'000;
+    static constexpr int kMinHwCachedFrames = 4;
+    static constexpr int kMaxHwCachedFrames = 12;
+    // Must stay ahead of kMaxHwCachedFrames plus the cover and peek refs and the decoder's
+    // own reorder buffer, or the pool runs dry and decode stalls waiting for a free surface.
+    static constexpr int kHwExtraFrames = 20;
+    // Cover and peek hold one ref each on top of the cache; the rest is the decoder's own
+    // reorder headroom. Raising the cache without raising the pool is what stalls decode.
+    static_assert(kHwExtraFrames >= kMaxHwCachedFrames + 2 + 4,
+                  "hardware surface pool must cover the preview cache, cover/peek, and the "
+                  "decoder's reorder buffer");
+    // Cover and peek hold one ref each on top of the cache; the rest is the decoder's own
+    // reorder headroom. Raising the cache without raising the pool is what stalls decode.
+    static_assert(kHwExtraFrames >= kMaxHwCachedFrames + 2 + 4,
+                  "hardware surface pool must cover the preview cache, cover/peek, and the "
+                  "decoder's reorder buffer");
 
     // Preview read-ahead. m_lastRequestedPreviewUs is the last position a caller
     // actually asked for — prefetch must not advance it, or the buffer would
@@ -277,8 +406,10 @@ private:
     // Software read-ahead is held in RAM on top of the history above, so the depth
     // is capped by bytes as well as by time: the same 2 s is 60 frames of a 25 fps
     // 720p clip (~83 MB) but only a handful of 4K ones.
-    static constexpr qsizetype kPreviewCacheByteBudget = 128 * 1024 * 1024;
-    static constexpr int kMaxReadAheadFrames = 300;
+    // The byte budget is process-wide and sized from physical memory (see
+    // previewCacheBudgetBytes()), divided between the readers that currently read ahead.
+    bool m_countsForReadAhead = false;
+    void updateReadAheadCount();
     // Floor on the history slots even when the byte budget is tighter than they are. It shrinks
     // with the share so several readers on one path cannot each hold a full history.
     static constexpr int kMinCachedFrames = 4;

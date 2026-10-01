@@ -16,8 +16,19 @@ Popup {
     property real sheetHeightFraction: Theme.androidSheetHeightFraction
     property real sheetExpandedFraction: Theme.androidSheetExpandedFraction
     property bool expanded: false
+    // A non-blocking sheet keeps playback running and the preview scrubbable behind it:
+    // no scrim, no overlay-modal guard, and taps outside the panel reach the editor. Used
+    // by the sheets whose whole job is to show you a change happening — properties and
+    // canvas. The browsers stay blocking; a card lifted out of one is a drag the editor
+    // underneath must not be able to interrupt.
+    property bool blocking: true
+    // Labelled commit on editing sheets, beside the X rather than instead of it: dismissing
+    // and confirming are different answers, and one button makes you guess which you got.
+    property string doneText: ""
 
-    modal: true
+    signal doneRequested()
+
+    modal: root.blocking
     dim: false
     focus: true
     padding: 0
@@ -32,6 +43,10 @@ Popup {
 
     // SafeArea attaches to Items, and a Popup is not one, so the insets are read off the
     // sheet's own content item — which fills the overlay and therefore carries them.
+    // Same reason as the insets below: a Popup is not an Item, so Window.window does not
+    // attach to it either. The overlay is one and carries both.
+    readonly property var hostWindow: Overlay.overlay ? Overlay.overlay.Window.window : null
+
     readonly property real safeTop: sheetRoot.SafeArea.margins.top
     readonly property real safeBottom: sheetRoot.SafeArea.margins.bottom
     readonly property real safeLeft: sheetRoot.SafeArea.margins.left
@@ -56,6 +71,8 @@ Popup {
     // panel moves as it goes, so re-testing the pointer against it would flap.
     property bool steppedAside: false
     property real _asideFade: steppedAside ? 0 : 1
+    // Where the finger was when the card was lifted, -1 until the first move reports it.
+    property real _liftStartY: -1
 
     Behavior on _asideFade {
         NumberAnimation { duration: Theme.durationBase; easing.type: Theme.easing }
@@ -67,14 +84,31 @@ Popup {
         function onSceneYChanged() {
             if (!root.opened || root.steppedAside || !TouchDrag.active)
                 return
-            if (TouchDrag.sceneY >= panel.mapToItem(null, 0, 0).y - Theme.spacingLg)
+            if (root._liftStartY < 0)
+                root._liftStartY = TouchDrag.sceneY
+            // Either the finger has left the sheet, or it has clearly set off upwards — towards
+            // the timeline and the preview, the only places a card can go. Waiting for it to
+            // clear the sheet's top edge meant dragging over the very targets the sheet hid.
+            const aboveSheet = TouchDrag.sceneY < panel.mapToItem(null, 0, 0).y - Theme.spacingLg
+            const pulledUp = root._liftStartY - TouchDrag.sceneY > Theme.touchLiftStepAsideDistance
+            if (!aboveSheet && !pulledUp)
                 return
             root.steppedAside = true
             TouchDrag.clearOfSource = true
         }
 
         function onActiveChanged() {
-            if (TouchDrag.active || !root.opened || !root.steppedAside)
+            if (TouchDrag.active) {
+                if (root.opened) {
+                    root._liftStartY = -1
+                    // An expanded sheet covers the preview entirely; back to its resting size
+                    // so there is somewhere to drop.
+                    if (root.expanded)
+                        root.collapse()
+                }
+                return
+            }
+            if (!root.opened || !root.steppedAside)
                 return
             // callLater, not close(): the drag ended inside the released handler of
             // an item this popup owns, and tearing it down under its own event is
@@ -91,15 +125,17 @@ Popup {
     }
 
     onOpened: {
-        const host = Overlay.overlay ? Overlay.overlay.Window.window : null
-        if (host && host.pushOverlayModal)
+        const host = root.hostWindow
+        // The guard exists to stop taps on empty dialog chrome reaching the timeline's
+        // PointerHandlers. A non-blocking sheet wants exactly the opposite.
+        if (root.blocking && host && host.pushOverlayModal)
             host.pushOverlayModal()
         Haptics.press()
     }
 
     onClosed: {
-        const host = Overlay.overlay ? Overlay.overlay.Window.window : null
-        if (host && host.popOverlayModal)
+        const host = root.hostWindow
+        if (root.blocking && host && host.popOverlayModal)
             host.popOverlayModal()
     }
 
@@ -287,13 +323,14 @@ Popup {
     }
 
     background: Rectangle {
+        visible: root.blocking
         color: Qt.rgba(0, 0, 0, 0.45)
         opacity: {
             if (!root.opened || root.height <= 0)
                 return 0
             const span = Math.max(1, root.expandedHeight - root.dismissHeight)
             const t = (root.panelHeight - root.dismissHeight) / span
-            return (0.35 + 0.65 * Math.max(0, Math.min(1, t))) * root._asideFade
+            return (0.25 + 0.75 * Math.max(0, Math.min(1, t))) * root._asideFade
         }
         MouseArea {
             anchors.fill: parent
@@ -326,6 +363,7 @@ Popup {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: panel.top
+            visible: root.blocking
             acceptedButtons: Qt.AllButtons
             hoverEnabled: true
             onClicked: root.dismiss()
@@ -377,7 +415,7 @@ Popup {
                 color: Theme.panelBackground
             }
 
-            // Prominent drag header: handle + title + close.
+            // Prominent drag header: handle + title + one dismissal.
             Rectangle {
                 id: header
                 anchors.left: parent.left
@@ -403,7 +441,7 @@ Popup {
                     // without this the title ran under the notch on one rotation and
                     // the Close button under the nav bar on the other.
                     anchors.leftMargin: Theme.pagePadding + root.safeLeft
-                    anchors.right: closeBtn.left
+                    anchors.right: doneBtn.visible ? doneBtn.left : closeBtn.left
                     anchors.rightMargin: Theme.spacingMd
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: 10
@@ -415,8 +453,25 @@ Popup {
                     elide: Text.ElideRight
                 }
 
+                ThemedButton {
+                    id: doneBtn
+                    anchors.right: parent.right
+                    anchors.rightMargin: Theme.spacingSm + root.safeRight
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 6
+                    visible: root.doneText.length > 0
+                    variant: "primary"
+                    text: root.doneText
+                    onClicked: root.doneRequested()
+                }
+
+                // Only when there is no Done. Two dismissals side by side asked the user to
+                // pick between them, and on the sheets that have both they do the same thing —
+                // Done commits and closes, X closes. Back, a drag down and a tap on the scrim
+                // all still dismiss, so nothing becomes unreachable by losing the button.
                 IconButton {
                     id: closeBtn
+                    visible: !doneBtn.visible
                     anchors.right: parent.right
                     anchors.rightMargin: Theme.spacingSm + root.safeRight
                     anchors.bottom: parent.bottom
@@ -442,6 +497,8 @@ Popup {
                 SheetDragArea {
                     anchors.fill: parent
                     anchors.rightMargin: closeBtn.width + Theme.spacingSm + root.safeRight
+                                         + (doneBtn.visible
+                                            ? doneBtn.width + Theme.spacingSm : 0)
                     stealTouches: true
                 }
             }

@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QSet>
 #include <QStringList>
+#include <QThreadPool>
 #include <QUrl>
 
 namespace drift {
@@ -27,6 +28,15 @@ class AssetLibrary : public QAbstractListModel
     // Flatpak (and Snap) hide host paths that the file picker would have granted through the
     // portal. A dropped file:// URL then fails to open — not because the format is unsupported.
     Q_PROPERTY(bool sandboxed READ sandboxed CONSTANT)
+    // Preview proxy jobs (ReverseProxyCache preview entries), built one at a time off-thread.
+    Q_PROPERTY(bool proxyBusy READ proxyBusy NOTIFY proxyJobsChanged)
+    Q_PROPERTY(double proxyProgress READ proxyProgress NOTIFY proxyJobsChanged)
+    Q_PROPERTY(QString proxyCurrentName READ proxyCurrentName NOTIFY proxyJobsChanged)
+    Q_PROPERTY(int proxyQueuedCount READ proxyQueuedCount NOTIFY proxyJobsChanged)
+    // Bumped whenever anything the bin and timeline badges show changes for any asset: proxy
+    // state, the variable-frame-rate check, the edit-friendly mark. The badge queries are function
+    // calls QML can't track, so bindings name this alongside them to re-read.
+    Q_PROPERTY(int badgeRevision READ badgeRevision NOTIFY badgeRevisionChanged)
 
 public:
     enum Role {
@@ -43,6 +53,7 @@ public:
     Q_ENUM(Role)
 
     explicit AssetLibrary(QObject *parent = nullptr);
+    ~AssetLibrary() override;
 
     void setProject(drift::Project *project);
     drift::Project *project() const { return m_project; }
@@ -62,9 +73,34 @@ public:
     Q_INVOKABLE bool importUrlsAsync(const QList<QUrl> &urls);
     bool importing() const { return m_importing; }
     bool sandboxed() const;
+    // The one place that decides what counts as media, so the file picker, the folder-import
+    // walk and the kind guess can never disagree about a format. Extension-only: the real kind
+    // comes from the probe once the file is open.
+    static bool isVideoPath(const QString &path);
+    static bool isAudioPath(const QString &path);
+    static bool isImagePath(const QString &path);
+    static bool isVectorPath(const QString &path);
+    static bool isModelPath(const QString &path);
+    static bool isMediaPath(const QString &path);
+    // The file name a picked document's copy in app storage should carry. Only used on Android,
+    // where that name is the provider's DISPLAY_NAME — an arbitrary string, not a name any
+    // filesystem has agreed to store. See the definition for what it takes out and why.
+    static QString sanitizedImportFileName(const QString &displayName);
+    // The kind a file looks like from its extension alone, spelled the way a bin row spells it
+    // ("video", "audio", "image", "vector", "model3d"), and empty for anything that is not media
+    // at all. Q_INVOKABLE because the timeline's file drop has to promise a landing spot while
+    // the drag is still in flight, when nothing has been opened, let alone probed. Provisional in
+    // the same sense as everywhere else here: a .mkv holding only an audio stream reads as video
+    // until the probe says otherwise, which costs the drag preview a track type, never the clip.
+    Q_INVOKABLE QString provisionalKindForUrl(const QUrl &url) const;
+    // The same set spelled as a QFileDialog name filter, e.g. "Media files (*.mp4 *.mov ...)".
+    Q_INVOKABLE QString mediaNameFilter() const;
     // Import local paths and return the asset ids involved (new or already-present).
     QStringList importLocalPaths(const QStringList &paths);
-    bool isImportPending(const QString &assetId) const;
+    // Q_INVOKABLE because QML has to know when a freshly imported row is still a placeholder:
+    // importFinished fires before the off-thread probe fills width/height/fps/duration, so
+    // anything sizing a canvas or a clip from a new asset must wait on this.
+    Q_INVOKABLE bool isImportPending(const QString &assetId) const;
     // Registers media the app rendered itself (freeze frames and the like). The asset is already
     // complete, so this skips the probe and thumbnail jobs the import path runs. Returns its id.
     QString addGeneratedAsset(drift::MediaAsset asset);
@@ -79,6 +115,15 @@ public:
     Q_INVOKABLE void sortByKind();
     // Display name in the media bin. Does not rename the file on disk.
     Q_INVOKABLE bool setAssetName(int index, const QString &name);
+    // Bin-preview rotation correction, snapped to the nearest 90°; -1 resets to the file's own
+    // probed rotation. Forces the cached thumbnail/filmstrip to regenerate against it. Not
+    // invokable from QML on purpose: like setAssetName, the caller owns the undo snapshot
+    // (AppController::setAssetRotation).
+    bool setAssetRotation(int index, int degrees);
+    // Non-destructive bin-preview trim (microseconds); trimOutUs < 0 resets to the full duration.
+    // Never touches the source file — applied to a clip's srcIn/srcOut when placed on the
+    // timeline (see AppController::applyAssetLayout). Undo snapshot is the caller's, as above.
+    bool setAssetTrim(int index, qint64 trimInUs, qint64 trimOutUs);
     int indexOfPath(const QString &path) const;
     // Drops the row from the project's asset table. Callers own the undo
     // snapshot and the in-use check; this only touches the bin.
@@ -108,6 +153,31 @@ public:
     // Fills hasAudio from MediaProbe off-thread when hasAudioKnown is false.
     void ensureAudioPresence(const QString &assetId);
 
+    bool proxyBusy() const { return !m_proxyBuilding.isEmpty(); }
+    double proxyProgress() const { return m_proxyProgress; }
+    QString proxyCurrentName() const;
+    int proxyQueuedCount() const { return m_proxyQueue.size(); }
+    // "none", "queued", "building" or "ready" for a video asset; empty for anything else.
+    // "ready" means a proxy exists at the current proxy size, whether or not preview is set to
+    // use proxies.
+    Q_INVOKABLE QString proxyState(const QString &assetId) const;
+    // Whether a proxy exists for this media file at the current proxy size. By path, for timeline
+    // clips, which carry their media's path but not always an asset.
+    Q_INVOKABLE bool hasProxyForPath(const QString &path) const;
+    int badgeRevision() const { return m_badgeRevision; }
+    // The asset whose media is this file, or empty. For timeline clips, which carry their media's
+    // path but not its asset id.
+    Q_INVOKABLE QString assetIdForPath(const QString &path) const;
+    // True once the check has found irregular frame spacing. The first ask for an asset that was
+    // never checked starts the check in the background and answers false until it lands.
+    Q_INVOKABLE bool isVariableFrameRate(const QString &assetId);
+    Q_INVOKABLE bool isEditFriendly(const QString &assetId) const;
+    Q_INVOKABLE void createProxies(const QStringList &assetIds);
+    // Drops queued jobs and deletes built proxies. Not undoable, and doesn't need to be: a
+    // proxy is a cache, not project content.
+    Q_INVOKABLE void removeProxies(const QStringList &assetIds);
+    Q_INVOKABLE void cancelProxies();
+
 signals:
     void countChanged();
     void importingChanged();
@@ -115,9 +185,26 @@ signals:
     void importFinished(int materialized, int failed);
     // Fired when probe/thumb/audio metadata lands so unlink affordances can refresh.
     void assetMetadataChanged(const QString &assetId);
+    // Narrower than assetMetadataChanged: only for a change to a *card-level* field the bin grid
+    // snapshots (name/kind/duration/path — see MediaAssetsTab.qml's combinedItems), so its
+    // listener knows a real rebuild is warranted. A thumbnail-only change (rotate, a thumbnail
+    // regenerating) does not emit this — those refresh their own delegate's image in place.
+    void assetCardChanged(const QString &assetId);
     // Result of startReplaceProbe. Nothing has been applied yet; the caller decides whether the
     // probed media is an acceptable stand-in and calls applyProbedSource if so.
     void assetSourceProbed(const QString &assetId, const drift::MediaAsset &filled, bool ok);
+    // A file that passed the suffix whitelist and then could not be read at all, so its bin row
+    // was withdrawn. Without this the row just disappears and the user is told nothing.
+    void assetImportFailed(const QString &name);
+    void proxyJobsChanged();
+    void proxyStateChanged(const QString &assetId);
+    void badgeRevisionChanged();
+    // A proxy appeared or went away, so what the preview reads has changed.
+    void proxiesChanged();
+    void proxyFailed(const QString &name, const QString &error);
+    // Emitted once every probe of an import has landed: assets that would preview faster from a
+    // proxy, and assets with a variable frame rate. Either list may be empty, not both.
+    void importSuggestions(const QStringList &proxyAssetIds, const QStringList &vfrAssetIds);
 
 private:
     // `sourceUris` maps an absolute path to the content:// URI it was materialized from, so the
@@ -134,7 +221,10 @@ private:
     void refreshMediaAt(int index);
     void startImportJob(const QString &assetId, const QString &absolutePath, bool imageOnly);
     void startThumbJob(const QString &assetId);
-    void applyImportResult(const QString &assetId, const drift::MediaAsset &filled, bool ok);
+    void applyImportResult(const QString &assetId, const drift::MediaAsset &filled, bool ok,
+                           bool suggestProxy = false, bool variableFrameRate = false);
+    void startNextProxy();
+    void bumpBadges();
     // `sourcePath` is the file the job actually read. It is compared against the asset's current
     // path on landing so a result for media that has since been replaced is dropped.
     void applyThumbResult(const QString &assetId, const QString &sourcePath, const QString &thumb,
@@ -145,6 +235,7 @@ private:
     void snapshotAssets();
     QList<QString> currentPaths() const;
     QList<QString> currentFolderIds() const;
+    QList<QString> currentEdits() const;
     const drift::MediaAsset *assetAtIndex(int index) const;
     drift::MediaAsset *assetAtIndex(int index);
 
@@ -156,8 +247,36 @@ private:
     QList<QString> m_syncedOrder;
     QList<QString> m_syncedPaths;
     QList<QString> m_syncedFolderIds;
+    // Per-row rotation override and trim, for the same reason: an undone bin rotate/trim leaves
+    // order, path and folder alone, and the card (thumbnail, duration text) has to follow it.
+    QList<QString> m_syncedEdits;
     QString m_importFolderId;
     QSet<QString> m_importPending;
     QSet<QString> m_thumbPending;
+    // Asset ids whose settings (rotation/trim) changed again while a thumbnail job for them was
+    // already in flight — the in-flight job's result is stale the moment it lands, so its landing
+    // immediately kicks a fresh job rather than silently keeping the outdated image.
+    QSet<QString> m_thumbStale;
     QSet<QString> m_audioProbePending;
+    QSet<QString> m_frameRateProbePending;
+    // Probe and thumbnail jobs run here rather than on the global pool, because the destructor
+    // has to be able to wait for them: each captures `this` and posts its result back with
+    // QMetaObject::invokeMethod(this, ...). Nothing joined them before, so a job outliving the
+    // object called into freed memory — the tests are where that bites, since AssetLibrary is a
+    // stack local per test function and the address is handed straight to the next one.
+    QThreadPool m_jobs;
+
+    // Collected across one import's probes, flushed as importSuggestions when the last lands.
+    QStringList m_suggestProxyIds;
+    QStringList m_suggestVfrIds;
+
+    // Asset ids, FIFO. The building one is not in the queue.
+    QStringList m_proxyQueue;
+    QString m_proxyBuilding;
+    double m_proxyProgress = 0.0;
+    int m_badgeRevision = 0;
+    QAtomicInt m_proxyCancel;
+    // Its own single-thread pool: a proxy render runs for minutes and must not hold up the
+    // probe and thumbnail jobs on m_jobs.
+    QThreadPool m_proxyPool;
 };

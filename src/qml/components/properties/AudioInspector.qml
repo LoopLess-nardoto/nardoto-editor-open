@@ -14,6 +14,9 @@ Item {
     }
     readonly property bool hasSelection: !!clipData && Object.keys(clipData).length > 0
     readonly property string clipKind: hasSelection ? (clipData.kind || "") : ""
+    readonly property bool audible: clipKind === "audio" || clipKind === "video" || clipKind === "composite"
+    // Read straight from a media file: stream choice, denoise and transcription need one.
+    readonly property bool fileAudio: (clipKind === "audio" || clipKind === "video") && !clipData.sequenceId
     readonly property var propVolume: { "key": "volume", "label": qsTr("Volume"), "def": 1.0, "decimals": 2 }
 
     // "Recommended" packs by display width like openai-whisper does; the numbered entries cap
@@ -54,13 +57,85 @@ Item {
 
         PropertyKeyframeRow {
             width: root.width
-            visible: root.clipKind === "audio" || root.clipKind === "video"
+            visible: root.audible
             propDef: root.propVolume
             keyframeList: (root.clipData.keyframes && root.clipData.keyframes.volume && root.clipData.keyframes.volume.points) || []
             useSlider: true
             sliderFrom: 0
             sliderTo: 2
             percent: true
+            decibels: true
+        }
+
+        // ----- Pan (stereo balance) ----------------------------------------
+        Column {
+            id: panSection
+            width: parent.width
+            spacing: Theme.spacingSm
+            visible: root.audible
+
+            readonly property real panValue: {
+                void root.clipDataRevision
+                return (root.clipData && root.clipData.pan !== undefined)
+                       ? root.clipData.pan : 0.0
+            }
+
+            Row {
+                width: parent.width
+
+                Text {
+                    width: parent.width / 2
+                    text: qsTr("Pan")
+                    color: Theme.mutedForeground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                }
+
+                Text {
+                    width: parent.width / 2
+                    horizontalAlignment: Text.AlignRight
+                    // "L 50" / "C" / "R 50" reads faster than a signed fraction, and the
+                    // sign convention for pan is not something a user should have to recall.
+                    text: {
+                        const v = panSection.panValue
+                        if (Math.abs(v) < 0.005)
+                            return qsTr("C")
+                        return (v < 0 ? qsTr("L %1") : qsTr("R %1"))
+                                   .arg(Math.round(Math.abs(v) * 100))
+                    }
+                    color: Theme.panelForeground
+                    font.family: Theme.monoFontFamily
+                    font.pixelSize: Theme.fontSizeSm
+                }
+            }
+
+            ThemedSlider {
+                id: panSlider
+                lockWhilePlaying: true
+                label: qsTr("Pan")
+                width: parent.width
+                from: -1
+                to: 1
+                Binding on value {
+                    when: !panSlider.pressed
+                    value: panSection.panValue
+                }
+                onMoved: EditorState.previewSetClipPan(
+                             EditorState.selectedTrack, EditorState.selectedClip, value)
+                onPressedChanged: {
+                    if (pressed)
+                        EditorState.beginPreviewDrag(qsTr("Pan changed"))
+                    else
+                        EditorState.commitPreviewDrag()
+                }
+            }
+
+            ThemedButton {
+                text: qsTr("Centre")
+                enabled: Math.abs(panSection.panValue) >= 0.005
+                onClicked: EditorState.setClipPan(
+                               EditorState.selectedTrack, EditorState.selectedClip, 0)
+            }
         }
 
         // ----- Audio Track Selection (Multi-Track) -------------------------
@@ -68,7 +143,7 @@ Item {
             id: audioTrackSection
             width: parent.width
             spacing: Theme.spacingSm
-            visible: (root.clipKind === "audio" || root.clipKind === "video") && audioTrackModel.length > 1
+            visible: root.fileAudio && audioTrackModel.length > 1
 
             property var audioTrackModel: {
                 void root.clipDataRevision
@@ -107,7 +182,8 @@ Item {
             }
 
             ThemedButton {
-                visible: root.clipKind === "video" && EditorState.separateAudioAvailable
+                visible: (root.clipKind === "video" || root.clipKind === "composite")
+                         && EditorState.separateAudioAvailable
                 width: parent.width
                 text: qsTr("Extract all audio tracks")
                 onClicked: {
@@ -117,7 +193,7 @@ Item {
         }
 
         Rectangle {
-            visible: root.clipKind === "audio" || root.clipKind === "video"
+            visible: root.fileAudio
             width: parent.width
             height: 1
             color: Theme.panelBorder
@@ -129,7 +205,7 @@ Item {
             id: denoiseSection
             width: parent.width
             spacing: Theme.spacingSm
-            visible: root.clipKind === "audio" || root.clipKind === "video"
+            visible: root.fileAudio
 
             // Whether the model is on disk is a one-shot filesystem answer, not a
             // binding, hence the reset below when an addon of this kind appears.
@@ -181,7 +257,7 @@ Item {
         }
 
         Rectangle {
-            visible: root.clipKind === "audio" || root.clipKind === "video"
+            visible: root.fileAudio
             width: parent.width
             height: 1
             color: Theme.panelBorder
@@ -189,7 +265,7 @@ Item {
         }
 
         Text {
-            visible: root.clipKind === "audio" || root.clipKind === "video"
+            visible: root.fileAudio
             text: qsTr("Auto subtitles")
             color: Theme.mutedForeground
             font.family: Theme.fontFamily
@@ -218,7 +294,7 @@ Item {
         ThemedComboBox {
             id: subtitleLanguageBox
             visible: parent.whisperReady
-                     && (root.clipKind === "audio" || root.clipKind === "video")
+                     && root.fileAudio
             width: parent.width
             enabled: !EditorState.subtitleGenerating
             textRole: "label"
@@ -230,7 +306,7 @@ Item {
         ThemedComboBox {
             id: subtitleWordsBox
             visible: parent.whisperReady
-                     && (root.clipKind === "audio" || root.clipKind === "video")
+                     && root.fileAudio
             width: parent.width
             enabled: !EditorState.subtitleGenerating
             textRole: "label"
@@ -251,25 +327,24 @@ Item {
 
         ThemedButton {
             visible: parent.whisperReady
-                     && (root.clipKind === "audio" || root.clipKind === "video")
+                     && root.fileAudio
             width: parent.width
             text: EditorState.subtitleGenerating
                   ? qsTr("Creating captions… %1%").arg(Math.round(EditorState.subtitleGenProgress * 100))
                   : qsTr("Create captions from speech")
             enabled: !EditorState.subtitleGenerating
+            tooltip: qsTr("Several selected clips become one caption clip")
             onClicked: {
                 const lang = subtitleLanguageBox.currentValue !== undefined
                              ? subtitleLanguageBox.currentValue
                              : ""
-                EditorState.generateSubtitlesForClip(
-                    EditorState.selectedTrack, EditorState.selectedClip, lang,
-                    subtitleWordsBox.currentValue)
+                EditorState.generateSubtitlesForSelection(lang, subtitleWordsBox.currentValue)
             }
         }
 
         ThemedButton {
             visible: !parent.whisperReady
-                     && (root.clipKind === "audio" || root.clipKind === "video")
+                     && root.fileAudio
             width: parent.width
             text: parent.runtimeReady
                   ? qsTr("Download speech recognition (about 670 MB)")
