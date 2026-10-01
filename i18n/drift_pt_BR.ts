@@ -258,7 +258,7 @@
     </message>
     <message>
         <source>Skip the manual toggle next time you open Nardoto Editor. Turning access off resets this.</source>
-        <translation type="unfinished"></translation>
+        <translation>Pula o interruptor manual na próxima vez que você abrir o Nardoto Editor. Desligar o acesso desfaz isso.</translation>
     </message>
     <message>
         <source>Turn this on so the Nardoto Studio chat, Cursor or Claude can edit this project.</source>
@@ -3600,6 +3600,14 @@
         <translation>Adicionar à pré-visualização</translation>
     </message>
     <message>
+        <source>Composition index.html not found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Motion added</source>
+        <translation>Motion adicionado</translation>
+    </message>
+    <message>
         <source>Enable 3D</source>
         <translation>Ativar 3D</translation>
     </message>
@@ -4271,6 +4279,24 @@
     <message>
         <source>Build a video in Nardoto Editor with the narration [audio file], the subtitles [.srt file] and the images in the folder [folder].</source>
         <translation>Monte um vídeo no Nardoto Editor com a narração [arquivo de áudio], a legenda [arquivo .srt] e as imagens da pasta [pasta].</translation>
+    </message>
+    <message>
+        <source>[describe the change]</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In Nardoto Editor, change the live motion composition at %1: %2.
+Moment: %3 s of the composition (%4 s on the timeline).</source>
+        <translation>No Nardoto Editor, altere a composição de motion ao vivo em %1: %2.
+Momento: %3 s da composição (%4 s na timeline).</translation>
+    </message>
+    <message>
+        <source>Screenshot of that moment: %1</source>
+        <translation>Print desse momento: %1</translation>
+    </message>
+    <message>
+        <source>Edit its index.html and save; the editor preview reloads by itself, no render needed.</source>
+        <translation>Edite o index.html e salve; a prévia do editor recarrega sozinha, sem precisar renderizar.</translation>
     </message>
     <message>
         <source>Remove silence</source>
@@ -6866,12 +6892,32 @@
         <translation>Fechar</translation>
     </message>
     <message>
+        <source>%1 min %2 s</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 s</source>
+        <translation type="unfinished">%1 s</translation>
+    </message>
+    <message>
+        <source>The export failed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The export finished in %1.</source>
+        <translation>A exportação terminou em %1.</translation>
+    </message>
+    <message>
         <source>Rendering your video. Close to keep editing, or cancel to stop.</source>
         <translation>Renderizando seu vídeo. Feche para continuar editando ou cancele para interromper.</translation>
     </message>
     <message>
         <source>Export finished.</source>
         <translation>Exportação concluída.</translation>
+    </message>
+    <message>
+        <source>My export in Nardoto Editor did not go well. Find the cause in the report below, fix what is needed (the project, a motion composition or a setting) and render the video for me through the editor.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Play</source>
@@ -7215,8 +7261,36 @@
         <translation>Tipo</translation>
     </message>
     <message>
+        <source>Live motion</source>
+        <translation>Motion ao vivo</translation>
+    </message>
+    <message>
         <source>Transform layer</source>
         <translation>Camada de transformação</translation>
+    </message>
+    <message>
+        <source>Plays straight from the composition, no render. Change it from the Studio chat: the preview reloads when its index.html is saved.</source>
+        <translation>Toca direto da composição, sem renderizar. Mude pelo chat do Studio: a prévia recarrega quando o index.html é salvo.</translation>
+    </message>
+    <message>
+        <source>Ask for a change in this motion...</source>
+        <translation>Peça uma mudança neste motion...</translation>
+    </message>
+    <message>
+        <source>Moment print</source>
+        <translation>Print do momento</translation>
+    </message>
+    <message>
+        <source>Takes a print of this moment and copies it, with the exact time and the composition path, to paste into the Studio chat</source>
+        <translation>Tira um print deste momento e copia, com o tempo exato e o caminho da composição, para colar no chat do Studio</translation>
+    </message>
+    <message>
+        <source>Print copied. Paste it into the Studio chat</source>
+        <translation>Print copiado. Cole no chat do Studio</translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation>Abrir pasta</translation>
     </message>
     <message>
         <source>Original dimensions: %1 × %2</source>
@@ -14774,6 +14848,33 @@ Se a reprodução travar, experimente outro.</translation>
     <message>
         <source>Holographic</source>
         <translation>Holográfico</translation>
+    </message>
+</context>
+<context>
+    <name>drift::MotionHost</name>
+    <message>
+        <source>O motor de motion reiniciou durante o export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O quadro de %1 s do motion não chegou</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>motion-host/main.js não encontrado</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Electron não encontrado para o motor de motion</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Não foi possível abrir o canal do motor de motion: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O motor de motion encerrou (código %1)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

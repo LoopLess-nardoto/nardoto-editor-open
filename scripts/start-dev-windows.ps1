@@ -37,6 +37,10 @@ if (-not (Test-Path $toolchain)) {
 
 if ($Build -or -not (Test-Path $editorExe)) {
     $ffmpegRoot = $env:FFMPEG_ROOT
+    $ffmpegDeps = Join-Path $repoRoot '.tools\deps\ffmpeg'
+    if (-not $ffmpegRoot -and (Test-Path (Join-Path $ffmpegDeps 'lib\avformat.lib'))) {
+        $ffmpegRoot = $ffmpegDeps
+    }
     if (-not $ffmpegRoot) {
         $ffmpegRoot = (Get-ChildItem -Path (Join-Path $repoRoot '.tools\deps\ffmpeg') -Directory -ErrorAction SilentlyContinue |
             Select-Object -First 1).FullName

@@ -3593,6 +3593,14 @@
         <translation>プレビューに追加</translation>
     </message>
     <message>
+        <source>Composition index.html not found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Motion added</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Enable 3D</source>
         <translation>3D を有効化</translation>
     </message>
@@ -4256,6 +4264,23 @@
     </message>
     <message>
         <source>Build a video in Nardoto Editor with the narration [audio file], the subtitles [.srt file] and the images in the folder [folder].</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>[describe the change]</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In Nardoto Editor, change the live motion composition at %1: %2.
+Moment: %3 s of the composition (%4 s on the timeline).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Screenshot of that moment: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit its index.html and save; the editor preview reloads by itself, no render needed.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -6801,12 +6826,68 @@
         <translation>閉じる</translation>
     </message>
     <message>
+        <source>%1 min %2 s</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 s</source>
+        <translation type="unfinished">%1 秒</translation>
+    </message>
+    <message>
+        <source>The export failed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The export finished in %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rendering your video. Close to keep editing, or cancel to stop.</source>
         <translation>ビデオをレンダリング中です。閉じて編集を続けるか、キャンセルして停止します。</translation>
     </message>
     <message>
         <source>Export finished.</source>
         <translation>エクスポートが完了しました。</translation>
+    </message>
+    <message>
+        <source>Elapsed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Took %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Report a problem</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copies a diagnostic report to send to support</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Report copied. Send it to support or paste it into the Studio chat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Send to Studio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A ready request for the Studio chat to fix the problem and render for you</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>My export in Nardoto Editor did not go well. Find the cause in the report below, fix what is needed (the project, a motion composition or a setting) and render the video for me through the editor.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copied. Paste it into the Studio chat</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Play</source>
@@ -7150,8 +7231,36 @@
         <translation>タイプ</translation>
     </message>
     <message>
+        <source>Live motion</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Transform layer</source>
         <translation>変形レイヤー</translation>
+    </message>
+    <message>
+        <source>Plays straight from the composition, no render. Change it from the Studio chat: the preview reloads when its index.html is saved.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ask for a change in this motion...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Moment print</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Takes a print of this moment and copies it, with the exact time and the composition path, to paste into the Studio chat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Print copied. Paste it into the Studio chat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open folder</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Original dimensions: %1 × %2</source>
@@ -14686,6 +14795,33 @@ If playback stutters, try another.</source>
     <message>
         <source>Holographic</source>
         <translation>ホログラフィック</translation>
+    </message>
+</context>
+<context>
+    <name>drift::MotionHost</name>
+    <message>
+        <source>O motor de motion reiniciou durante o export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O quadro de %1 s do motion não chegou</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>motion-host/main.js não encontrado</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Electron não encontrado para o motor de motion</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Não foi possível abrir o canal do motor de motion: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O motor de motion encerrou (código %1)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
