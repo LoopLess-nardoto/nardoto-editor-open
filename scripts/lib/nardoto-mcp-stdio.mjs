@@ -96,6 +96,20 @@ export class NardotoMcpStdioClient {
   #onStdout(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     while (this.buffer.length) {
+      // Desde o Drift 0.7.1 a ponte responde uma mensagem JSON por linha (padrao do MCP);
+      // o formato com Content-Length continua aceito para versoes antigas.
+      if (this.buffer[0] === 0x7b /* { */) {
+        const fim = this.buffer.indexOf("\n");
+        if (fim < 0) return;
+        const linha = this.buffer.subarray(0, fim).toString("utf8").trim();
+        this.buffer = this.buffer.subarray(fim + 1);
+        this.#entregar(linha);
+        continue;
+      }
+      if (this.buffer[0] === 0x0a || this.buffer[0] === 0x0d) {
+        this.buffer = this.buffer.subarray(1);
+        continue;
+      }
       const crlf = this.buffer.indexOf("\r\n\r\n");
       const lf = this.buffer.indexOf("\n\n");
       const headerEnd = crlf >= 0 ? crlf : lf;
@@ -112,18 +126,22 @@ export class NardotoMcpStdioClient {
       if (this.buffer.length < bodyStart + length) return;
       const body = this.buffer.subarray(bodyStart, bodyStart + length).toString("utf8");
       this.buffer = this.buffer.subarray(bodyStart + length);
-      let message;
-      try {
-        message = JSON.parse(body);
-      } catch {
-        continue;
-      }
-      const pending = this.pending.get(message.id);
-      if (!pending) continue;
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
-      else pending.resolve(message.result);
+      this.#entregar(body);
     }
+  }
+
+  #entregar(body) {
+    let message;
+    try {
+      message = JSON.parse(body);
+    } catch {
+      return;
+    }
+    const pending = this.pending.get(message.id);
+    if (!pending) return;
+    this.pending.delete(message.id);
+    if (message.error) pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
+    else pending.resolve(message.result);
   }
 
   request(method, params = {}) {
