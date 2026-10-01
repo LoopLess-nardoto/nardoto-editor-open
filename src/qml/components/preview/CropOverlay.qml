@@ -16,8 +16,8 @@ Item {
     property var previewViewport
     property var previewCanvas
 
-    readonly property int projW: { void EditorState.tracks; return Math.max(1, EditorState.projectWidth()) }
-    readonly property int projH: { void EditorState.tracks; return Math.max(1, EditorState.projectHeight()) }
+    readonly property int projW: { void EditorState.tracksRevision; return Math.max(1, EditorState.projectWidth()) }
+    readonly property int projH: { void EditorState.tracksRevision; return Math.max(1, EditorState.projectHeight()) }
     // Project px → viewport px.
     readonly property real pxScale: root.previewCanvas.width / projW
 
@@ -101,7 +101,7 @@ Item {
         // so a separate handler behind it never got them. Ctrl-less
         // scrolls are explicitly rejected so they keep propagating.
         onWheel: (wheel) => {
-            if (!(wheel.modifiers & Qt.ControlModifier)
+            if (!Theme.primaryModifierPressed(wheel.modifiers)
                     || wheel.angleDelta.y === 0) {
                 wheel.accepted = false
                 return
@@ -323,7 +323,7 @@ Item {
                 font.pixelSize: Theme.fontSizeXs
             }
             Text {
-                text: qsTr("Ctrl + scroll to zoom")
+                text: Theme.platformShortcutText(qsTr("Ctrl + scroll to zoom"))
                 color: root.didZoom ? Theme.guideMedium : Theme.onMedia
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs

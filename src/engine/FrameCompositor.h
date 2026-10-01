@@ -4,6 +4,7 @@
 #include "core/Project.h"
 #include "core/Time.h"
 
+#include <QHash>
 #include <QImage>
 #include <QString>
 
@@ -27,9 +28,23 @@ public:
         // Clip id to omit from the frame (the text clip being edited in place on
         // the preview). Empty renders everything.
         QString skipClipId;
+        // Read low-res preview proxies where they exist. Only live playback sets it; export and
+        // every other caller must see the original pixels.
+        bool allowProxies = false;
+        // Reuse converted video frames across composites. Only the paused preview sets it: an
+        // edit there re-renders the same source frames, where playback never repeats one.
+        bool cacheVideoSources = false;
+        // Scrubbing: a video layer may show the nearest frame that is cheap to get (cached, or
+        // the keyframe at or before the time) instead of decoding forward to the exact one. The
+        // caller asks again without it once the gesture settles.
+        bool approximateSeek = false;
     };
 
     void setProject(const drift::Project *project) { m_project = project; }
+    // Nested sequence views are built from the project and reused across composites of it. The
+    // owner calls this whenever the project behind the pointer changes; comparing pointers here
+    // cannot tell, since a new snapshot can land at a freed one's address.
+    void clearNestedViewCache() const { m_nestedViews.clear(); }
 
     // Drop the decoded-still cache (image clips and stickers, scaled to the render canvas). Pure
     // derived pixels — a cleared entry costs one re-read of the file. For the Android
@@ -55,6 +70,7 @@ private:
 
 
     const drift::Project *m_project = nullptr;
+    mutable QHash<QString, std::shared_ptr<const drift::Project>> m_nestedViews;
 };
 
 Q_DECLARE_METATYPE(FrameCompositor::RenderOptions)

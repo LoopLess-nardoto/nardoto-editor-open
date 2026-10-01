@@ -45,11 +45,21 @@ if ($Build -or -not (Test-Path $editorExe)) {
         throw 'FFmpeg compatível não foi encontrado. Defina FFMPEG_ROOT ou instale-o em .tools\deps\ffmpeg.'
     }
 
+    # Desde o motor do Drift 0.7.1 o texto e as formas usam o Skia. No Windows ele vem do vcpkg:
+    #   vcpkg install zlib "skia[gl,harfbuzz,icu,freetype,png]" --triplet x64-windows-static-md
+    $vcpkgStatic = Join-Path $vcpkgRoot 'installed\x64-windows-static-md'
+    if (-not (Test-Path (Join-Path $vcpkgStatic 'share\unofficial-skia'))) {
+        throw 'Skia não foi encontrado no vcpkg. Rode: vcpkg install zlib "skia[gl,harfbuzz,icu,freetype,png]" --triplet x64-windows-static-md'
+    }
+
     if (-not (Test-Path (Join-Path $buildDir 'CMakeCache.txt'))) {
         & $cmake -S $repoRoot -B $buildDir -A x64 `
             "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
-            "-DCMAKE_PREFIX_PATH=$qtRoot;$ffmpegRoot" `
+            "-DCMAKE_PREFIX_PATH=$qtRoot;$ffmpegRoot;$vcpkgStatic" `
             "-DFFMPEG_ROOT=$ffmpegRoot" `
+            "-DZLIB_INCLUDE_DIR=$(Join-Path $vcpkgStatic 'include')" `
+            "-DZLIB_LIBRARY=$(Join-Path $vcpkgStatic 'lib\zs.lib')" `
+            '-DDRIFT_WITH_SKIA=ON' `
             "-DFETCHCONTENT_BASE_DIR=$(Join-Path $repoRoot '.tools\fetchcontent')" `
             '-DDRIFT_AUTO_UPDATE_TRANSLATIONS=OFF'
         if ($LASTEXITCODE -ne 0) {

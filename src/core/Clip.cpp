@@ -17,6 +17,14 @@ QString clipTypeToString(ClipType type)
         return QStringLiteral("subtitle");
     case ClipType::Shape:
         return QStringLiteral("shape");
+    case ClipType::Adjustment:
+        return QStringLiteral("adjustment");
+    case ClipType::Vector:
+        return QStringLiteral("vector");
+    case ClipType::Model3d:
+        return QStringLiteral("model3d");
+    case ClipType::Composite:
+        return QStringLiteral("composite");
     }
     return QStringLiteral("video");
 }
@@ -33,7 +41,41 @@ ClipType clipTypeFromString(const QString &type)
         return ClipType::Subtitle;
     if (type == QStringLiteral("shape"))
         return ClipType::Shape;
+    if (type == QStringLiteral("adjustment"))
+        return ClipType::Adjustment;
+    if (type == QStringLiteral("vector"))
+        return ClipType::Vector;
+    if (type == QStringLiteral("model3d"))
+        return ClipType::Model3d;
+    if (type == QStringLiteral("composite"))
+        return ClipType::Composite;
     return ClipType::Video;
+}
+
+QString adjustmentKindToString(AdjustmentKind kind)
+{
+    switch (kind) {
+    case AdjustmentKind::VideoEffects:
+        return QStringLiteral("videoEffects");
+    case AdjustmentKind::AudioEffects:
+        return QStringLiteral("audioEffects");
+    case AdjustmentKind::Mask:
+        return QStringLiteral("mask");
+    case AdjustmentKind::Transform:
+        return QStringLiteral("transform");
+    }
+    return QStringLiteral("videoEffects");
+}
+
+AdjustmentKind adjustmentKindFromString(const QString &kind)
+{
+    if (kind == QStringLiteral("audioEffects"))
+        return AdjustmentKind::AudioEffects;
+    if (kind == QStringLiteral("mask"))
+        return AdjustmentKind::Mask;
+    if (kind == QStringLiteral("transform"))
+        return AdjustmentKind::Transform;
+    return AdjustmentKind::VideoEffects;
 }
 
 QString blendModeToString(BlendMode mode)

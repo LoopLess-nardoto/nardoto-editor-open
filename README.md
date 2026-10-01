@@ -35,7 +35,7 @@ O tema padrão segue o Nardoto Studio: fundo quase preto, superfícies em camada
 
 ## Desenvolvimento
 
-Os requisitos e os comandos de compilação originais do motor continuam documentados em [docs/BUILDING.md](docs/BUILDING.md). Em resumo, instale Qt 6.5 ou superior, CMake e um compilador C++20 compatível, e configure o projeto com CMake.
+Os requisitos e os comandos de compilação originais do motor continuam documentados em [docs/BUILDING.md](docs/BUILDING.md). Em resumo, instale Qt 6.5 ou superior, CMake e um compilador C++20 compatível, e configure o projeto com CMake. Desde o motor do Drift 0.7.1, texto e formas usam o Skia, compilado por `third_party/build-skia.sh` (veja o BUILDING.md).
 
 ```bash
 cmake -S . -B build

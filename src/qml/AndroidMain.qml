@@ -11,6 +11,38 @@ ApplicationWindow {
     color: Theme.appBackground
     title: "Nardoto Editor"
 
+    // Theme is a singleton and cannot see a window, so the size class it reports has to be fed
+    // from whichever root is live. Screen is the wrong source: it ignores tiling and split view.
+    onWidthChanged: Theme.windowWidth = width
+
+    // Qt creates some chrome itself — most visibly the Undo/Cut/Copy/Paste menu on every
+    // TextField and TextArea (Basic/TextField.qml declares ContextMenu.menu). Drift styles
+    // none of that, so it fell through to the palette the platform theme supplies and picked
+    // up the desktop's colour scheme: on a KDE session with a custom scheme the editing menu
+    // rendered in that scheme's colours next to Drift's own. Palette propagates down the item
+    // hierarchy, popups included, so setting the roles the Basic style reads brings Qt's own
+    // chrome under Theme — and binding them keeps it following the light/dark toggle.
+    palette.window: Theme.panelBackground
+    palette.windowText: Theme.panelForeground
+    palette.base: Theme.panelAccent
+    palette.text: Theme.panelForeground
+    palette.button: Theme.panelAccent
+    palette.buttonText: Theme.panelForeground
+    palette.placeholderText: Theme.mutedForeground
+    // Menu border and item states: dark draws the frame, light the hovered row,
+    // midlight the pressed one.
+    palette.dark: Theme.panelBorder
+    palette.mid: Theme.panelMuted
+    palette.midlight: Theme.panelAccent
+    palette.light: Theme.popoverHover
+    // Drawn at 12% and 50% alpha for the menu's drop shadow; appBackground would
+    // make that a white glow in light mode.
+    palette.shadow: "#000000"
+    palette.highlight: Theme.primary
+    palette.highlightedText: Theme.primaryForeground
+    palette.toolTipBase: Theme.panelBackground
+    palette.toolTipText: Theme.panelForeground
+
     readonly property var projectFilter: [qsTr("Projeto do Nardoto Editor (*.drift)")]
     property bool inEditor: false
     property bool forceClose: false
@@ -65,16 +97,81 @@ ApplicationWindow {
         return !EditorState.hasUnsavedChanges
     }
 
+    // The canvas is inferred from the first clip instead of asked about. shouldConfigure...()
+    // returns false the moment projectLayoutChosen is set, so marking it here does not suppress
+    // a dialog — it answers the question the dialog would have asked. Every first-clip route on
+    // the phone goes through this one function, drop-on-timeline included, so they all inherit
+    // the behaviour without touching a single call site.
+    function applyInferredSetup(assetIndex) {
+        // A source-derived canvas needs a probed source. The probe runs off-thread, so an asset
+        // that has not finished one reports 0x0 — and suggestedProjectSetupForAsset() then falls
+        // back to the *project defaults* rather than failing, which markProjectLayoutChosen()
+        // would lock in as though it had come from the clip. MediaImport holds its callback until
+        // the probe lands; this guards the case where it never does, and the audio-first case,
+        // where there are no dimensions to infer from at all.
+        const asset = AssetLibrary.assetAt(assetIndex)
+        if (!asset || !(asset.width > 0) || !(asset.height > 0))
+            return false
+        const setup = EditorState.suggestedProjectSetupForAsset(assetIndex)
+        if (!setup || !setup.width || !setup.height)
+            return false
+        EditorState.setProjectSetup(setup.width, setup.height, setup.fps)
+        EditorState.markProjectLayoutChosen()
+        Toasts.info(qsTr("Canvas set to %1×%2 at %3 fps from your first clip.")
+                    .arg(setup.width).arg(setup.height).arg(setup.fps))
+        return true
+    }
+
     function configureAndAddAsset(assetIndex, runner) {
-        if (!EditorState.shouldConfigureProjectForAsset(assetIndex)) {
-            runner()
-            return
-        }
-        projectSetupDialog.openForAsset(assetIndex, runner)
+        if (EditorState.shouldConfigureProjectForAsset(assetIndex))
+            window.applyInferredSetup(assetIndex)
+        runner()
+    }
+
+    // Run once the canvas sheet is committed with Done, and cleared if it is dismissed instead.
+    property var _afterLayoutChosen: null
+
+    // "New project" is the deliberate route: choose the canvas, then land in an empty editor and
+    // add media from there. Quick edit is the other half of the pair — it asks for a clip and
+    // infers the canvas from it — and between them neither path has to answer a question it does
+    // not care about.
+    function startNewProject() {
+        window.confirmIfDirty(function() {
+            EditorState.newProject()
+            window._afterLayoutChosen = function() { window.showEditor() }
+            layoutSheet.openSheet()
+        })
+    }
+
+    // Home's "Quick edit" tile, and later the share targets: one clip, straight onto a
+    // fresh timeline, in the ordinary editor. Zero dialogs on the way — applyInferredSetup()
+    // calls markProjectLayoutChosen(), which is what shouldConfigureProjectForAsset() reads,
+    // so the canvas question is answered rather than suppressed.
+    //
+    // Takes urls, not an asset index: newProject() swaps the whole document, asset pool
+    // included, so anything imported before it is gone by the time addClipFromAsset() would
+    // run. The import has to happen on the far side of the reset, which means the caller can
+    // only hand over something that survives it. Pass nothing to open the picker.
+    function beginQuickEdit(urls) {
+        window.confirmIfDirty(function() {
+            EditorState.newProject()
+            const landed = function(added) {
+                if (added > 0) {
+                    const index = AssetLibrary.count - added
+                    window.applyInferredSetup(index)
+                    EditorState.addClipFromAsset(index)
+                }
+                window.showEditor()
+            }
+            if (urls && urls.length > 0)
+                MediaImport.importUrls(urls, false, landed)
+            else
+                MediaImport.pickAndImport(landed)
+        })
     }
 
     function openLayoutChooser() {
-        layoutChooserDialog.openFromSettings()
+        layoutSheet.openSheet()
     }
 
     function showHome() {
@@ -109,6 +206,104 @@ ApplicationWindow {
             window.forceClose = true
             window.close()
         }
+    }
+
+    // A share that arrived from another app, cold or warm. Media goes onto a timeline; text is
+    // a link and belongs to the marketplace resolver, which step 6 fills in.
+    function routeIncomingIntent(intent) {
+        if (!intent || !intent.kind)
+            return
+        if (intent.kind === "view") {
+            const url = intent.urls && intent.urls.length > 0 ? String(intent.urls[0]) : ""
+            if (url === "" || Market.handleIncomingUrl(url))
+                return
+            window.confirmIfDirty(function () {
+                EditorState.loadProject(url)
+                Qt.callLater(window.showEditor)
+            })
+            return
+        }
+        if (intent.kind === "sendMedia") {
+            const urls = intent.urls || []
+            if (urls.length === 0)
+                return
+            // Already working on something: adding to it and starting fresh are both reasonable
+            // and only the user knows which, so ask rather than guess.
+            if (window.inEditor) {
+                shareTargetSheet.openFor(urls)
+                return
+            }
+            window.beginQuickEdit(urls)
+            return
+        }
+        if (intent.kind === "sendText")
+            window.routeSharedLink(intent.text || "")
+    }
+
+    // TikTok and Instagram share "Check this out … https://…", so the link is a token inside the
+    // text rather than the whole of it.
+    function routeSharedLink(text) {
+        const match = /https?:\/\/\S+/i.exec(String(text || ""))
+        if (!match) {
+            Toasts.warning(qsTr("That share had no link in it."))
+            return
+        }
+        window.openLinkImport(match[0])
+    }
+
+    // A shared link. The marketplace is what knows how to turn a page URL into media, so with no
+    // marketplace configured there is nothing to degrade to but saying so.
+    //
+    // Handled by the Market destination rather than by a sheet over whatever is on screen: it
+    // ends in a marketplace download and it asks the user to pick a catalog provider, so the
+    // store is where it belongs. Parked when Home is not built yet — a share can cold-start the
+    // app, and this runs from the window's own onCompleted.
+    property string pendingLinkUrl: ""
+
+    function openLinkImport(url) {
+        if (!Market.configured) {
+            Toasts.info(qsTr("Links can’t be opened in this build."))
+            return
+        }
+        window.pendingLinkUrl = url
+        window.deliverPendingLink()
+    }
+
+    // A marketplace download has landed in the current project's bin. That is invisible from the
+    // Market destination — the bin lives in the editor — which is why finishing there looked like
+    // nothing had happened at all. Put the clip on a timeline and show it.
+    //
+    // No newProject() here, unlike the picker path: the asset is already *in* this project, and
+    // replacing the document would throw it away. shouldConfigureProjectForAsset() is what
+    // decides whether this is the first clip and the canvas should follow it.
+    function openDownloadedAsset(assetId) {
+        const index = AssetLibrary.indexOfId(assetId)
+        if (index < 0) {
+            Toasts.warning(qsTr("That download is no longer in your media."))
+            return
+        }
+        // Freshly imported, so unprobed: its size, frame rate and duration are all still zero.
+        MediaImport.awaitProbes([assetId], function () {
+            const at = AssetLibrary.indexOfId(assetId)
+            if (at < 0)
+                return
+            window.configureAndAddAsset(at, function () {
+                EditorState.addClipFromAsset(at)
+                window.showEditor()
+            })
+        })
+    }
+
+    function deliverPendingLink() {
+        if (window.pendingLinkUrl === "")
+            return
+        if (window.inEditor)
+            window.showHome()
+        if (!window.homePage)
+            return
+        const url = window.pendingLinkUrl
+        window.pendingLinkUrl = ""
+        window.homePage.startLinkImport(url)
     }
 
     function openProjectFile() {
@@ -161,11 +356,15 @@ ApplicationWindow {
                 return
             if (window.editorPage && window.editorPage.handleBack())
                 return
+            // Home owns a nav stack of its own now: a secondary destination, and any drill-down
+            // inside it, unwinds before Back means "leave".
+            if (!window.inEditor && window.homePage && window.homePage.handleBack())
+                return
             // A SAF copy is running and AssetLibrary has no cancel entry point, so
             // closing the window kills the worker part-way through a file. Swallow
             // Back — but say so, because a Back key that silently does nothing is
             // its own defect.
-            if (window.homePage && window.homePage.importOwned && AssetLibrary.importing) {
+            if (AssetLibrary.importing) {
                 Toasts.info(qsTr("Import in progress…"))
                 return
             }
@@ -177,10 +376,18 @@ ApplicationWindow {
     // without this Back left them on screen and walked out of the editor behind them.
     // Ordered by how they stack: newest-opened first.
     function closeTopModal() {
-        const modals = [projectSetupDialog, layoutChooserDialog, projectPropertiesDialog,
-                        recoveryDialog, unsavedDialog, addonStartupDialog, addonManagerDialog,
-                        missingAddonsDialog, updateDialog, reverseProgressDialog,
-                        subtitleProgressDialog]
+        // Not in the list below: it is a sheet, so it goes out through dismiss() — close()
+        // would take the panel off screen in the frame Back is pressed instead of sliding it.
+        if (layoutSheet.opened) {
+            layoutSheet.dismiss()
+            return true
+        }
+        // debugInfoDialog before settingsDialog: it opens from inside Settings, so it is the
+        // one on top whenever both are up.
+        const modals = [debugInfoDialogLoader.item, settingsDialogLoader.item, projectPropertiesDialog,
+                        recoveryDialog, unsavedDialog, addonStartupDialog, addonManagerDialogLoader.item,
+                        missingAddonsDialogLoader.item, updateDialogLoader.item,
+                        reverseProgressDialogLoader.item, subtitleProgressDialogLoader.item]
         for (var i = 0; i < modals.length; ++i) {
             if (modals[i] && modals[i].visible) {
                 // The recovery prompt is the one modal with no dismissal: close() skips
@@ -192,8 +399,8 @@ ApplicationWindow {
                 // Same reasoning, different cause: these three cancel the job they
                 // are reporting on when they close, and Back is far too easy to
                 // hit for that. The dialog's own Cancel button stays the way out.
-                if (modals[i] === reverseProgressDialog
-                        || modals[i] === subtitleProgressDialog
+                if (modals[i] === reverseProgressDialogLoader.item
+                        || modals[i] === subtitleProgressDialogLoader.item
                         || modals[i] === packageProgressDialog)
                     return true
                 modals[i].close()
@@ -231,12 +438,81 @@ ApplicationWindow {
         return false
     }
 
-    ProjectSetupDialog { id: projectSetupDialog }
-    LanguageChooserDialog {
-        id: languageChooserDialog
-        onClosed: window.continueStartupAfterLanguage()
+    LazyLoader {
+        id: languageChooserDialogLoader
+        sourceComponent: Component {
+            LanguageChooserDialog {
+                onClosed: window.continueStartupAfterLanguage()
+            }
+        }
     }
-    LayoutChooserDialog { id: layoutChooserDialog }
+    // The phone view over LayoutPresets. Hosted here rather than in the editor because
+    // Settings → Video reaches it through Window.window.openLayoutChooser() too.
+    // Every marketplace download, whichever surface started it, gets a durable copy.
+    //
+    // Without this a download lives only in AppDataLocation — wiped by an uninstall or a "clear
+    // data", and reachable from no file manager or gallery. The user paid quota for it and could
+    // lose it having never seen where it went. The copy is a second pass over the bytes, which is
+    // why it runs off the GUI thread and why nothing waits on it: the import has already happened
+    // and the clip is usable meanwhile.
+    Connections {
+        target: Market
+        function onDownloadImported(itemId, name) {
+            const job = Market.downloadInfo(itemId)
+            const path = job && job.filePath ? String(job.filePath) : ""
+            // A download the user steered to their own folder is already somewhere they chose.
+            if (path === "" || (job.destinationDir && String(job.destinationDir).length > 0))
+                return
+            EditorState.saveToGallery(path, name)
+        }
+    }
+
+    Connections {
+        target: EditorState
+        function onSavedToGallery(displayName, ok, location, error) {
+            if (ok)
+                Toasts.success(qsTr("Saved to %1").arg(location))
+            else if (error.length > 0)
+                Toasts.warning(error)
+        }
+    }
+
+    // Warm start: a share that landed while Drift was already running.
+    Connections {
+        target: FileDialogs
+        function onIncomingIntent(intent) {
+            if (intent && intent.kind !== "view")
+                window.routeIncomingIntent(intent)
+        }
+    }
+
+    AndroidShareTargetSheet {
+        id: shareTargetSheet
+        onAddToProject: (urls) => MediaImport.importUrls(urls, false, function (added) {
+            if (added > 0)
+                EditorState.addClipFromAsset(AssetLibrary.count - added)
+        })
+        onStartQuickEdit: (urls) => window.beginQuickEdit(urls)
+    }
+
+    AndroidLayoutSheet {
+        id: layoutSheet
+        onApplied: {
+            const next = window._afterLayoutChosen
+            window._afterLayoutChosen = null
+            if (next)
+                next()
+        }
+        // Dismissed rather than committed. The project has already been reset by then, so this
+        // leaves the user on Home with an empty project rather than pushing them into an editor
+        // for a canvas they declined to choose.
+        onClosed: window._afterLayoutChosen = null
+    }
+
+    // Read by the editor page: it binds the preview down by this so a sheet that keeps the
+    // editor live letterboxes the frame instead of cutting it in half.
+    readonly property real nonBlockingSheetHeight:
+        (layoutSheet.opened && !layoutSheet.blocking) ? layoutSheet.panelHeight : 0
 
     // Desktop reaches this from EditorHeader, which Android replaces with AndroidTopBar;
     // hosting it here is what gives that bar's overflow something to open.
@@ -299,39 +575,46 @@ ApplicationWindow {
         onRejected: window._pendingAfterUnsaved = null
     }
 
-    AddonManagerDialog { id: addonManagerDialog }
+    LazyLoader { id: addonManagerDialogLoader; sourceComponent: Component { AddonManagerDialog { } } }
     AddonStartupDialog { id: addonStartupDialog }
-    MissingAddonsDialog { id: missingAddonsDialog }
-    UpdateDialog { id: updateDialog }
-    DebugInfoDialog { id: debugInfoDialog }
-    SubtitleProgressDialog { id: subtitleProgressDialog }
-    ReverseProgressDialog { id: reverseProgressDialog }
+    LazyLoader { id: missingAddonsDialogLoader; sourceComponent: Component { MissingAddonsDialog { } } }
+    LazyLoader { id: updateDialogLoader; sourceComponent: Component { UpdateDialog { } } }
+    // Kept after its first close: it holds the last benchmark result.
+    LazyLoader { id: debugInfoDialogLoader; keepLoaded: true; sourceComponent: Component { DebugInfoDialog { } } }
+
+    LazyLoader { id: settingsDialogLoader; sourceComponent: Component { SettingsDialog { } } }
+    LazyLoader { id: subtitleProgressDialogLoader; sourceComponent: Component { SubtitleProgressDialog { } } }
+    LazyLoader { id: reverseProgressDialogLoader; sourceComponent: Component { ReverseProgressDialog { } } }
 
     // Long-running clip tools. These are top-level Windows on desktop; on Android the
     // platform gives each one the whole screen, so they read as full-screen pages that
     // the system Back key dismisses (see the Back shortcut above).
-    SegmentationWindow { id: segmentationWindow }
-    DenoiseWindow { id: denoiseWindow }
-    SpeedCurveWindow { id: speedCurveWindow }
-    FadeCurveWindow { id: fadeCurveWindow }
-    MulticamWindow { id: multicamWindow }
+    LazyLoader { id: segmentationWindowLoader; sourceComponent: Component { SegmentationWindow { } } }
+    LazyLoader { id: denoiseWindowLoader; sourceComponent: Component { DenoiseWindow { } } }
+    LazyLoader { id: speedCurveWindowLoader; sourceComponent: Component { SpeedCurveWindow { } } }
+    LazyLoader { id: fadeCurveWindowLoader; sourceComponent: Component { FadeCurveWindow { } } }
+    LazyLoader { id: multicamWindowLoader; sourceComponent: Component { MulticamWindow { } } }
 
     // Every inspector reaches these through Window.window.<name>() — the same contract
     // Main.qml offers on desktop. A missing one is a runtime TypeError, not a dead button.
     function openSegmentation(track, clip, startSeconds, durationSeconds) {
-        segmentationWindow.openFor(track, clip, startSeconds, durationSeconds)
+        segmentationWindowLoader.ensure().openFor(track, clip, startSeconds, durationSeconds)
     }
 
     function openDenoise(track, clip, durationSeconds) {
-        denoiseWindow.openFor(track, clip, durationSeconds)
+        denoiseWindowLoader.ensure().openFor(track, clip, durationSeconds)
     }
 
     function openSpeedCurve(track, clip) {
-        speedCurveWindow.openFor(track, clip)
+        speedCurveWindowLoader.ensure().openFor(track, clip)
     }
 
     function openFadeCurve(track, clip) {
-        fadeCurveWindow.openFor(track, clip)
+        fadeCurveWindowLoader.ensure().openFor(track, clip)
+    }
+
+    function openTransitionCurve(track, transitionId) {
+        fadeCurveWindowLoader.ensure().openForTransition(track, transitionId)
     }
 
     // Preview-and-edit is its own screen, not one of the Windows above: a secondary Window gets
@@ -355,14 +638,20 @@ ApplicationWindow {
     }
 
     function openMulticam() {
-        multicamWindow.openSession()
+        multicamWindowLoader.ensure().openSession()
+    }
+
+    // Opened from the overflow menu, which used to switch the asset sheet to a
+    // settings tab.
+    function openSettings() {
+        settingsDialogLoader.ensure().open()
     }
 
     function openAddonManager(kind) {
         if (kind === undefined)
-            addonManagerDialog.open()
+            addonManagerDialogLoader.ensure().open()
         else
-            addonManagerDialog.openForKind(kind)
+            addonManagerDialogLoader.ensure().openForKind(kind)
     }
 
     function openExtras() {
@@ -372,11 +661,11 @@ ApplicationWindow {
     }
 
     function openUpdateDialog() {
-        updateDialog.open()
+        updateDialogLoader.ensure().open()
     }
 
     function openDebugInfo() {
-        debugInfoDialog.open()
+        debugInfoDialogLoader.ensure().open()
     }
 
     readonly property alias addonAttentionNeeded: addonStartupDialog.needsAttention
@@ -387,22 +676,22 @@ ApplicationWindow {
 
     // True while any of the full-screen clip tools owns the display, so the editor's
     // Back handling defers to them instead of popping the stack behind them.
-    readonly property bool toolWindowOpen: segmentationWindow.visible || denoiseWindow.visible
-                                           || speedCurveWindow.visible || fadeCurveWindow.visible
-                                           || multicamWindow.visible
+    readonly property bool toolWindowOpen: segmentationWindowLoader.shown || denoiseWindowLoader.shown
+                                           || speedCurveWindowLoader.shown || fadeCurveWindowLoader.shown
+                                           || multicamWindowLoader.shown
                                            || window.mediaPreviewPage !== null
 
     function closeTopToolWindow() {
-        if (segmentationWindow.visible)
-            segmentationWindow.close()
-        else if (denoiseWindow.visible)
-            denoiseWindow.close()
-        else if (speedCurveWindow.visible)
-            speedCurveWindow.close()
-        else if (fadeCurveWindow.visible)
-            fadeCurveWindow.close()
-        else if (multicamWindow.visible)
-            multicamWindow.close()
+        if (segmentationWindowLoader.shown)
+            segmentationWindowLoader.item.close()
+        else if (denoiseWindowLoader.shown)
+            denoiseWindowLoader.item.close()
+        else if (speedCurveWindowLoader.shown)
+            speedCurveWindowLoader.item.close()
+        else if (fadeCurveWindowLoader.shown)
+            fadeCurveWindowLoader.item.close()
+        else if (multicamWindowLoader.shown)
+            multicamWindowLoader.item.close()
         else if (window.mediaPreviewPage)
             window.mediaPreviewPage.close()
     }
@@ -415,7 +704,7 @@ ApplicationWindow {
         onTriggered: {
             // Opting in to reopening the last project already restores the autosave, so
             // asking about it as well is a question the user has answered once already.
-            if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+            if (EditorState.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
                 return
             if (!EditorState.recoveryAvailable || EditorState.reopenLastProject) {
                 stop()
@@ -430,8 +719,12 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        Theme.windowWidth = window.width
+        // Independent of the language/recovery/launch-intent branching below — it
+        // neither gates nor is gated by any of it.
+        EditorState.applyMcpStartOnLaunch()
         if (EditorState.needsUiLanguagePrompt) {
-            languageChooserDialog.openChooser()
+            languageChooserDialogLoader.ensure().openChooser()
             return
         }
         window.continueStartupAfterLanguage()
@@ -445,8 +738,14 @@ ApplicationWindow {
         // string — so `launched !== ""` was true even for an empty one. Every cold start then
         // tried to load an empty URL, which failed with "That project location isn't valid" and
         // left the user in an empty editor instead of on the home screen.
-        const launched = String(FileDialogs.takeLaunchUrl())
-        if (launched !== "") {
+        const intent = FileDialogs.takeLaunchIntent()
+        if (intent && intent.kind && intent.kind !== "view") {
+            window.routeIncomingIntent(intent)
+            return
+        }
+        const launched = intent && intent.urls && intent.urls.length > 0
+                         ? String(intent.urls[0]) : ""
+        if (launched !== "" && !Market.handleIncomingUrl(launched)) {
             // Unless the previous session left a snapshot: loading the launched project
             // deletes it unasked, so park the URL and let the recovery prompt run first.
             if (EditorState.recoveryAvailable && !EditorState.reopenLastProject) {
@@ -475,7 +774,7 @@ ApplicationWindow {
     Connections {
         target: EditorState
         function onRecoveryChanged() {
-            if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+            if (EditorState.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
                 return
             if (EditorState.reopenLastProject)
                 return
@@ -483,13 +782,25 @@ ApplicationWindow {
                 recoveryOpenTimer.start()
         }
         function onOpenSegmentationWindowRequested(track, clip, startSeconds, durationSeconds) {
-            segmentationWindow.openFor(track, clip, startSeconds, durationSeconds, true)
+            segmentationWindowLoader.ensure().openFor(track, clip, startSeconds, durationSeconds, true)
         }
         function onOpenMulticamWindowRequested() {
-            multicamWindow.openSession()
+            multicamWindowLoader.ensure().openSession()
         }
         function onMissingAddons(addons) {
-            missingAddonsDialog.openFor(addons)
+            missingAddonsDialogLoader.ensure().openFor(addons)
+        }
+        // These two dialogs open themselves from the same signals, but only once they exist.
+        function onSubtitleGeneratingChanged() {
+            if (EditorState.subtitleGenerating)
+                subtitleProgressDialogLoader.ensure().open()
+        }
+        function onReverseConfirmRequested(trackIndex, clipIndex, seconds) {
+            const dialog = reverseProgressDialogLoader.ensure()
+            dialog.pendingTrack = trackIndex
+            dialog.pendingClip = clipIndex
+            dialog.pendingSeconds = seconds
+            dialog.open()
         }
         function onExportFinished(success) {
             if (success) {
@@ -555,6 +866,8 @@ ApplicationWindow {
     Connections {
         target: FileDialogs
         function onLaunchUrlReceived(url) {
+            if (Market.handleIncomingUrl(url))
+                return
             if (recoveryDialog.visible) {
                 window._pendingLaunchUrl = url
                 return
@@ -579,7 +892,8 @@ ApplicationWindow {
             // The two audition players are separate transports with their own audio sinks and
             // decode timers; pausing only the main one left them playing to nobody.
             EditorState.pauseSpeedCurvePreview()
-            denoiseWindow.stopPlayback()
+            if (denoiseWindowLoader.item)
+                denoiseWindowLoader.item.stopPlayback()
             // Losing the foreground is the last moment guaranteed to run: the OS can reclaim the
             // process from here without another callback, and aboutToQuit does not fire when it does.
             EditorState.flushRecoverySnapshot()
@@ -612,6 +926,24 @@ ApplicationWindow {
             if (reason === "Cancelled")
                 return
             Toasts.error(qsTr("Couldn’t install “%1”: %2").arg(id).arg(reason))
+        }
+    }
+
+    Connections {
+        target: Market
+        function onAuthFinished(ok, message) {
+            if (ok)
+                Toasts.success(message)
+            else
+                Toasts.error(message)
+        }
+        function onDownloadImported(itemId, name) {
+            Toasts.success(name.length > 0
+                           ? qsTr("Imported “%1”.").arg(name)
+                           : qsTr("Imported from the marketplace."))
+        }
+        function onDownloadFailed(itemId, code, message) {
+            Toasts.error(message)
         }
     }
 
@@ -678,9 +1010,16 @@ ApplicationWindow {
     Component {
         id: homeComponent
         AndroidHome {
-            Component.onCompleted: window.homePage = this
+            // Also flushes a link shared into a cold start: openLinkImport() can run from the
+            // window's onCompleted, before this page exists to route it to.
+            Component.onCompleted: {
+                window.homePage = this
+                window.deliverPendingLink()
+            }
             Component.onDestruction: if (window.homePage === this) window.homePage = null
             onEnterEditor: window.showEditor()
+            onNewProjectRequested: window.startNewProject()
+            onQuickEditRequested: window.beginQuickEdit(null)
             onOpenProjectRequested: window.openProjectFile()
             onOpenRecentRequested: (path) => window.openRecent(path)
         }
@@ -704,11 +1043,6 @@ ApplicationWindow {
             Component.onCompleted: window.editorPage = this
             Component.onDestruction: if (window.editorPage === this) window.editorPage = null
             onBackRequested: window.goBack()
-            onGoHomeRequested: {
-                window.inEditor = false
-                if (stack.depth > 1)
-                    stack.pop()
-            }
         }
     }
 

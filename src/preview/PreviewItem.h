@@ -3,6 +3,7 @@
 #include <QImage>
 #include <QPointer>
 #include <QQuickItem>
+#include <QQuickWindow>
 #include <QSize>
 
 class PlaybackEngine;
@@ -25,6 +26,7 @@ class PreviewItem : public QQuickItem
 
 public:
     explicit PreviewItem(QQuickItem *parent = nullptr);
+    ~PreviewItem() override;
 
     PlaybackEngine *playback() const { return m_playback; }
     void setPlayback(PlaybackEngine *engine);
@@ -47,8 +49,21 @@ protected:
 
 private:
     void pullFrame();
+    // (Re)binds the display-cadence signals of whatever window this item is in to the engine,
+    // and reports that screen's refresh rate. Both halves have to be re-done on every window
+    // and screen change, which is why they live together here.
+    void bindDisplayCadence();
+    void reportRefreshRate();
 
     QPointer<PlaybackEngine> m_playback;
+    // Held so the connections can be dropped when the item moves to another window; the
+    // window itself may be gone by then, so the QMetaObject::Connection is what we keep
+    // rather than a pointer to disconnect from.
+    QMetaObject::Connection m_afterAnimatingConn;
+    QMetaObject::Connection m_frameSwappedConn;
+    QMetaObject::Connection m_screenChangedConn;
+    QMetaObject::Connection m_refreshRateConn;
+    QPointer<QQuickWindow> m_cadenceWindow;
     int m_textureId = 0;
     QSize m_textureSize;
     QImage m_image;

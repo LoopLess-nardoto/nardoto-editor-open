@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Window
 import Drift
 import ".."
 
@@ -68,7 +69,7 @@ Item {
         if (transitionDurationField && !transitionDurationField.activeFocus)
             transitionDurationField.value = root.activeTransition.duration || 0.5
         if (transitionKindBox) {
-            const kinds = EditorState.transitionKinds()
+            const kinds = EditorState.transitionKindsForTrack(root.transitionEditTrack)
             const active = root.activeTransition.kind || "crossfade"
             let idx = 0
             for (let i = 0; i < kinds.length; ++i) {
@@ -97,7 +98,7 @@ Item {
                     root.transitionEditTrack, transitionId, v)
         }
         if (transitionKindBox && transitionKindBox.currentIndex >= 0) {
-            const kinds = EditorState.transitionKinds()
+            const kinds = EditorState.transitionKindsForTrack(root.transitionEditTrack)
             const item = kinds[transitionKindBox.currentIndex]
             if (item && item.kind !== (root.activeTransition.kind || "crossfade"))
                 EditorState.setTransitionKind(
@@ -173,9 +174,16 @@ Item {
             Text {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: root.activeTransition.overlapping
-                      ? qsTr("Overlap transition. Drag another kind from Transitions to replace it.")
-                      : qsTr("Transition to the next clip. Move across the cut to preview it.")
+                text: {
+                    const t = root.activeTransition
+                    let line = t.overlapping
+                        ? qsTr("Overlap transition. Drag another kind from Transitions to replace it.")
+                        : qsTr("Transition to the next clip. Move across the cut to preview it.")
+                    const h = t.handles || {}
+                    if (!t.overlapping && (h.out === false || h.in === false))
+                        line += " " + qsTr("One side has no media past the cut, so its sound fades through silence instead of crossfading.")
+                    return line
+                }
                 color: Theme.mutedForeground
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
@@ -195,7 +203,7 @@ Item {
                     width: parent.width
                     textRole: "label"
                     valueRole: "kind"
-                    model: EditorState.transitionKinds()
+                    model: EditorState.transitionKindsForTrack(root.transitionEditTrack)
                     onActivated: transitionKindBox.commitTransitionKind()
                     onCurrentIndexChanged: {
                         if (root.suppressTransitionKindUpdate || !root.hasActiveTransition)
@@ -240,11 +248,45 @@ Item {
                 }
             }
 
+            // Remaps progress across the transition window. "Custom" hands off to the same
+            // curve editor the clip fades use, scoped to this transition.
+            Column {
+                width: parent.width
+                spacing: 4
+                Text {
+                    text: qsTr("Curve")
+                    color: Theme.mutedForeground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                }
+                ThemedComboBox {
+                    id: transitionCurveBox
+                    width: parent.width
+                    readonly property var curveIds: ["linear", "smooth", "equalPower", "custom", "bezier"]
+                    model: [qsTr("Linear"), qsTr("Smooth"), qsTr("Natural"), qsTr("Custom"), qsTr("Bezier")]
+                    currentIndex: Math.max(0, curveIds.indexOf(
+                                               root.activeTransition.easingCurve || "linear"))
+                    onActivated: (index) => {
+                        if (!root.hasActiveTransition)
+                            return
+                        const id = transitionCurveBox.curveIds[index]
+                        if (id === "custom" || id === "bezier") {
+                            root.Window.window.openTransitionCurve(
+                                        root.transitionEditTrack, root.activeTransition.id)
+                            return
+                        }
+                        EditorState.setTransitionEasing(
+                                    root.transitionEditTrack, root.activeTransition.id, id)
+                    }
+                }
+            }
+
             // Shader parameters declared by the active transition package.
             // Integer model: preview ticks replace params as a new list; a count
             // model keeps the pressed slider alive across those updates.
+            // An audio track only hears the transition, so its picture parameters don't apply.
             Repeater {
-                model: (root.activeTransition.params || []).length
+                model: root.activeTransition.audioOnly ? 0 : (root.activeTransition.params || []).length
                 delegate: Column {
                     id: trParamRow
                     required property int index
@@ -288,6 +330,7 @@ Item {
 
                     ThemedSlider {
                         id: trParamSlider
+                        lockWhilePlaying: true
                         label: trParamRow.paramData.label
                         visible: !trParamRow.paramData.isBoolean
                         width: parent.width

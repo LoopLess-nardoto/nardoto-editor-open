@@ -14,6 +14,11 @@ Item {
 
     property real pxPerSecond: 50
     property real contentX: 0
+    // The canvases below cover the viewport plus a chunk either side, parked on a chunk boundary,
+    // so scrolling (and playback's auto-scroll) only repaints them when a boundary is crossed
+    // rather than on every frame.
+    readonly property real paintChunk: 256
+    readonly property real paintOriginX: Math.floor(contentX / paintChunk) * paintChunk - paintChunk
     property real contentWidth: 800
     property real labelsWidth: Theme.trackLabelsWidth
     property string propertiesTab: ""
@@ -53,8 +58,26 @@ Item {
         case "width": return qsTr("Width")
         case "height": return qsTr("Height")
         case "rotation": return qsTr("Rotation")
+        case "rotationX": return qsTr("Tilt X")
+        case "rotationY": return qsTr("Tilt Y")
+        case "z": return qsTr("Depth")
+        case "perspective": return qsTr("Perspective")
         case "opacity": return qsTr("Opacity")
         case "volume": return qsTr("Volume")
+        case "mask.x": return qsTr("Mask X")
+        case "mask.y": return qsTr("Mask Y")
+        case "mask.w": return qsTr("Mask width")
+        case "mask.h": return qsTr("Mask height")
+        case "mask.rotation": return qsTr("Mask rotation")
+        case "mask.feather": return qsTr("Mask feather")
+        }
+        // Text and shape properties are named by the engine ("Shadow · Blur"): the layer stack
+        // is per clip, so no static table could spell them.
+        if (id.substring(0, 5) === "text." || id.substring(0, 6) === "shape.") {
+            const label = EditorState.keyframePropertyLabel(
+                            EditorState.selectedTrack, EditorState.selectedClip, id)
+            if (label.length > 0)
+                return label
         }
         const fx = effectParam(id)
         if (fx)
@@ -68,8 +91,18 @@ Item {
         case "width": return "W"
         case "height": return "H"
         case "rotation": return "°"
+        case "rotationX": return "X°"
+        case "rotationY": return "Y°"
+        case "z": return "Z"
+        case "perspective": return "Per"
         case "opacity": return "Op"
         case "volume": return "Vol"
+        case "mask.x": return "MX"
+        case "mask.y": return "MY"
+        case "mask.w": return "MW"
+        case "mask.h": return "MH"
+        case "mask.rotation": return "M°"
+        case "mask.feather": return "MFe"
         }
         const fx = effectParam(id)
         if (fx)
@@ -84,6 +117,10 @@ Item {
             return clip.kind === "audio" || clip.kind === "video"
         if (id.substring(0, 3) === "fx.")
             return clip.kind !== "audio" && effectParam(id) !== null
+        // A mask lives on the clip's lane, so the strip offers it for the same clips the Masks
+        // tab does. There is no per-id validation to do: the id set is fixed and closed.
+        if (id.substring(0, 5) === "mask.")
+            return clip.kind !== "audio"
         return clip.kind !== "audio"
     }
 
@@ -94,8 +131,12 @@ Item {
             return { min: 0, max: 1 }
         if (id === "volume")
             return { min: 0, max: 2 }
-        if (id === "rotation")
+        if (id === "rotation" || id === "mask.rotation")
             return { min: -180, max: 180 }
+        // Mask geometry is normalized to the clip frame, so a fixed 0..1 axis is meaningful and
+        // keeps the four curves comparable. Feather is in px and auto-fits like anything else.
+        if (id === "mask.x" || id === "mask.y" || id === "mask.w" || id === "mask.h")
+            return { min: 0, max: 1 }
         const fx = effectParam(id)
         if (fx)
             return { min: fx.param.min, max: fx.param.max }
@@ -141,7 +182,7 @@ Item {
     // [{ prop, label, color, points, enabled, shown, valueMin, valueMax }, ...]
     readonly property var allSeries: {
         void EditorState.selectedClipData
-        void EditorState.tracks
+        void EditorState.tracksRevision
         void EditorState.keyframeGraphHiddenProperties
         if (!hasClip)
             return []
@@ -285,8 +326,14 @@ Item {
     height: visible ? laneHeight : 0
     // Open whenever the clip has an animation to show, even if every curve is currently folded
     // away — otherwise hiding the last one would take the chips with it.
+    // "audio" belongs here for the same reason the rest do: volume is a keyframeable property
+    // (supportsProperty allows it for audio and video clips) and the Audio tab is where it is
+    // edited, so leaving the tab out hid the lane at exactly the moment it was wanted. The
+    // curve was still reachable by switching to Transform, which made it look inconsistent
+    // rather than missing.
     visible: (propertiesTab === "transform" || propertiesTab === "effects"
-              || propertiesTab === "stabilize")
+              || propertiesTab === "stabilize" || propertiesTab === "masks"
+              || propertiesTab === "audio")
              && hasClip && clip && allSeries.length > 0
 
     // Curve editing focuses one series: it gets tangent handles and owns the value axis,
@@ -534,8 +581,8 @@ Item {
                     Canvas {
                         id: beatCanvas
                         // Viewport-sized, not content-sized — see curveCanvas.
-                        x: root.contentX
-                        width: viewport.width
+                        x: root.paintOriginX
+                        width: viewport.width + 2 * root.paintChunk
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         z: 0
@@ -550,7 +597,7 @@ Item {
                             // Canvas-local x for an absolute timeline position. Rounding happens
                             // after the shift, so a fractional scroll offset cannot push a 1px
                             // tick onto a half-pixel and smear it across two columns.
-                            const localX = t => Math.round(root.xForSeconds(t) - root.contentX)
+                            const localX = t => Math.round(root.xForSeconds(t) - root.paintOriginX)
 
                             if (root.hasGrid) {
                                 const perBar = a.beatsPerBar || 4
@@ -599,7 +646,7 @@ Item {
                             function onHasGridChanged() { beatCanvas.requestPaint() }
                             function onHasOnsetsChanged() { beatCanvas.requestPaint() }
                             function onPxPerSecondChanged() { beatCanvas.requestPaint() }
-                            function onContentXChanged() { beatCanvas.requestPaint() }
+                            function onPaintOriginXChanged() { beatCanvas.requestPaint() }
                         }
                     }
 
@@ -612,8 +659,8 @@ Item {
                         // past GL_MAX_TEXTURE_SIZE to fit — 16384px, which at 40x zoom is barely
                         // 8 seconds of timeline. Past that the curves are drawn correctly and
                         // then downsampled onto the GPU, which is what smeared them.
-                        x: root.contentX
-                        width: viewport.width
+                        x: root.paintOriginX
+                        width: viewport.width + 2 * root.paintChunk
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         onPaint: {
@@ -621,7 +668,7 @@ Item {
                             ctx.clearRect(0, 0, width, height)
                             // Everything below is in absolute timeline coordinates.
                             ctx.save()
-                            ctx.translate(-root.contentX, 0)
+                            ctx.translate(-root.paintOriginX, 0)
                             const spanX0 = root.xForSeconds(root.clipStart)
                             const spanX1 = root.xForSeconds(root.clipStart + root.clipDuration)
 
@@ -714,7 +761,7 @@ Item {
                             target: root
                             function onSeriesChanged() { curveCanvas.requestPaint() }
                             function onPxPerSecondChanged() { curveCanvas.requestPaint() }
-                            function onContentXChanged() { curveCanvas.requestPaint() }
+                            function onPaintOriginXChanged() { curveCanvas.requestPaint() }
                             function onDragSecondsChanged() { curveCanvas.requestPaint() }
                             function onDragValueChanged() { curveCanvas.requestPaint() }
                             function onDragTangentOutDyChanged() { curveCanvas.requestPaint() }
@@ -788,12 +835,14 @@ Item {
                                         root.draggingKey = true
                                         EditorState.beginPreviewDrag(qsTr("Move keyframe"))
                                     } else {
-                                        EditorState.commitPreviewDrag()
-                                        root.draggingKey = false
+                                        // Unfreezing rebuilds the Repeater and destroys this
+                                        // delegate mid-handler, so every reset has to land first.
                                         root.dragProp = ""
                                         root.dragIndex = -1
                                         keyDot.dragDx = 0
                                         keyDot.dragDy = 0
+                                        EditorState.commitPreviewDrag()
+                                        root.draggingKey = false
                                     }
                                 }
                                 onTranslationChanged: {
@@ -899,12 +948,14 @@ Item {
                                             root.draggingKey = true
                                             EditorState.beginPreviewDrag(qsTr("Edit keyframe curve"))
                                         } else {
-                                            EditorState.commitPreviewDrag()
-                                            root.draggingKey = false
+                                            // Same ordering as the key drag: unfreezing destroys
+                                            // this delegate, so reset before it.
                                             root.dragProp = ""
                                             root.dragTangentIndex = -1
                                             tangent.dragDx = 0
                                             tangent.dragDy = 0
+                                            EditorState.commitPreviewDrag()
+                                            root.draggingKey = false
                                         }
                                     }
                                     onTranslationChanged: {

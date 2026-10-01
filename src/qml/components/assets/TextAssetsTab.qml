@@ -43,19 +43,41 @@ Item {
             EditorState.exportUserTextPreset(preset.id, url)
     }
 
-    Flickable {
-        anchors.fill: parent
-        contentWidth: width
-        contentHeight: textColumn.height + Theme.spacing3xl
-        clip: true
-        ScrollBar.vertical: AppScrollBar { }
+    FontMetrics {
+        id: labelMetrics
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontSizeXs
+    }
 
-        Column {
+    // The built-in packs recycle; everything above them (intro, the user's own styles)
+    // rides along as the header. One trailing gap wider than the padded area, so the
+    // cards pack from the left exactly as the old Grid did.
+    GridView {
+        id: packGrid
+        // As many columns as fit at the nominal card size, rounded, with the cards stretched or
+        // squeezed a little to fill the row — a fixed card left a column's worth of empty space.
+        readonly property int columnCount: Math.max(1, Math.round(width / (Theme.assetCardWidth + Theme.assetCardGap)))
+        readonly property real cardSize: Math.floor(width / columnCount) - Theme.assetCardGap
+        x: Theme.pagePadding
+        width: parent.width - Theme.pagePadding * 2 + Theme.assetCardGap
+        height: parent.height
+        bottomMargin: Theme.spacing3xl
+        clip: true
+        reuseItems: true
+        boundsBehavior: Flickable.StopAtBounds
+        acceptedButtons: Theme.touchUi ? Qt.LeftButton : Qt.NoButton
+        ScrollBar.vertical: AppScrollBar { }
+        cellWidth: Math.floor(width / columnCount)
+        cellHeight: Math.round(cardSize * 0.55) + Theme.spacingSm
+                    + Math.ceil(labelMetrics.height) + Theme.assetCardGap
+        model: root.presets
+
+        header: Column {
             id: textColumn
-            x: Theme.pagePadding
-            width: parent.width - Theme.pagePadding * 2
+            width: packGrid.width - Theme.assetCardGap
             spacing: Theme.spacingMd
             topPadding: Theme.pagePadding
+            bottomPadding: Theme.spacingMd
 
             Text {
                 width: parent.width
@@ -106,8 +128,9 @@ Item {
                 id: userGrid
                 width: parent.width
                 visible: root.userPresets.length > 0
-                columns: Math.max(1, Math.floor((width + Theme.assetCardGap)
-                                                / (Theme.assetCardWidth + Theme.assetCardGap)))
+                // Same column count and card size as the pack grid below, so the two line up.
+                columns: packGrid.columnCount
+                readonly property real cardSize: packGrid.cardSize
                 columnSpacing: Theme.assetCardGap
                 rowSpacing: Theme.assetCardGap
 
@@ -116,10 +139,11 @@ Item {
                     delegate: Column {
                         id: userCard
                         required property var modelData
-                        width: Theme.assetCardWidth
+                        width: userGrid.cardSize
                         spacing: Theme.spacingSm
 
-                        scale: userPress.pressed ? 0.97 : (userHover.hovered ? 1.02 : 1.0)
+                        opacity: userDrag.active ? 0.85 : 1
+                        scale: userDrag.active ? 1.04 : userDrag.pressed ? 0.97 : (userDrag.hovered ? 1.02 : 1.0)
                         Behavior on scale {
                             NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
                         }
@@ -128,15 +152,15 @@ Item {
                             width: parent.width
                             height: Math.round(width * 0.55)
                             presetId: userCard.modelData.id
-                            hovered: userHover.hovered
+                            hovered: userDrag.hovered
 
-                            HoverHandler {
-                                id: userHover
-                            }
-
-                            TapHandler {
-                                id: userPress
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
+                            AssetDragSource {
+                                id: userDrag
+                                anchors.fill: parent
+                                kind: "textStyle"
+                                payload: userCard.modelData.id
+                                label: userCard.modelData.label
+                                glyph: Theme.icons.type
                                 onTapped: {
                                     EditorState.addTextClip("", -1, userCard.modelData.id)
                                     root.added()
@@ -152,7 +176,7 @@ Item {
                                 anchors.top: parent.top
                                 anchors.right: parent.right
                                 anchors.margins: 2
-                                visible: userHover.hovered || cardMenu.visible
+                                visible: userDrag.hovered || cardMenu.visible
                                 glyph: Theme.icons.ellipsis
                                 variant: "ghost"
                                 buttonSize: 20
@@ -188,7 +212,7 @@ Item {
                             text: userCard.modelData.label
                             elide: Text.ElideRight
                             horizontalAlignment: Text.AlignHCenter
-                            color: userHover.hovered ? Theme.panelForeground : Theme.mutedForeground
+                            color: userDrag.hovered ? Theme.panelForeground : Theme.mutedForeground
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSizeXs
 
@@ -214,62 +238,51 @@ Item {
                 font.pixelSize: Theme.fontSizeXs
                 font.weight: Font.Medium
             }
+        }
 
-            Grid {
-                id: packGrid
+        delegate: Column {
+            id: packCard
+            required property var modelData
+            width: packGrid.cardSize
+            spacing: Theme.spacingSm
+
+            opacity: packDrag.active ? 0.85 : 1
+            scale: packDrag.active ? 1.04 : packDrag.pressed ? 0.97 : (packDrag.hovered ? 1.02 : 1.0)
+            Behavior on scale {
+                NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
+            }
+
+            TextStylePackThumb {
                 width: parent.width
-                columns: Math.max(1, Math.floor((width + Theme.assetCardGap)
-                                                / (Theme.assetCardWidth + Theme.assetCardGap)))
-                columnSpacing: Theme.assetCardGap
-                rowSpacing: Theme.assetCardGap
+                height: Math.round(width * 0.55)
+                presetId: packCard.modelData.id
+                hovered: packDrag.hovered
 
-                Repeater {
-                    model: root.presets
-                    delegate: Column {
-                        id: packCard
-                        required property var modelData
-                        width: Theme.assetCardWidth
-                        spacing: Theme.spacingSm
-
-                        scale: packPress.pressed ? 0.97 : (packHover.hovered ? 1.02 : 1.0)
-                        Behavior on scale {
-                            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-
-                        TextStylePackThumb {
-                            width: parent.width
-                            height: Math.round(width * 0.55)
-                            presetId: packCard.modelData.id
-                            hovered: packHover.hovered
-
-                            HoverHandler {
-                                id: packHover
-                            }
-
-                            TapHandler {
-                                id: packPress
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
-                                onTapped: {
-                                    EditorState.addTextClip("", -1, packCard.modelData.id)
-                                    root.added()
-                                }
-                            }
-                        }
-
-                        Text {
-                            width: parent.width
-                            text: packCard.modelData.label
-                            elide: Text.ElideRight
-                            horizontalAlignment: Text.AlignHCenter
-                            color: packHover.hovered ? Theme.panelForeground : Theme.mutedForeground
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeXs
-
-                            Behavior on color {
-                                ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                            }
-                        }
+                AssetDragSource {
+                    id: packDrag
+                    anchors.fill: parent
+                    kind: "textStyle"
+                    payload: packCard.modelData.id
+                    label: packCard.modelData.label
+                    glyph: Theme.icons.type
+                    onTapped: {
+                        EditorState.addTextClip("", -1, packCard.modelData.id)
+                        root.added()
                     }
+                }
+            }
+
+            Text {
+                width: parent.width
+                text: packCard.modelData.label
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+                color: packDrag.hovered ? Theme.panelForeground : Theme.mutedForeground
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeXs
+
+                Behavior on color {
+                    ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
                 }
             }
         }

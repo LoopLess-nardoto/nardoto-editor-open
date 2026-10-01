@@ -7,11 +7,43 @@ import "components"
 ApplicationWindow {
     id: window
 
+    // Qt creates some chrome itself — most visibly the Undo/Cut/Copy/Paste menu on every
+    // TextField and TextArea (Basic/TextField.qml declares ContextMenu.menu). Drift styles
+    // none of that, so it fell through to the palette the platform theme supplies and picked
+    // up the desktop's colour scheme: on a KDE session with a custom scheme the editing menu
+    // rendered in that scheme's colours next to Drift's own. Palette propagates down the item
+    // hierarchy, popups included, so setting the roles the Basic style reads brings Qt's own
+    // chrome under Theme — and binding them keeps it following the light/dark toggle.
+    palette.window: Theme.panelBackground
+    palette.windowText: Theme.panelForeground
+    palette.base: Theme.panelAccent
+    palette.text: Theme.panelForeground
+    palette.button: Theme.panelAccent
+    palette.buttonText: Theme.panelForeground
+    palette.placeholderText: Theme.mutedForeground
+    // Menu border and item states: dark draws the frame, light the hovered row,
+    // midlight the pressed one.
+    palette.dark: Theme.panelBorder
+    palette.mid: Theme.panelMuted
+    palette.midlight: Theme.panelAccent
+    palette.light: Theme.popoverHover
+    // Drawn at 12% and 50% alpha for the menu's drop shadow; appBackground would
+    // make that a white glow in light mode.
+    palette.shadow: "#000000"
+    palette.highlight: Theme.primary
+    palette.highlightedText: Theme.primaryForeground
+    palette.toolTipBase: Theme.panelBackground
+    palette.toolTipText: Theme.panelForeground
+
     width: 1280
     height: 800
     // Below this the split minimums cannot all be satisfied and panels overlap.
+    // Left at the expanded-layout floor on purpose. Lowering it is a prerequisite for the
+    // single-pane collapse below 600dp, which is not built yet — until it is, a narrower window
+    // would only let the desktop arrangement be squashed into a size it cannot lay out in.
     minimumWidth: Theme.windowMinimumWidth
     minimumHeight: Theme.windowMinimumHeight
+
     // Shown from Component.onCompleted, once the stored geometry is in place:
     // assigning it to a window that is already up makes it jump across the screen,
     // and a session left maximized would flash at its windowed size first.
@@ -78,7 +110,12 @@ ApplicationWindow {
 
     onXChanged: geometrySettleTimer.restart()
     onYChanged: geometrySettleTimer.restart()
-    onWidthChanged: geometrySettleTimer.restart()
+    onWidthChanged: {
+        // Theme is a singleton and cannot see a window, so the size class it reports has to be
+        // fed from whichever root is live. Screen is the wrong source: it ignores tiling.
+        Theme.windowWidth = width
+        geometrySettleTimer.restart()
+    }
     onHeightChanged: geometrySettleTimer.restart()
 
     function restoreWindowGeometry() {
@@ -248,7 +285,7 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Esc"
-        enabled: window.previewFullscreen
+        enabled: window.previewFullscreen && !window.showStartScreen
         onActivated: window.togglePreviewFullscreen()
     }
 
@@ -277,7 +314,7 @@ ApplicationWindow {
             runner()
             return
         }
-        projectSetupDialog.openForAsset(assetIndex, runner)
+        projectSetupDialogLoader.ensure().openForAsset(assetIndex, runner)
     }
 
     // "Decide later" closes the first-run chooser without settling on a canvas size.
@@ -287,28 +324,37 @@ ApplicationWindow {
     // matching projectLayoutChosen itself.
     property bool layoutPromptDismissed: false
 
+    // True only during the startup window where continueStartupAfterLanguage() has
+    // decided to ask which project to open, rather than settle on one itself.
+    // Cleared for good once that choice is made.
+    property bool showStartScreen: false
+
     // Header Extras icon pulses while true; never auto-opens a dialog.
     readonly property alias addonAttentionNeeded: addonStartupDialog.needsAttention
 
     function promptLanguageChooserIfNeeded() {
         if (!EditorState.needsUiLanguagePrompt)
             return false
-        if (languageChooserDialog.visible)
+        if (languageChooserDialogLoader.shown)
             return true
-        languageChooserDialog.openChooser()
+        languageChooserDialogLoader.ensure().openChooser()
         return true
     }
 
     function promptLayoutChooserIfNeeded() {
-        if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+        if (EditorState.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
             return
         if (EditorState.recoveryAvailable || EditorState.projectLayoutChosen)
             return
         if (window.layoutPromptDismissed)
             return
-        if (layoutChooserDialog.visible || recoveryDialog.visible)
+        // The start screen is its own waiting room: land there and let the user pick
+        // New / Open / a recent project rather than racing them with this dialog too.
+        if (window.showStartScreen)
             return
-        layoutChooserDialog.openChooser()
+        if (layoutChooserDialogLoader.shown || recoveryDialogLoader.shown)
+            return
+        layoutChooserDialogLoader.ensure().openChooser()
     }
 
     // Quiet catalog refresh for the header attention indicator.
@@ -318,54 +364,84 @@ ApplicationWindow {
 
     // Settings / header: reopen platform layout picker anytime.
     function openLayoutChooser() {
-        layoutChooserDialog.openFromSettings()
+        layoutChooserDialogLoader.ensure().openFromSettings()
     }
 
-    ProjectSetupDialog {
-        id: projectSetupDialog
+    LazyLoader {
+        id: projectSetupDialogLoader
+        sourceComponent: Component {
+            ProjectSetupDialog { }
+        }
     }
 
-    LanguageChooserDialog {
-        id: languageChooserDialog
-        // First-launch only. After Continue the language is stored, then the usual
-        // recovery / layout prompts can run.
-        onClosed: window.continueStartupAfterLanguage()
+    LazyLoader {
+        id: languageChooserDialogLoader
+        sourceComponent: Component {
+            LanguageChooserDialog {
+                // First-launch only. After Continue the language is stored, then the usual
+                // recovery / layout prompts can run.
+                onClosed: window.continueStartupAfterLanguage()
+            }
+        }
     }
 
-    LayoutChooserDialog {
-        id: layoutChooserDialog
-        // rejected() fires before closed(), so the flag is already set by the time
-        // callers check it.
-        onFirstRunDismissed: window.layoutPromptDismissed = true
+    LazyLoader {
+        id: layoutChooserDialogLoader
+        sourceComponent: Component {
+            LayoutChooserDialog {
+                // rejected() fires before closed(), so the flag is already set by the time
+                // callers check it.
+                onFirstRunDismissed: window.layoutPromptDismissed = true
+            }
+        }
     }
 
-    RecoveryDialog {
-        id: recoveryDialog
-        onClosed: Qt.callLater(window.promptLayoutChooserIfNeeded)
+    LazyLoader {
+        id: recoveryDialogLoader
+        sourceComponent: Component {
+            RecoveryDialog {
+                onClosed: Qt.callLater(window.promptLayoutChooserIfNeeded)
+            }
+        }
     }
 
-    SubtitleProgressDialog {
-        id: subtitleProgressDialog
+    LazyLoader {
+        id: subtitleProgressDialogLoader
+        sourceComponent: Component {
+            SubtitleProgressDialog { }
+        }
     }
 
-    ReverseProgressDialog {
-        id: reverseProgressDialog
+    LazyLoader {
+        id: reverseProgressDialogLoader
+        sourceComponent: Component {
+            ReverseProgressDialog { }
+        }
     }
 
-    AddonManagerDialog {
-        id: addonManagerDialog
+    LazyLoader {
+        id: addonManagerDialogLoader
+        sourceComponent: Component {
+            AddonManagerDialog { }
+        }
     }
 
     AddonStartupDialog {
         id: addonStartupDialog
     }
 
-    MissingAddonsDialog {
-        id: missingAddonsDialog
+    LazyLoader {
+        id: missingAddonsDialogLoader
+        sourceComponent: Component {
+            MissingAddonsDialog { }
+        }
     }
 
-    UpdateDialog {
-        id: updateDialog
+    LazyLoader {
+        id: updateDialogLoader
+        sourceComponent: Component {
+            UpdateDialog { }
+        }
     }
 
     // Installer downloaded: close through the normal path, so an unsaved project still gets its
@@ -375,80 +451,245 @@ ApplicationWindow {
         function onDownloadChanged() {
             if (!Updates.installerReady)
                 return
-            updateDialog.close()
+            if (updateDialogLoader.item)
+                updateDialogLoader.item.close()
             window.close()
         }
     }
 
-    DebugInfoDialog {
-        id: debugInfoDialog
+    // Kept after its first close: it holds the last benchmark result.
+    LazyLoader {
+        id: debugInfoDialogLoader
+        keepLoaded: true
+        sourceComponent: Component {
+            DebugInfoDialog { }
+        }
     }
 
-    SegmentationWindow {
-        id: segmentationWindow
+    LazyLoader {
+        id: settingsDialogLoader
+        sourceComponent: Component {
+            SettingsDialog { }
+        }
+    }
+
+    LazyLoader {
+        id: pasteAttributesDialogLoader
+        sourceComponent: Component {
+            PasteAttributesDialog { }
+        }
+    }
+
+    LazyLoader {
+        id: segmentationWindowLoader
+        sourceComponent: Component {
+            SegmentationWindow { }
+        }
     }
 
     Connections {
         target: EditorState
         function onOpenSegmentationWindowRequested(track, clip, startSeconds, durationSeconds) {
-            segmentationWindow.openFor(track, clip, startSeconds, durationSeconds, true)
+            segmentationWindowLoader.ensure().openFor(track, clip, startSeconds, durationSeconds, true)
+        }
+        function onOpenPasteAttributesRequested() {
+            window.openPasteAttributes()
+        }
+        // These two dialogs open themselves from the same signals, but only once they exist.
+        function onSubtitleGeneratingChanged() {
+            if (EditorState.subtitleGenerating)
+                subtitleProgressDialogLoader.ensure().open()
+        }
+        function onReverseConfirmRequested(trackIndex, clipIndex, seconds) {
+            const dialog = reverseProgressDialogLoader.ensure()
+            dialog.pendingTrack = trackIndex
+            dialog.pendingClip = clipIndex
+            dialog.pendingSeconds = seconds
+            dialog.open()
         }
     }
 
     // Another view of the same timeline rather than an editor of its own — see MulticamWindow.
-    MulticamWindow {
-        id: multicamWindow
+    LazyLoader {
+        id: multicamWindowLoader
+        sourceComponent: Component {
+            MulticamWindow { }
+        }
     }
 
-    DenoiseWindow {
-        id: denoiseWindow
+    LazyLoader {
+        id: downloadsWindowLoader
+        sourceComponent: Component {
+            DownloadsWindow { }
+        }
     }
 
-    SpeedCurveWindow {
-        id: speedCurveWindow
+    // Shows the downloads window the first time a download starts, then stays out of the way:
+    // reopening on every later job would yank focus mid-edit for something the header
+    // badge already reports.
+    property bool downloadsWindowShownOnce: false
+
+    Connections {
+        target: Market
+        function onDownloadStarted(itemId) {
+            if (window.downloadsWindowShownOnce)
+                return
+            window.downloadsWindowShownOnce = true
+            downloadsWindowLoader.ensure().show()
+        }
     }
 
-    FadeCurveWindow {
-        id: fadeCurveWindow
+    LazyLoader {
+        id: denoiseWindowLoader
+        sourceComponent: Component {
+            DenoiseWindow { }
+        }
     }
 
-    MediaPreviewWindow {
-        id: mediaPreviewWindow
+    LazyLoader {
+        id: speedCurveWindowLoader
+        sourceComponent: Component {
+            SpeedCurveWindow { }
+        }
+    }
+
+    LazyLoader {
+        id: fadeCurveWindowLoader
+        sourceComponent: Component {
+            FadeCurveWindow { }
+        }
+    }
+
+    LazyLoader {
+        id: mediaPreviewWindowLoader
+        sourceComponent: Component {
+            MediaPreviewWindow { }
+        }
     }
 
     // Opened from the clip inspector; a window rather than a dialog so the timeline stays visible.
     function openSegmentation(track, clip, startSeconds, durationSeconds) {
-        segmentationWindow.openFor(track, clip, startSeconds, durationSeconds)
+        segmentationWindowLoader.ensure().openFor(track, clip, startSeconds, durationSeconds)
     }
 
     function openDenoise(track, clip, durationSeconds) {
-        denoiseWindow.openFor(track, clip, durationSeconds)
+        denoiseWindowLoader.ensure().openFor(track, clip, durationSeconds)
     }
 
     function openSpeedCurve(track, clip) {
-        speedCurveWindow.openFor(track, clip)
+        speedCurveWindowLoader.ensure().openFor(track, clip)
     }
 
     function openFadeCurve(track, clip) {
-        fadeCurveWindow.openFor(track, clip)
+        fadeCurveWindowLoader.ensure().openFor(track, clip)
+    }
+
+    function openTransitionCurve(track, transitionId) {
+        fadeCurveWindowLoader.ensure().openForTransition(track, transitionId)
     }
 
     function openMediaPreview(assetIndex) {
-        mediaPreviewWindow.openFor(assetIndex)
+        mediaPreviewWindowLoader.ensure().openFor(assetIndex)
+    }
+
+    function openSourceFrame(track, clip) {
+        mediaPreviewWindowLoader.ensure().openClip(track, clip)
     }
 
     // Opened from the header and from the "multicam" shortcut. Unlike the windows above it is
     // not bound to one clip, so it survives any edit and only closes when the document does.
     function openMulticam() {
-        multicamWindow.openSession()
+        multicamWindowLoader.ensure().openSession()
+    }
+
+    // Opened from the header's Settings menu. Every preference lives here now; the
+    // assets rail no longer carries a settings tab.
+    function openSettings() {
+        settingsDialogLoader.ensure().open()
+    }
+
+    // ── Project lifecycle: New / Open / Open recent / Close ─────────────────────
+    // The single gate for every entry point that starts, opens, or discards a
+    // project — Ctrl+N/Ctrl+O, the header's Projects menu, the start screen's own
+    // tiles, and an externally requested open (double-click a .drift, launch args)
+    // all call these rather than keeping their own copy of the confirm-if-dirty
+    // check and the showStartScreen bookkeeping.
+
+    // Whether a load is in flight lives on EditorState (AppController::projectLoadPending),
+    // not as a flag one of these functions sets — loadProject()/loadProjectJson() can be
+    // reached from C++ too (consumeStartupProject, restoreLastSessionIfEnabled), and a
+    // QML-only flag would miss those, letting Close/New race a startup load that is still
+    // unpacking a bundle in the background.
+    //
+    // A second New/Open/Close while a load is still in flight has nowhere good to go:
+    // loadProject()'s own generation counter guards against a *stale* extraction landing
+    // on top of a *newer* one, but nothing invalidates one that is discarded by New/Close.
+    // Simplest correct fix: only one project action in flight at a time.
+    function rejectIfProjectOpenPending() {
+        if (!EditorState.projectLoadPending)
+            return false
+        Toasts.info(qsTr("Still opening a project — try again in a moment."))
+        return true
+    }
+
+    function requestNewProject() {
+        if (window.rejectIfProjectOpenPending())
+            return
+        editorHeader.confirmIfDirty(function () {
+            EditorState.newProject()
+            window.showStartScreen = false
+            window.promptLayoutChooserIfNeeded()
+        })
+    }
+
+    function requestOpenProjectDialog() {
+        if (window.rejectIfProjectOpenPending())
+            return
+        editorHeader.confirmIfDirty(function () {
+            var url = FileDialogs.openFile(qsTr("Open Project"), editorHeader.projectFilter,
+                                           editorHeader.projectMimeTypes)
+            if (url == "")
+                return
+            EditorState.loadProject(url)
+        })
+    }
+
+    function requestOpenRecentProject(path) {
+        if (window.rejectIfProjectOpenPending())
+            return
+        if (!path || path.length === 0)
+            return
+        editorHeader.confirmIfDirty(function () {
+            EditorState.openRecentProject(path)
+        })
+    }
+
+    // Header's "Close project". Confirms like every action above, then discards the
+    // document the same way New Project does — just landing on the start screen
+    // afterwards instead of an empty one.
+    function requestCloseProject() {
+        if (window.rejectIfProjectOpenPending())
+            return
+        editorHeader.confirmIfDirty(function () {
+            // Set before newProject(): it resets projectLayoutChosen, which a
+            // Connections handler below reacts to by reopening the layout chooser —
+            // the start screen needs to already be up so promptLayoutChooserIfNeeded()
+            // defers to it instead.
+            window.showStartScreen = true
+            // silent: newProject()'s own "New project" toast is right for the header's
+            // New Project action, wrong here — setting lastMessage again afterwards
+            // would not replace it, since every change queues its own toast.
+            EditorState.newProject(true)
+            EditorState.setLastMessage(qsTr("Project closed"))
+        })
     }
 
     // Opened from the header, and from every empty state that a missing addon causes.
     function openAddonManager(kind) {
         if (kind === undefined)
-            addonManagerDialog.open()
+            addonManagerDialogLoader.ensure().open()
         else
-            addonManagerDialog.openForKind(kind)
+            addonManagerDialogLoader.ensure().openForKind(kind)
     }
 
     // Header Extras button: open the essential/update nudge when the icon is pulsing,
@@ -461,22 +702,26 @@ ApplicationWindow {
 
     // Opened from the header badge, which only exists while there is something to show.
     function openUpdateDialog() {
-        updateDialog.open()
+        updateDialogLoader.ensure().open()
     }
 
     function openDebugInfo() {
-        debugInfoDialog.open()
+        debugInfoDialogLoader.ensure().open()
+    }
+
+    function openPasteAttributes() {
+        pasteAttributesDialogLoader.ensure().openDialog()
     }
 
     function promptRecoveryIfNeeded() {
-        if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+        if (EditorState.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
             return
-        if (!EditorState.recoveryAvailable || recoveryDialog.visible)
+        if (!EditorState.recoveryAvailable || recoveryDialogLoader.shown)
             return
         // Opt-in reopen handles recovery (and last .drift) without asking.
         if (EditorState.reopenLastProject)
             return
-        recoveryDialog.open()
+        recoveryDialogLoader.ensure().open()
     }
 
     // Ask every launch while the previous session left an autosave snapshot
@@ -495,7 +740,7 @@ ApplicationWindow {
                 return
             }
             promptRecoveryIfNeeded()
-            if (recoveryDialog.visible || ++attempts >= 20)
+            if (recoveryDialogLoader.shown || ++attempts >= 20)
                 stop()
         }
     }
@@ -508,8 +753,12 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        Theme.windowWidth = window.width
         window.restoreWindowGeometry()
         window.beginStartupProject()
+        // Independent of the project-restore sequence above — it neither gates nor is
+        // gated by it, so ordering here doesn't matter.
+        EditorState.applyMcpStartOnLaunch()
         // Last: the window is placed by now, and the startup flow keeps the ordering
         // it had when the window was shown at the end of completion.
         window.showRestored()
@@ -529,10 +778,17 @@ ApplicationWindow {
         // Opt-in: restore unsaved recovery or the last clean project silently.
         if (EditorState.restoreLastSessionIfEnabled())
             return
-        if (EditorState.recoveryAvailable)
+        if (EditorState.recoveryAvailable) {
             recoveryOpenTimer.start()
-        else
-            layoutChooserOpenTimer.start()
+            return
+        }
+        // Reopen is off (or the last project could not be restored): rather than land in a
+        // fresh empty project, ask which project to work on.
+        if (!EditorState.reopenLastProject) {
+            window.showStartScreen = true
+            return
+        }
+        layoutChooserOpenTimer.start()
     }
 
     onVisibilityChanged: {
@@ -546,12 +802,14 @@ ApplicationWindow {
     Connections {
         target: EditorState
         function onExternalProjectOpenRequested(url) {
+            if (window.rejectIfProjectOpenPending())
+                return
             editorHeader.confirmIfDirty(function () {
                 EditorState.loadProject(url)
             })
         }
         function onRecoveryChanged() {
-            if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+            if (EditorState.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
                 return
             if (EditorState.reopenLastProject)
                 return
@@ -568,15 +826,31 @@ ApplicationWindow {
         // Multicam addresses tracks by index, so it has nothing to act on either once the
         // document behind those indices is gone.
         function onProjectReset() {
-            segmentationWindow.close()
-            denoiseWindow.close()
-            speedCurveWindow.close()
-            fadeCurveWindow.close()
-            multicamWindow.close()
+            if (segmentationWindowLoader.item)
+                segmentationWindowLoader.item.close()
+            if (denoiseWindowLoader.item)
+                denoiseWindowLoader.item.close()
+            if (speedCurveWindowLoader.item)
+                speedCurveWindowLoader.item.close()
+            if (fadeCurveWindowLoader.item)
+                fadeCurveWindowLoader.item.close()
+            if (multicamWindowLoader.item)
+                multicamWindowLoader.item.close()
         }
 
         function onOpenMulticamWindowRequested() {
-            multicamWindow.openSession()
+            multicamWindowLoader.ensure().openSession()
+        }
+
+        // Terminal result of a loadProject()/loadProjectJson() call, from any source —
+        // unlike lastMessageChanged, this does not also fire for the "Unpacking project
+        // media…" progress message a bundle with embedded media raises first, so it's
+        // safe to treat as "the open is done" rather than mistaking progress for success.
+        // rejectIfProjectOpenPending() keeps at most one load in flight at a time, so
+        // whichever request this is, it's the one the start screen (if up) is waiting on.
+        function onProjectLoadFinished(ok) {
+            if (ok)
+                window.showStartScreen = false
         }
 
         function onProjectLayoutChosenChanged() {
@@ -606,7 +880,7 @@ ApplicationWindow {
         }
 
         function onMissingAddons(addons) {
-            missingAddonsDialog.openFor(addons)
+            missingAddonsDialogLoader.ensure().openFor(addons)
         }
 
         function onPackageFinished(ok, message) {
@@ -678,9 +952,70 @@ ApplicationWindow {
         }
     }
 
-    // Shortcut is not an Item, so wrap each binding in a zero-size host.
+    Connections {
+        target: Market
+        function onAuthFinished(ok, message) {
+            if (ok)
+                Toasts.success(message)
+            else
+                Toasts.error(message)
+        }
+        function onDownloadImported(itemId, name) {
+            Toasts.success(name.length > 0
+                           ? qsTr("Imported “%1”.").arg(name)
+                           : qsTr("Imported from the marketplace."))
+        }
+        function onDownloadFailed(itemId, code, message) {
+            Toasts.error(message)
+        }
+    }
+
+    // The one place a bound action is dispatched, shared by the ApplicationShortcut
+    // Repeater below and the editor FocusScope's arrow handling. A handful of ids are
+    // QML state and have no triggerAction branch at all, so a second dispatch site
+    // that called EditorState.triggerAction directly would turn them into dead keys
+    // the moment someone rebound one onto an arrow chord.
+    //
     // Escape (clearSelection): CapCut-style — if a timeline cut tool is active,
     // first press returns to Select; only then does Escape clear the selection.
+    function dispatchAction(id) {
+        if (id === "clearSelection" && EditorState.guideEditSetId !== "") {
+            EditorState.guideEditSetId = ""
+            return
+        }
+        if (id === "clearSelection"
+                && timelinePanel.visible
+                && timelinePanel.timelineTool !== "") {
+            timelinePanel.timelineTool = ""
+            return
+        }
+        // Tool modes are QML state, so they are dispatched here rather
+        // than by triggerAction.
+        if (id === "selectTool") {
+            timelinePanel.timelineTool = ""
+            return
+        }
+        if (id === "bladeTool") {
+            timelinePanel.timelineTool = "split"
+            return
+        }
+        // Timeline zoom is QML state as well, and the 1.5 step matches the
+        // toolbar buttons. setZoom clamps to minZoom/maxZoom and re-anchors on
+        // the playhead, so holding the key walks to the end of the range and stops.
+        if (id === "zoomIn") {
+            if (timelinePanel.visible)
+                timelinePanel.setZoom(timelinePanel.zoom * 1.5)
+            return
+        }
+        if (id === "zoomOut") {
+            if (timelinePanel.visible)
+                timelinePanel.setZoom(timelinePanel.zoom / 1.5)
+            return
+        }
+        EditorState.triggerAction(id)
+    }
+
+    // Shortcut is not an Item, so wrap each binding in a zero-size host.
     Repeater {
         model: EditorState.actions
         Item {
@@ -688,27 +1023,23 @@ ApplicationWindow {
             width: 0
             height: 0
             Shortcut {
-                sequence: modelData.shortcut
+                sequence: Theme.nativeShortcutSequence(modelData.shortcut)
                 context: Qt.ApplicationShortcut
-                onActivated: {
-                    if (modelData.id === "clearSelection"
-                            && timelinePanel.visible
-                            && timelinePanel.timelineTool !== "") {
-                        timelinePanel.timelineTool = ""
-                        return
-                    }
-                    // Tool modes are QML state, so they are dispatched here rather
-                    // than by triggerAction.
-                    if (modelData.id === "selectTool") {
-                        timelinePanel.timelineTool = ""
-                        return
-                    }
-                    if (modelData.id === "bladeTool") {
-                        timelinePanel.timelineTool = "split"
-                        return
-                    }
-                    EditorState.triggerAction(modelData.id)
-                }
+                // ApplicationShortcut fires regardless of what is on screen, so without
+                // this a key like M (toggleBookmark) still edited the document hidden
+                // behind the start screen. The editor Column being disabled blocks mouse
+                // input the same way, but Shortcut is not an Item and does not inherit
+                // that — it needs its own guard.
+                //
+                // New Project and Open stay live even here: both end up in
+                // window.requestNewProject()/requestOpenProjectDialog() (via EditorHeader's
+                // triggerAction Connections below), which already gate on a pending load
+                // and unsaved changes — the same functions the start screen's own tiles
+                // call — so there is nothing editing-shaped about letting them through.
+                enabled: (modelData.id === "newProject" || modelData.id === "open"
+                         || !window.showStartScreen)
+                         && !Theme.shortcutSequenceUsesArrowKey(modelData.shortcut)
+                onActivated: window.dispatchAction(modelData.id)
             }
         }
     }
@@ -720,6 +1051,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "F1"
         context: Qt.ApplicationShortcut
+        enabled: !window.showStartScreen
         onActivated: {
             if (window.previewFullscreen)
                 window.togglePreviewFullscreen()
@@ -727,14 +1059,40 @@ ApplicationWindow {
         }
     }
 
+    // Arrow-key actions (frame step, 1s/10s jump, Alt-nudge, Alt cut-point)
+    // are handled here rather than as ApplicationShortcut. The focused item
+    // sees the key first — text fields keep their cursor, overlay handles keep
+    // their nudge — and only an unaccepted arrow bubbles up. ApplicationShortcut
+    // matching for Left/Right is also a no-op on several Wayland compositors
+    // (Hyprland / Omarchy), which is what made the keys look completely dead.
+    FocusScope {
+        id: editorScope
+        anchors.fill: parent
+        enabled: !window.showStartScreen
+        focus: true
+        Keys.onPressed: function(event) {
+            const id = EditorState.actionForArrowChord(event.key, event.modifiers)
+            if (id === "")
+                return
+            window.dispatchAction(id)
+            event.accepted = true
+        }
+
     Column {
         anchors.fill: parent
         spacing: 0
+        // The start screen sits on top of this document rather than replacing it (see
+        // the StartScreen instance below), so without this the editor underneath was
+        // still fully live — clickable through any gap and, worse, still reachable by
+        // keyboard even though nothing of it is visible. Disabling blocks mouse input
+        // and keyboard focus for the whole subtree, not just the pointer.
+        enabled: !window.showStartScreen
 
         EditorHeader {
             id: editorHeader
             width: parent.width
             visible: !window.previewFullscreen
+            onDownloadsRequested: downloadsWindowLoader.ensure().show()
         }
 
         Item {
@@ -912,6 +1270,26 @@ ApplicationWindow {
 
                 // The preview is inserted here, after the editing stack, while the
                 // portrait workspace is active.
+            }
+        }
+    }
+    }
+
+    // Startup only: replaces a fresh empty project when "Reopen last project on
+    // startup" is off, so the choice of what to work on is the user's rather than
+    // defaulting to blank. Declared last (after the editor Column) so it draws over
+    // the already-empty document sitting underneath it.
+    Loader {
+        anchors.fill: parent
+        active: window.showStartScreen
+        sourceComponent: Component {
+            StartScreen {
+                // Delegate to the same functions Ctrl+N / Ctrl+O / the header's Projects menu
+                // use, so there is exactly one place that gates on unsaved changes and decides
+                // when the screen is allowed to disappear.
+                onNewProjectRequested: window.requestNewProject()
+                onOpenProjectRequested: window.requestOpenProjectDialog()
+                onOpenRecentRequested: (path) => window.requestOpenRecentProject(path)
             }
         }
     }

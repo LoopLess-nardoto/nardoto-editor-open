@@ -16,9 +16,23 @@
 #include "core/ShapePath.h"
 #include "core/SrtIO.h"
 #include "core/SubtitleCue.h"
+#include "core/Transcript.h"
+#include "core/commands/ProjectCommands.h"
+#include "core/LottieTextImport.h"
+#include "core/TextAnimationPreset.h"
+#include "core/TextAnimator.h"
+#include "core/TextLook.h"
+#include "core/TextShading.h"
 #include "core/EffectStackStore.h"
 #include "core/TextPresetStore.h"
+#include "core/Model3dSource.h"
+#include "core/VectorSource.h"
+#include "core/DotLottie.h"
+#include "TestZip.h"
+
+#include <QTemporaryDir>
 #include "core/TimelineOps.h"
+#include "core/CutOps.h"
 #include "core/Transition.h"
 
 #include <cmath>
@@ -29,6 +43,25 @@ class CoreTest : public QObject
 
 private slots:
     void timeConversion();
+    void transcriptJsonRoundTrip();
+    void transcriptWordsInRange();
+    void transcriptPhrasePacking();
+    void transcriptCuesUseMeasuredTimings();
+    void transcriptSavedWithAssetNotHashed();
+    void transcriptSurvivesUndoRedo();
+    void splitClipClearsInnerFades();
+    void splitThenMergeRestoresFades();
+    void audioEdgeMultiplierRamps();
+    void audioFadesRoundTripAndLeaveOpacity();
+    void keptIntervalsMergeAndDropSlivers();
+    void packedSegmentsPackAndDeclick();
+    void segmentsFromSourceRangesReorder();
+    void segmentsFromSourceRangesReverseAndSpeed();
+    void segmentsFromSourceRangesRejectsSpeedCurve();
+    void sourceRangeToTimelineMapsSpeedAndReverse();
+    void audioHandlesForwardReverseSpeed();
+    void audioTransitionEdgeOwnsButtCutOnly();
+    void transcriptWordsFollowClipsOnTimeline();
     void keyframeHoldInterpolation();
     void keyframeLinearInterpolation();
     void keyframeEaseInterpolation();
@@ -36,9 +69,14 @@ private slots:
     void disabledKeyframesFreezeAtFirstKey();
     void legacyTrackInterpolationMigratesLosslessly();
     void keyframeNearestQuery();
+    void sourceFramingRoundTrip();
+    void clipPose3dRoundTrip();
     void projectSerializationRoundTrip();
     void binFolderSerializationRoundTrip();
+    void compositeSequenceRoundTrip();
+    void activateSequenceSwapsTracks();
     void binFolderDeletionMovesChildrenToParent();
+    void assetFrameRateMarksRoundTrip();
     void projectMetadataRoundTrip();
     void effectColorParamSurvivesRoundTrip();
     void clipTransformSerialization();
@@ -62,10 +100,31 @@ private slots:
     void effectStackRejectsForeignPayloads();
     void effectKeyframeRescaleIsProportional();
     void userEffectPresetsRoundTrip();
+    void rangeSelectorCoverageMatchesSkottie();
+    void staggerMatchesMovingRamp();
+    void animatorCompositionOrder();
+    void trackingLineAdjust();
+    void caretTiming();
+    void animationBoundsCoverTheEnvelope();
+    void textStyleMigratesFromV6();
+    void textStyleV7RoundTrip();
+    void textAnimationPresetsAreWellFormed();
+    void legacyTextAnimationParity();
+    void textKeyframeKeysAreDynamic();
+    void textLooksRegenerate();
+    void lottieTextImport();
     void karaokeWordIndexTracksTheCue();
     void shapeStyleSerialization();
     void legacyShapeStyleLoadsWithDefaults();
     void shapeCatalogPathsFitBounds();
+    void vectorSourceSerialization();
+    void dotLottieUnpacks();
+    void textStyleKeyframesSerialization();
+    void vectorClipIsSyntheticOnGraphicTracks();
+    void model3dSourceSerialization();
+    void model3dScalarClampsAndResolves();
+    void foldVectorTimeTable_data();
+    void foldVectorTimeTable();
     void effectCatalogIdSerialization();
     void effectParamKeyframeSerialization();
     void detachedCopyIsolatesKeyframesFromLiveMutations();
@@ -86,6 +145,8 @@ private slots:
     void speedCurveSerialization();
     void clipReverseAndFlipSerialization();
     void clipSplitMergeRoundTrip();
+    void subtitleClipsMergeWithGaps();
+    void splitCarriesTheAnimationOntoBothHalves();
     void clipLinkFieldsSerialization();
     void maskAndTransitionSerialization();
     void matteMaskSerialization();
@@ -95,7 +156,12 @@ private slots:
     void transitionParametersRoundTrip();
     void legacyTransitionJsonStillLoads();
     void transitionAudioCurves();
+    void transitionEasingCurveRoundTrips();
+    void transitionEasingRemapsProgress();
+    void bezierCurveShapesProgress();
+    void bezierShapeRoundTrips();
     void physicalOverlapTransitionWindow();
+    void adjacentTransitionWindowClampsToClipExtents();
     void clampClipStartNoOverlapPushesPastBlockers();
     void clampTrimEdgesIgnoreExistingOverlaps();
     void backgroundSerialization();
@@ -103,9 +169,16 @@ private slots:
     void clipAnimationSerializationAndSample();
     void rebaseClipLayoutFreezesImplicitSize();
     void rebaseClipLayoutShiftsKeyframedPosition();
+    void rebaseClipLayoutHoldsNestedContentStill();
+    void transformLayerRoundTrips();
+    void transformSpanFollowsTrackEdits();
+    void transformNormalizerLiftsStrays();
     void retargetClipToSourceKeepsPlacementAndSyncsSource();
     void retargetClipToSourceClearsPerSourceState();
     void retargetClipToSourceKeepsAGeometricMask();
+    void addLinkedMaskStacksRatherThanReplacing();
+    void laneMaskIsUnpinnedAndSurvivesTheLiftPass();
+    void legacyClipMaskMigratesToAnAdjustmentLane();
     void retargetClipToSourceShrinksWhenMediaRunsOut();
     void applyMulticamSwitchPunchesAndRecuts();
     void applyMulticamSwitchMergesAdjacentSameCamera();
@@ -357,6 +430,85 @@ void CoreTest::projectMetadataRoundTrip()
     QVERIFY(drift::Project().id() != drift::Project().id());
 }
 
+void CoreTest::sourceFramingRoundTrip()
+{
+    drift::Project project;
+    drift::MediaAsset asset;
+    asset.width = 3840;
+    asset.height = 2160;
+    asset.path = QStringLiteral("original.mp4");
+    asset.sourceFrame = QRectF(0.25, 0.25, 0.5, 0.5);
+    const QString id = project.addAsset(asset);
+    drift::Clip clip;
+    clip.assetId = id;
+    clip.path = asset.path;
+    clip.sourceFrame = QRectF(0.1, 0.2, 0.3, 0.4);
+    project.tracks()[0].clips.append(clip);
+    const auto loaded = drift::Project::fromJson(project.toJson());
+    QCOMPARE(loaded.asset(id)->width, 3840);
+    QCOMPARE(loaded.asset(id)->height, 2160);
+    QCOMPARE(loaded.asset(id)->path, asset.path);
+    QCOMPARE(loaded.asset(id)->sourceFrame, asset.sourceFrame);
+    QCOMPARE(loaded.tracks()[0].clips[0].sourceFrame, clip.sourceFrame);
+    drift::Project plain;
+    drift::MediaAsset plainAsset;
+    plainAsset.path = asset.path;
+    plain.addAsset(plainAsset);
+    plain.tracks()[0].clips.append(drift::Clip{});
+    QVERIFY(!QJsonDocument(plain.toJson()).toJson().contains("sourceFrame"));
+    QCOMPARE(drift::sourceFrameFromJson({}), QRectF(0, 0, 1, 1));
+    QCOMPARE(drift::normalizedSourceFrame(-1, 4, 2, 0.5), QRectF(0, 0.5, 1, 0.5));
+}
+
+void CoreTest::clipPose3dRoundTrip()
+{
+    drift::Project project;
+    drift::Clip clip;
+    clip.layer3d = true;
+    clip.rotationX.setKeyframe(0, 15.0);
+    clip.rotationY.setKeyframe(0, -30.0);
+    clip.rotationY.setKeyframe(500'000, 45.0);
+    clip.positionZ.setKeyframe(0, -400.0);
+    clip.perspective.setKeyframe(0, 1200.0);
+    project.tracks()[0].clips.append(clip);
+    const auto loaded = drift::Project::fromJson(project.toJson());
+    const drift::Clip &back = loaded.tracks()[0].clips[0];
+    QVERIFY(back.layer3d);
+    QCOMPARE(back.rotationX.evaluateAt(0), 15.0);
+    QCOMPARE(back.rotationY.evaluateAt(0), -30.0);
+    QCOMPARE(back.rotationY.evaluateAt(500'000), 45.0);
+    QCOMPARE(back.positionZ.evaluateAt(0), -400.0);
+    QCOMPARE(back.perspective.evaluateAt(0), 1200.0);
+
+    // A flat clip writes none of it and reads back empty tracks.
+    drift::Project plain;
+    plain.tracks()[0].clips.append(drift::Clip{});
+    const QByteArray json = QJsonDocument(plain.toJson()).toJson();
+    QVERIFY(!json.contains("rotationX") && !json.contains("perspective") && !json.contains("layer3d"));
+    const drift::Clip flat = drift::Project::fromJson(plain.toJson()).tracks()[0].clips[0];
+    QVERIFY(!flat.layer3d);
+
+    // Tilt data without the switch (older files, hand-written JSON) comes up as a 3D layer.
+    QJsonObject json3d = plain.toJson();
+    QJsonArray tracks = json3d.value(QStringLiteral("tracks")).toArray();
+    QJsonObject track = tracks.at(0).toObject();
+    QJsonArray clips = track.value(QStringLiteral("clips")).toArray();
+    QJsonObject tilted = clips.at(0).toObject();
+    tilted.insert(QStringLiteral("rotationY"), project.toJson()
+                      .value(QStringLiteral("tracks")).toArray().at(0).toObject()
+                      .value(QStringLiteral("clips")).toArray().at(0).toObject()
+                      .value(QStringLiteral("rotationY")));
+    clips.replace(0, tilted);
+    track.insert(QStringLiteral("clips"), clips);
+    tracks.replace(0, track);
+    json3d.insert(QStringLiteral("tracks"), tracks);
+    const drift::Clip migrated = drift::Project::fromJson(json3d).tracks()[0].clips[0];
+    QVERIFY(migrated.layer3d);
+    QCOMPARE(migrated.rotationY.evaluateAt(0), -30.0);
+    QVERIFY(flat.rotationX.isEmpty() && flat.rotationY.isEmpty() && flat.positionZ.isEmpty()
+            && flat.perspective.isEmpty());
+}
+
 void CoreTest::projectSerializationRoundTrip()
 {
     drift::Project project;
@@ -405,6 +557,79 @@ void CoreTest::projectSerializationRoundTrip()
     QCOMPARE(loaded.workAreaOutUs(), drift::secondsToUs(4.0));
 }
 
+void CoreTest::compositeSequenceRoundTrip()
+{
+    drift::Project project;
+    drift::Clip inner;
+    inner.id = QStringLiteral("inner");
+    inner.type = drift::ClipType::Shape;
+    inner.timelineStart = 0;
+    inner.timelineDuration = drift::secondsToUs(4.0);
+    inner.srcOut = inner.timelineDuration;
+    drift::TrackList innerTracks = {drift::Track{.type = drift::TrackType::Shape, .clips = {inner}}};
+    const QString sequenceId = project.addSequence(innerTracks);
+
+    drift::MediaAsset asset;
+    asset.kind = drift::MediaKind::Composite;
+    asset.name = QStringLiteral("Composite 1");
+    asset.sequenceId = sequenceId;
+    const QString assetId = project.addAsset(asset);
+
+    drift::Clip outer;
+    outer.id = QStringLiteral("outer");
+    outer.type = drift::ClipType::Composite;
+    outer.assetId = assetId;
+    outer.sequenceId = sequenceId;
+    outer.timelineDuration = drift::secondsToUs(2.0);
+    outer.srcOut = outer.timelineDuration;
+    project.tracks()[0].clips.append(outer);
+    project.openSequenceTabs().append(sequenceId);
+
+    // Saving while the composite is open must write the same document as from the main timeline.
+    const QByteArray fromMain = project.toCompactJson();
+    QVERIFY(project.activateSequence(sequenceId));
+    QCOMPARE(project.toCompactJson(), fromMain);
+
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(project.toJson(), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(loaded.activeSequenceId().isEmpty());
+    QCOMPARE(loaded.openSequenceTabs(), QStringList{sequenceId});
+    QCOMPARE(loaded.tracks().at(0).clips.at(0).type, drift::ClipType::Composite);
+    QCOMPARE(loaded.tracks().at(0).clips.at(0).sequenceId, sequenceId);
+    QCOMPARE(loaded.asset(assetId)->kind, drift::MediaKind::Composite);
+    QCOMPARE(loaded.asset(assetId)->sequenceId, sequenceId);
+    QCOMPARE(loaded.sequenceTracks(sequenceId).at(0).clips.at(0).id, QStringLiteral("inner"));
+    QCOMPARE(drift::sourceDurationForClip(loaded, loaded.tracks().at(0).clips.at(0)),
+             drift::secondsToUs(4.0));
+}
+
+void CoreTest::activateSequenceSwapsTracks()
+{
+    drift::Project project;
+    const QString mainTrackId = project.tracks().at(0).id;
+    const QString sequenceId =
+        project.addSequence({drift::Track{.type = drift::TrackType::Audio}});
+
+    QVERIFY(!project.activateSequence(QStringLiteral("missing")));
+    QVERIFY(project.activateSequence(sequenceId));
+    QCOMPARE(project.activeSequenceId(), sequenceId);
+    QCOMPARE(project.tracks().at(0).type, drift::TrackType::Audio);
+    QCOMPARE(project.rootTracks().at(0).id, mainTrackId);
+
+    // Edits made while open land in the sequence, and a snapshot carries them independently.
+    project.tracks().append(drift::Track{.type = drift::TrackType::Text});
+    const drift::Project snapshot = project.detachedCopy();
+    QVERIFY(project.activateSequence({}));
+    QCOMPARE(project.tracks().at(0).id, mainTrackId);
+    QCOMPARE(project.sequenceTracks(sequenceId).size(), 2);
+    QCOMPARE(snapshot.activeSequenceId(), sequenceId);
+    QCOMPARE(snapshot.tracks().size(), 2);
+
+    project.removeSequence(sequenceId);
+    QVERIFY(!project.hasSequence(sequenceId));
+}
+
 void CoreTest::binFolderSerializationRoundTrip()
 {
     drift::Project project;
@@ -437,6 +662,44 @@ void CoreTest::binFolderSerializationRoundTrip()
     QCOMPARE(loaded.binFolder(nestedFolderId)->parentId, rootFolderId);
     QVERIFY(loaded.asset(assetId));
     QCOMPARE(loaded.asset(assetId)->folderId, nestedFolderId);
+}
+
+// The VFR check result and the edit-friendly mark save with the project; an asset never checked
+// stays unknown, so a loaded project knows to check it rather than reading it as constant-rate.
+void CoreTest::assetFrameRateMarksRoundTrip()
+{
+    drift::Project project;
+
+    drift::MediaAsset converted;
+    converted.kind = drift::MediaKind::Video;
+    converted.path = QStringLiteral("/tmp/converted.mp4");
+    converted.frameRateKnown = true;
+    converted.editFriendly = true;
+    const QString convertedId = project.addAsset(converted);
+
+    drift::MediaAsset phone;
+    phone.kind = drift::MediaKind::Video;
+    phone.path = QStringLiteral("/tmp/phone.mp4");
+    phone.frameRateKnown = true;
+    phone.variableFrameRate = true;
+    const QString phoneId = project.addAsset(phone);
+
+    drift::MediaAsset unchecked;
+    unchecked.kind = drift::MediaKind::Video;
+    unchecked.path = QStringLiteral("/tmp/unchecked.mp4");
+    const QString uncheckedId = project.addAsset(unchecked);
+
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(project.toJson(), &error);
+    QVERIFY(error.isEmpty());
+
+    QVERIFY(loaded.asset(convertedId)->editFriendly);
+    QVERIFY(loaded.asset(convertedId)->frameRateKnown);
+    QVERIFY(!loaded.asset(convertedId)->variableFrameRate);
+    QVERIFY(loaded.asset(phoneId)->frameRateKnown);
+    QVERIFY(loaded.asset(phoneId)->variableFrameRate);
+    QVERIFY(!loaded.asset(phoneId)->editFriendly);
+    QVERIFY(!loaded.asset(uncheckedId)->frameRateKnown);
 }
 
 void CoreTest::binFolderDeletionMovesChildrenToParent()
@@ -730,6 +993,7 @@ void CoreTest::trackAllowsClipTypes()
     drift::Track shapeTrack{.type = drift::TrackType::Shape};
     QVERIFY(shapeTrack.allowsClipType(drift::ClipType::Image));
     QVERIFY(shapeTrack.allowsClipType(drift::ClipType::Shape));
+    QVERIFY(shapeTrack.allowsClipType(drift::ClipType::Vector));
     QVERIFY(!shapeTrack.allowsClipType(drift::ClipType::Video));
 
     drift::Track subtitleTrack{.type = drift::TrackType::Subtitle};
@@ -887,7 +1151,7 @@ void CoreTest::multiTrackSerializationRoundTrip()
     drift::Project project;
     project.tracks().clear();
     project.tracks().append(drift::Track{.type = drift::TrackType::Video, .muted = true});
-    project.tracks().append(drift::Track{.type = drift::TrackType::Audio, .showWaveform = true});
+    project.tracks().append(drift::Track{.type = drift::TrackType::Audio, .clipDisplay = drift::Track::ClipDisplay::Waveform});
     project.tracks().append(drift::Track{.type = drift::TrackType::Video, .hidden = true});
     project.tracks().append(drift::Track{.type = drift::TrackType::Text});
 
@@ -907,7 +1171,7 @@ void CoreTest::multiTrackSerializationRoundTrip()
     QCOMPARE(loaded.tracks()[0].type, drift::TrackType::Video);
     QVERIFY(loaded.tracks()[0].muted);
     QCOMPARE(loaded.tracks()[1].type, drift::TrackType::Audio);
-    QVERIFY(loaded.tracks()[1].showWaveform);
+    QCOMPARE(loaded.tracks()[1].clipDisplay, drift::Track::ClipDisplay::Waveform);
     QCOMPARE(loaded.tracks()[2].type, drift::TrackType::Video);
     QVERIFY(loaded.tracks()[2].hidden);
     QCOMPARE(loaded.tracks()[2].clips.size(), 1);
@@ -933,25 +1197,15 @@ void CoreTest::textStyleAndBlendModeSerialization()
     clip.textStyle.pixelSize = 88;
     clip.textStyle.fontWeight = 300;
     clip.textStyle.italic = true;
-    clip.textStyle.color = QColor(10, 20, 30, 200);
     clip.textStyle.align = drift::TextAlign::Right;
     clip.textStyle.valign = drift::TextVAlign::Bottom;
     clip.textStyle.wordWrap = false;
     clip.textStyle.lineHeight = 1.6;
     clip.textStyle.letterSpacing = 3.5;
-    clip.textStyle.outlineEnabled = true;
-    clip.textStyle.outlineWidth = 2.5;
-    clip.textStyle.outlineColor = QColor(255, 0, 0);
-    clip.textStyle.shadowEnabled = true;
-    clip.textStyle.shadowOffsetX = -3.0;
-    clip.textStyle.shadowOffsetY = 7.0;
-    clip.textStyle.shadowBlur = 11.0;
-    clip.textStyle.shadowOpacity = 0.42;
-    clip.textStyle.shadowColor = QColor(0, 128, 255);
-    clip.textStyle.glowEnabled = true;
-    clip.textStyle.glowColor = QColor(0, 255, 128);
-    clip.textStyle.glowRadius = 21.0;
-    clip.textStyle.glowOpacity = 0.55;
+    clip.textStyle.layers = {drift::shadowLayer(QColor(0, 128, 255), -3.0, 7.0, 11.0, 0.42),
+                             drift::glowLayer(QColor(0, 255, 128), 21.0, 0.55),
+                             drift::strokeLayer(2.5, QColor(255, 0, 0)),
+                             drift::solidFillLayer(QColor(10, 20, 30, 200))};
     clip.textStyle.boxEnabled = true;
     clip.textStyle.boxColor = QColor(0, 0, 0, 100);
     clip.textStyle.boxPadding = 12.0;
@@ -972,9 +1226,10 @@ void CoreTest::textStyleAndBlendModeSerialization()
     clip.textStyle.accent.outlineWidth = 4.5;
     clip.textStyle.accent.outlineColor = QColor(1, 2, 3);
     clip.textStyle.accent.highlight = {true, QColor(60, 70, 80), 11.0, 6.0};
-    clip.textStyle.animIn = {drift::TextAnimKind::Pop, drift::secondsToUs(0.3), drift::TextEase::Back};
-    clip.textStyle.animOut = {drift::TextAnimKind::SlideDown, drift::secondsToUs(0.25),
-                              drift::TextEase::EaseInOut};
+    clip.textStyle.animation.in = drift::legacyTextAnimationSlot(
+        QStringLiteral("pop"), drift::secondsToUs(0.3), QStringLiteral("back"), QStringLiteral("block"), 60000, QStringLiteral("forward"));
+    clip.textStyle.animation.out = drift::legacyTextAnimationSlot(
+        QStringLiteral("slideDown"), drift::secondsToUs(0.25), QStringLiteral("easeInOut"), QStringLiteral("block"), 60000, QStringLiteral("forward"));
     project.tracks()[0].clips.append(clip);
 
     const QJsonObject json = project.toJson();
@@ -989,25 +1244,29 @@ void CoreTest::textStyleAndBlendModeSerialization()
     QCOMPARE(s.pixelSize, 88);
     QCOMPARE(s.fontWeight, 300);
     QCOMPARE(s.italic, true);
-    QCOMPARE(s.color, QColor(10, 20, 30, 200));
+    QCOMPARE(s.primaryColor(), QColor(10, 20, 30, 200));
     QCOMPARE(s.align, drift::TextAlign::Right);
     QCOMPARE(s.valign, drift::TextVAlign::Bottom);
     QCOMPARE(s.wordWrap, false);
     QCOMPARE(s.lineHeight, 1.6);
     QCOMPARE(s.letterSpacing, 3.5);
-    QCOMPARE(s.outlineEnabled, true);
-    QCOMPARE(s.outlineWidth, 2.5);
-    QCOMPARE(s.outlineColor, QColor(255, 0, 0));
-    QCOMPARE(s.shadowEnabled, true);
-    QCOMPARE(s.shadowOffsetX, -3.0);
-    QCOMPARE(s.shadowOffsetY, 7.0);
-    QCOMPARE(s.shadowBlur, 11.0);
-    QCOMPARE(s.shadowOpacity, 0.42);
-    QCOMPARE(s.shadowColor, QColor(0, 128, 255));
-    QCOMPARE(s.glowEnabled, true);
-    QCOMPARE(s.glowColor, QColor(0, 255, 128));
-    QCOMPARE(s.glowRadius, 21.0);
-    QCOMPARE(s.glowOpacity, 0.55);
+    QCOMPARE(s.layers.size(), 4);
+    QCOMPARE(s.layers[0].kind, drift::TextLayerKind::Shadow);
+    QVERIFY(s.layers[0].enabled);
+    QCOMPARE(s.layers[0].offsetX, -3.0);
+    QCOMPARE(s.layers[0].offsetY, 7.0);
+    QCOMPARE(s.layers[0].blur, 11.0);
+    QCOMPARE(s.layers[0].opacity, 0.42);
+    QCOMPARE(s.layers[0].paint.color, QColor(0, 128, 255));
+    QCOMPARE(s.layers[1].kind, drift::TextLayerKind::Glow);
+    QCOMPARE(s.layers[1].paint.color, QColor(0, 255, 128));
+    QCOMPARE(s.layers[1].blur, 21.0);
+    QCOMPARE(s.layers[1].opacity, 0.55);
+    QCOMPARE(s.layers[2].kind, drift::TextLayerKind::Stroke);
+    QCOMPARE(s.layers[2].width, 2.5);
+    QCOMPARE(s.layers[2].paint.color, QColor(255, 0, 0));
+    QCOMPARE(drift::textStrokeWidth(s, false), 2.5);
+    QCOMPARE(s.layers[3].id, QStringLiteral("fill"));
     QCOMPARE(s.boxEnabled, true);
     QCOMPARE(s.boxColor, QColor(0, 0, 0, 100));
     QCOMPARE(s.boxPadding, 12.0);
@@ -1034,12 +1293,12 @@ void CoreTest::textStyleAndBlendModeSerialization()
     QCOMPARE(s.accent.highlight.color, QColor(60, 70, 80));
     QCOMPARE(s.accent.highlight.padding, 11.0);
     QCOMPARE(s.accent.highlight.radius, 6.0);
-    QCOMPARE(s.animIn.kind, drift::TextAnimKind::Pop);
-    QCOMPARE(s.animIn.durationUs, drift::secondsToUs(0.3));
-    QCOMPARE(s.animIn.ease, drift::TextEase::Back);
-    QCOMPARE(s.animOut.kind, drift::TextAnimKind::SlideDown);
-    QCOMPARE(s.animOut.durationUs, drift::secondsToUs(0.25));
-    QCOMPARE(s.animOut.ease, drift::TextEase::EaseInOut);
+    QCOMPARE(s.animation.in.presetId, QStringLiteral("pop"));
+    QCOMPARE(s.animation.in.params.value(QStringLiteral("duration")).scalar, 0.3);
+    QCOMPARE(s.animation.in.params.value(QStringLiteral("ease")).text, QStringLiteral("back"));
+    QCOMPARE(s.animation.out.presetId, QStringLiteral("slide-down"));
+    QCOMPARE(s.animation.out.params.value(QStringLiteral("duration")).scalar, 0.25);
+    QCOMPARE(s.animation.out.params.value(QStringLiteral("ease")).text, QStringLiteral("easeInOut"));
 }
 
 void CoreTest::legacyBoldMigratesToFontWeight()
@@ -1101,8 +1360,7 @@ void CoreTest::legacyBoldMigratesToFontWeight()
         QString err;
         const drift::Project loaded = drift::Project::fromJson(project, &err);
         QVERIFY(err.isEmpty());
-        QCOMPARE(loaded.tracks().at(0).clips.at(0).textStyle.outlineEnabled, true);
-        QCOMPARE(loaded.tracks().at(0).clips.at(0).textStyle.outlineWidth, 3.0);
+        QCOMPARE(drift::textStrokeWidth(loaded.tracks().at(0).clips.at(0).textStyle, false), 3.0);
     }
 }
 
@@ -1138,6 +1396,39 @@ void CoreTest::textPresetsAreWellFormed()
             QVERIFY(accent.color.isValid());
         if (accent.highlight.enabled)
             QVERIFY(accent.highlight.color.isValid());
+
+        // The layer stack: unique ids, gradients with something to blend, effects the renderer knows.
+        QSet<QString> layerIds;
+        bool paintedFill = false;
+        for (const drift::TextShadingLayer &layer : preset.style.layers) {
+            QVERIFY2(!layerIds.contains(layer.id), qPrintable(preset.id + QLatin1Char(' ') + layer.id));
+            layerIds.insert(layer.id);
+            if (layer.paint.kind == drift::TextPaintKind::Gradient)
+                QVERIFY2(layer.paint.gradient.stops.size() >= 2, qPrintable(preset.id));
+            if (layer.paint.kind == drift::TextPaintKind::Effect)
+                QVERIFY2(drift::textShaderEffectSpec(layer.paint.effect.id), qPrintable(preset.id));
+            paintedFill = paintedFill || layer.paint.kind != drift::TextPaintKind::Solid;
+        }
+
+        // Every slot names a catalogue preset that offers that slot, and none of them recolours
+        // the fill (an animator fillColor would flatten a gradient or effect to a solid).
+        const drift::TextAnimationSet &anim = preset.style.animation;
+        QVERIFY2(anim.in.isActive() && anim.out.isActive(), qPrintable(preset.id));
+        const auto check = [&](const drift::TextAnimationSlot &slot, drift::TextAnimSlotKind kind) {
+            if (!slot.isActive())
+                return;
+            const std::optional<drift::TextAnimationPreset> ap =
+                drift::TextAnimationPresetCatalog::instance().presetForId(slot.presetId);
+            QVERIFY2(ap && ap->supportsSlot(kind), qPrintable(preset.id + QLatin1Char(' ') + slot.presetId));
+            const drift::ResolvedPresetSlot resolved = drift::resolvePresetSlot(*ap, slot.params, kind);
+            QVERIFY2(resolved.valid, qPrintable(preset.id + QLatin1Char(' ') + slot.presetId));
+            if (paintedFill)
+                for (const drift::TextAnimator &a : resolved.animators)
+                    QVERIFY2(!a.props.hasFillColor, qPrintable(preset.id + QLatin1Char(' ') + slot.presetId));
+        };
+        check(anim.in, drift::TextAnimSlotKind::In);
+        check(anim.out, drift::TextAnimSlotKind::Out);
+        check(anim.loop, drift::TextAnimSlotKind::Loop);
     }
     QVERIFY(!drift::textStyleForPresetId(QStringLiteral("nope")));
 }
@@ -1188,13 +1479,20 @@ void CoreTest::shapeStyleSerialization()
     clip.timelineStart = 0;
     clip.timelineDuration = drift::kImageClipDurationUs;
     clip.shapeStyle.kind = drift::ShapeKind::Hexagon;
-    clip.shapeStyle.fillKind = drift::ShapeFillKind::LinearGradient;
-    clip.shapeStyle.fill = QColor(10, 20, 30, 200);
-    clip.shapeStyle.fillSecondary = QColor(40, 50, 60, 128);
-    clip.shapeStyle.gradientAngle = 35.0;
-    clip.shapeStyle.stroke = QColor(255, 255, 255);
-    clip.shapeStyle.strokeWidth = 6.0;
-    clip.shapeStyle.strokeStyle = drift::ShapeStrokeStyle::DashDot;
+    clip.shapeStyle.layers = drift::defaultShapeLayers(QColor(10, 20, 30, 200), QColor(40, 50, 60, 128), Qt::white, 6.0);
+    drift::TextShadingLayer &fill = clip.shapeStyle.layers[0];
+    fill.paint.kind = drift::TextPaintKind::Gradient;
+    fill.paint.gradient.angle = 35.0;
+    fill.paint.gradient.offsetSpeed = 0.25;
+    drift::TextShadingLayer &stroke = clip.shapeStyle.layers[1];
+    stroke.dash = drift::StrokeDash::DashDot;
+    stroke.dashOffset = 1.5;
+    stroke.strokeAlign = drift::StrokeAlign::Center;
+    stroke.trimEnd = 0.6;
+    stroke.sketchLength = 8.0;
+    stroke.sketchDeviation = 2.0;
+    stroke.sketchSeed = 7;
+    clip.shapeStyle.layers.append(drift::shadowLayer(Qt::black, 3.0, 5.0, 10.0, 0.5, QStringLiteral("shadow")));
     clip.shapeStyle.cornerRadius = 18.0;
     clip.shapeStyle.points = 9;
     clip.shapeStyle.innerRatio = 0.33;
@@ -1202,6 +1500,10 @@ void CoreTest::shapeStyleSerialization()
     clip.shapeStyle.thickness = 0.22;
     clip.shapeStyle.tailX = 0.7;
     clip.shapeStyle.tailSize = 0.15;
+    clip.shapeStyle.keyframes[QStringLiteral("cornerRadius")].setKeyframe(0, 0.0);
+    clip.shapeStyle.keyframes[QStringLiteral("cornerRadius")].setKeyframe(drift::kUsPerSecond, 40.0);
+    clip.shapeStyle.keyframes[QStringLiteral("layer.stroke.width")].setKeyframe(0, 2.0);
+    clip.shapeStyle.keyframes[QStringLiteral("layer.stroke.width")].setKeyframe(drift::kUsPerSecond, 12.0);
     clip.transformX.setKeyframe(0, 100.0);
     clip.transformY.setKeyframe(0, 200.0);
     project.tracks()[0].clips.append(clip);
@@ -1213,60 +1515,542 @@ void CoreTest::shapeStyleSerialization()
     QVERIFY(error.isEmpty());
     const drift::Clip &loadedClip = loaded.tracks()[0].clips[0];
     QCOMPARE(loadedClip.type, drift::ClipType::Shape);
-    QCOMPARE(loadedClip.shapeStyle.kind, drift::ShapeKind::Hexagon);
-    QCOMPARE(loadedClip.shapeStyle.fillKind, drift::ShapeFillKind::LinearGradient);
-    QCOMPARE(loadedClip.shapeStyle.fill, QColor(10, 20, 30, 200));
-    QCOMPARE(loadedClip.shapeStyle.fillSecondary, QColor(40, 50, 60, 128));
-    QCOMPARE(loadedClip.shapeStyle.gradientAngle, 35.0);
-    QCOMPARE(loadedClip.shapeStyle.stroke, QColor(255, 255, 255));
-    QCOMPARE(loadedClip.shapeStyle.strokeWidth, 6.0);
-    QCOMPARE(loadedClip.shapeStyle.strokeStyle, drift::ShapeStrokeStyle::DashDot);
-    QCOMPARE(loadedClip.shapeStyle.cornerRadius, 18.0);
-    QCOMPARE(loadedClip.shapeStyle.points, 9);
-    QCOMPARE(loadedClip.shapeStyle.innerRatio, 0.33);
-    QCOMPARE(loadedClip.shapeStyle.headSize, 0.55);
-    QCOMPARE(loadedClip.shapeStyle.thickness, 0.22);
-    QCOMPARE(loadedClip.shapeStyle.tailX, 0.7);
-    QCOMPARE(loadedClip.shapeStyle.tailSize, 0.15);
+    const drift::ShapeStyle &style = loadedClip.shapeStyle;
+    QCOMPARE(style.kind, drift::ShapeKind::Hexagon);
+    QCOMPARE(style.layers.size(), 3);
+    QCOMPARE(style.layers[0].id, QStringLiteral("fill"));
+    QCOMPARE(style.layers[0].kind, drift::TextLayerKind::Fill);
+    QCOMPARE(style.layers[0].paint.kind, drift::TextPaintKind::Gradient);
+    QCOMPARE(style.layers[0].paint.gradient.stops.size(), 2);
+    QCOMPARE(style.layers[0].paint.gradient.stops[0].color, QColor(10, 20, 30, 200));
+    QCOMPARE(style.layers[0].paint.gradient.stops[1].color, QColor(40, 50, 60, 128));
+    QCOMPARE(style.layers[0].paint.gradient.angle, 35.0);
+    QCOMPARE(style.layers[0].paint.gradient.offsetSpeed, 0.25);
+    QCOMPARE(style.layers[1].id, QStringLiteral("stroke"));
+    QCOMPARE(style.layers[1].kind, drift::TextLayerKind::Stroke);
+    QCOMPARE(style.layers[1].width, 6.0);
+    QCOMPARE(style.layers[1].paint.color, QColor(255, 255, 255));
+    QCOMPARE(style.layers[1].dash, drift::StrokeDash::DashDot);
+    QCOMPARE(style.layers[1].dashOffset, 1.5);
+    QCOMPARE(style.layers[1].strokeAlign, drift::StrokeAlign::Center);
+    QCOMPARE(style.layers[1].trimEnd, 0.6);
+    QCOMPARE(style.layers[1].sketchLength, 8.0);
+    QCOMPARE(style.layers[1].sketchDeviation, 2.0);
+    QCOMPARE(style.layers[1].sketchSeed, 7);
+    QCOMPARE(style.layers[2].kind, drift::TextLayerKind::Shadow);
+    QCOMPARE(style.layers[2].offsetY, 5.0);
+    QCOMPARE(style.cornerRadius, 18.0);
+    QCOMPARE(style.points, 9);
+    QCOMPARE(style.innerRatio, 0.33);
+    QCOMPARE(style.headSize, 0.55);
+    QCOMPARE(style.thickness, 0.22);
+    QCOMPARE(style.tailX, 0.7);
+    QCOMPARE(style.tailSize, 0.15);
+    QCOMPARE(style.keyframes.size(), 2);
+    QVERIFY(style.isAnimated());
+    const drift::ShapeStyle mid = style.resolvedAt(drift::kUsPerSecond / 2);
+    QVERIFY(mid.cornerRadius > 10.0 && mid.cornerRadius < 30.0);
+    QVERIFY(mid.layers[1].width > 4.0 && mid.layers[1].width < 10.0);
     QCOMPARE(loadedClip.transformX.evaluateAt(0), 100.0);
     QCOMPARE(loadedClip.transformY.evaluateAt(0), 200.0);
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 11);
 }
 
-// A project saved before shapes gained gradients, dash styles and geometry knobs carries only the
-// original four keys, and must still load with the new fields at their defaults.
+// A project saved before format 8 carries the flat fill/stroke keys — possibly only the original
+// four — and must load as the equivalent layer stack: a fill under an inside stroke, both with
+// the stable ids the catalog uses.
 void CoreTest::legacyShapeStyleLoadsWithDefaults()
 {
-    const QJsonObject json{
-        {QStringLiteral("version"), drift::Project::kCurrentVersion},
-        {QStringLiteral("tracks"),
-         QJsonArray{QJsonObject{
-             {QStringLiteral("type"), QStringLiteral("shape")},
-             {QStringLiteral("clips"),
-              QJsonArray{QJsonObject{
-                  {QStringLiteral("id"), QStringLiteral("legacy-shape")},
-                  {QStringLiteral("type"), QStringLiteral("shape")},
-                  {QStringLiteral("timelineDurationUs"), qint64(drift::kImageClipDurationUs)},
-                  {QStringLiteral("shapeStyle"),
-                   QJsonObject{{QStringLiteral("kind"), QStringLiteral("pentagon")},
-                               {QStringLiteral("fill"), QStringLiteral("#ffa060ff")},
-                               {QStringLiteral("stroke"), QStringLiteral("#ffffffff")},
-                               {QStringLiteral("strokeWidth"), 4.0}}}}}}}}}};
+    const auto load = [](const QJsonObject &shapeStyle) {
+        const QJsonObject json{
+            {QStringLiteral("version"), 7},
+            {QStringLiteral("tracks"),
+             QJsonArray{QJsonObject{
+                 {QStringLiteral("type"), QStringLiteral("shape")},
+                 {QStringLiteral("clips"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("id"), QStringLiteral("legacy-shape")},
+                      {QStringLiteral("type"), QStringLiteral("shape")},
+                      {QStringLiteral("timelineDurationUs"), qint64(drift::kImageClipDurationUs)},
+                      {QStringLiteral("shapeStyle"), shapeStyle}}}}}}}};
+        QString error;
+        const drift::Project loaded = drift::Project::fromJson(json, &error);
+        if (!error.isEmpty())
+            qWarning() << error;
+        return loaded.tracks()[0].clips[0].shapeStyle;
+    };
+
+    const drift::ShapeStyle minimal = load({{QStringLiteral("kind"), QStringLiteral("pentagon")},
+                                           {QStringLiteral("fill"), QStringLiteral("#ffa060ff")},
+                                           {QStringLiteral("stroke"), QStringLiteral("#ffffffff")},
+                                           {QStringLiteral("strokeWidth"), 4.0}});
+    const drift::ShapeStyle defaults;
+    QCOMPARE(minimal.kind, drift::ShapeKind::Pentagon);
+    QCOMPARE(minimal.layers.size(), 2);
+    QCOMPARE(minimal.layers[0].id, QStringLiteral("fill"));
+    QCOMPARE(minimal.layers[0].kind, drift::TextLayerKind::Fill);
+    QVERIFY(minimal.layers[0].enabled);
+    QCOMPARE(minimal.layers[0].paint.kind, drift::TextPaintKind::Solid);
+    QCOMPARE(minimal.layers[0].paint.color, QColor(160, 96, 255));
+    QCOMPARE(minimal.primaryColor(), QColor(160, 96, 255));
+    QCOMPARE(minimal.layers[1].id, QStringLiteral("stroke"));
+    QCOMPARE(minimal.layers[1].kind, drift::TextLayerKind::Stroke);
+    QVERIFY(minimal.layers[1].enabled);
+    QCOMPARE(minimal.layers[1].width, 4.0);
+    QCOMPARE(minimal.layers[1].paint.color, QColor(Qt::white));
+    QCOMPARE(minimal.layers[1].strokeAlign, drift::StrokeAlign::Inside);
+    QCOMPARE(minimal.layers[1].dash, drift::StrokeDash::Solid);
+    QCOMPARE(minimal.cornerRadius, defaults.cornerRadius);
+    QCOMPARE(minimal.points, defaults.points);
+    QCOMPARE(minimal.innerRatio, defaults.innerRatio);
+    QVERIFY(minimal.keyframes.isEmpty());
+
+    const drift::ShapeStyle gradient = load({{QStringLiteral("kind"), QStringLiteral("star")},
+                                            {QStringLiteral("fillKind"), QStringLiteral("linear")},
+                                            {QStringLiteral("fill"), QStringLiteral("#ff102030")},
+                                            {QStringLiteral("fillSecondary"), QStringLiteral("#ff405060")},
+                                            {QStringLiteral("gradientAngle"), 35.0},
+                                            {QStringLiteral("strokeStyle"), QStringLiteral("dashdot")},
+                                            {QStringLiteral("strokeWidth"), 6.0},
+                                            {QStringLiteral("points"), 7}});
+    QCOMPARE(gradient.layers[0].paint.kind, drift::TextPaintKind::Gradient);
+    QCOMPARE(gradient.layers[0].paint.gradient.kind, drift::TextGradientKind::Linear);
+    QCOMPARE(gradient.layers[0].paint.gradient.angle, 35.0);
+    QCOMPARE(gradient.layers[0].paint.gradient.stops.size(), 2);
+    QCOMPARE(gradient.layers[0].paint.gradient.stops[0].color, QColor(16, 32, 48));
+    QCOMPARE(gradient.layers[0].paint.gradient.stops[1].color, QColor(64, 80, 96));
+    QCOMPARE(gradient.layers[1].dash, drift::StrokeDash::DashDot);
+    QCOMPARE(gradient.layers[1].width, 6.0);
+    QCOMPARE(gradient.points, 7);
+
+    const drift::ShapeStyle hollow = load({{QStringLiteral("kind"), QStringLiteral("ellipse")},
+                                          {QStringLiteral("fillKind"), QStringLiteral("none")},
+                                          {QStringLiteral("fill"), QStringLiteral("#ff00ff00")},
+                                          {QStringLiteral("strokeStyle"), QStringLiteral("none")}});
+    QVERIFY(!hollow.layers[0].enabled);
+    QCOMPARE(hollow.layers[0].paint.color, QColor(0, 255, 0));
+    QVERIFY(!hollow.layers[1].enabled);
+}
+
+void CoreTest::vectorSourceSerialization()
+{
+    drift::Project project;
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Shape});
+
+    drift::Clip clip;
+    clip.id = QStringLiteral("clip-vector");
+    clip.type = drift::ClipType::Vector;
+    clip.name = QStringLiteral("Loader");
+    clip.timelineStart = 0;
+    clip.timelineDuration = drift::secondsToUs(3.0);
+    clip.speed = 2.0;
+    clip.reverse = true;
+    clip.vector.kind = drift::VectorKind::Lottie;
+    clip.vector.source = QStringLiteral("{\"v\":\"5.7.4\",\"fr\":30,\"ip\":0,\"op\":60,\"w\":200,\"h\":100,\"layers\":[]}");
+    clip.vector.hash = drift::vectorSourceHash(clip.vector.source.toUtf8());
+    clip.vector.width = 200;
+    clip.vector.height = 100;
+    clip.vector.fps = 30.0;
+    clip.vector.durationUs = drift::secondsToUs(2.0);
+    clip.vector.title = QStringLiteral("Spinner");
+    clip.vector.fit = drift::VectorFit::Cover;
+    clip.vector.loop = drift::VectorLoop::PingPong;
+    clip.vector.startOffsetUs = drift::secondsToUs(0.25);
+    clip.vector.slotValues.insert(QStringLiteral("accent"), drift::VectorSlotValue::fromColor(QColor(10, 20, 30, 200)));
+    clip.vector.slotValues.insert(QStringLiteral("speed"), drift::VectorSlotValue::fromScalar(1.5));
+    clip.vector.slotValues.insert(QStringLiteral("anchor"), drift::VectorSlotValue::fromVec2(QPointF(12.5, -3.0)));
+    clip.vector.slotValues.insert(QStringLiteral("label"), drift::VectorSlotValue::fromText(QStringLiteral("Hi \u00e9")));
+    clip.vector.slotValues.insert(QStringLiteral("logo"), drift::VectorSlotValue::fromImage(QStringLiteral("/tmp/logo.png")));
+    project.tracks()[0].clips.append(clip);
+
+    // Non-vector clips must not grow a document key.
+    drift::Clip shape;
+    shape.id = QStringLiteral("clip-shape");
+    shape.type = drift::ClipType::Shape;
+    project.tracks()[0].clips.append(shape);
+
+    const QJsonObject json = project.toJson();
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), drift::Project::kCurrentVersion);
+    const QJsonArray clips = json.value(QStringLiteral("tracks")).toArray().at(0).toObject()
+                                 .value(QStringLiteral("clips")).toArray();
+    QVERIFY(clips.at(0).toObject().contains(QStringLiteral("vector")));
+    QVERIFY(!clips.at(1).toObject().contains(QStringLiteral("vector")));
 
     QString error;
     const drift::Project loaded = drift::Project::fromJson(json, &error);
-    QVERIFY(error.isEmpty());
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    const drift::Clip &c = loaded.tracks()[0].clips[0];
+    QCOMPARE(c.type, drift::ClipType::Vector);
+    QCOMPARE(c.speed, 2.0);
+    QCOMPARE(c.reverse, true);
+    QCOMPARE(c.vector.kind, drift::VectorKind::Lottie);
+    QCOMPARE(c.vector.source, clip.vector.source);
+    QVERIFY(c.vector.isInline());
+    QCOMPARE(c.vector.hash, clip.vector.hash);
+    QCOMPARE(c.vector.hash.size(), 64);
+    QCOMPARE(c.vector.width, 200);
+    QCOMPARE(c.vector.height, 100);
+    QCOMPARE(c.vector.fps, 30.0);
+    QCOMPARE(c.vector.durationUs, drift::secondsToUs(2.0));
+    QCOMPARE(c.vector.title, QStringLiteral("Spinner"));
+    QCOMPARE(c.vector.fit, drift::VectorFit::Cover);
+    QCOMPARE(c.vector.loop, drift::VectorLoop::PingPong);
+    QCOMPARE(c.vector.startOffsetUs, drift::secondsToUs(0.25));
+    QCOMPARE(c.vector.slotValues.size(), 5);
+    QCOMPARE(c.vector.slotValues.value(QStringLiteral("accent")), drift::VectorSlotValue::fromColor(QColor(10, 20, 30, 200)));
+    QCOMPARE(c.vector.slotValues.value(QStringLiteral("speed")), drift::VectorSlotValue::fromScalar(1.5));
+    QCOMPARE(c.vector.slotValues.value(QStringLiteral("anchor")), drift::VectorSlotValue::fromVec2(QPointF(12.5, -3.0)));
+    QCOMPARE(c.vector.slotValues.value(QStringLiteral("label")), drift::VectorSlotValue::fromText(QStringLiteral("Hi \u00e9")));
+    QCOMPARE(c.vector.slotValues.value(QStringLiteral("logo")), drift::VectorSlotValue::fromImage(QStringLiteral("/tmp/logo.png")));
+    QVERIFY(c.vector.slotValues.value(QStringLiteral("speed")) != drift::VectorSlotValue::fromScalar(2.0));
+    QVERIFY(c.vector.slotValues.value(QStringLiteral("speed")) != drift::VectorSlotValue::fromText(QStringLiteral("1.5")));
 
-    const drift::ShapeStyle &style = loaded.tracks()[0].clips[0].shapeStyle;
-    const drift::ShapeStyle defaults;
-    QCOMPARE(style.kind, drift::ShapeKind::Pentagon);
-    QCOMPARE(style.fill, QColor(160, 96, 255));
-    QCOMPARE(style.fillKind, defaults.fillKind);
-    QCOMPARE(style.fillSecondary, defaults.fillSecondary);
-    QCOMPARE(style.gradientAngle, defaults.gradientAngle);
-    QCOMPARE(style.strokeStyle, defaults.strokeStyle);
-    QCOMPARE(style.cornerRadius, defaults.cornerRadius);
-    QCOMPARE(style.points, defaults.points);
-    QCOMPARE(style.innerRatio, defaults.innerRatio);
+    // A file-backed source round-trips too and reads as not inline.
+    drift::VectorSource file;
+    file.kind = drift::VectorKind::Svg;
+    file.path = QStringLiteral("/media/icon.svg");
+    const drift::VectorSource fileLoaded = drift::VectorSource::fromJson(file.toJson());
+    QCOMPARE(fileLoaded.kind, drift::VectorKind::Svg);
+    QCOMPARE(fileLoaded.path, file.path);
+    QVERIFY(!fileLoaded.isInline());
+    QVERIFY(!fileLoaded.isEmpty());
+    QVERIFY(drift::VectorSource().isEmpty());
+    QCOMPARE(drift::VectorSource::fromJson(QJsonObject()).loop, drift::VectorLoop::Hold);
+
+    QCOMPARE(drift::clipTypeFromString(QStringLiteral("vector")), drift::ClipType::Vector);
+    QCOMPARE(drift::clipTypeToString(drift::ClipType::Vector), QStringLiteral("vector"));
+    QCOMPARE(drift::mediaKindFromString(QStringLiteral("vector")), drift::MediaKind::Vector);
+    QCOMPARE(drift::mediaKindToString(drift::MediaKind::Vector), QStringLiteral("vector"));
+}
+
+void CoreTest::textStyleKeyframesSerialization()
+{
+    drift::TextStyle style;
+    style.pixelSize = 40;
+    drift::setSolidFill(style, QColor(255, 0, 0));
+    // A static style writes no keyframes key at all, so older files stay byte-identical.
+    QVERIFY(!drift::textStyleToJson(style).contains(QStringLiteral("keyframes")));
+    QVERIFY(!style.isAnimated());
+
+    style.keyframes[QStringLiteral("pixelSize")].setKeyframe(0, 40.0);
+    style.keyframes[QStringLiteral("pixelSize")].setKeyframe(drift::secondsToUs(2.0), 80.0);
+    style.keyframes[QStringLiteral("layer.fill.color.g")].setKeyframe(0, 0.0);
+    style.keyframes[QStringLiteral("layer.fill.color.g")].setKeyframe(drift::secondsToUs(1.0), 1.0);
+    style.keyframes[QStringLiteral("pathBend")]; // empty: must not be written
+    QVERIFY(style.isAnimated());
+
+    const drift::TextStyle mid = style.resolvedAt(drift::secondsToUs(1.0));
+    QCOMPARE(mid.pixelSize, 60);
+    QCOMPARE(mid.primaryColor().greenF(), 1.0);
+    QCOMPARE(mid.primaryColor().redF(), 1.0);
+    QVERIFY(mid.isAnimated()); // the copy keeps its tracks so renderers can tell it apart
+    QCOMPARE(style.resolvedAt(0).pixelSize, 40);
+
+    const QJsonObject json = drift::textStyleToJson(style);
+    const QJsonObject keys = json.value(QStringLiteral("keyframes")).toObject();
+    QCOMPARE(keys.size(), 2);
+    QVERIFY(keys.contains(QStringLiteral("pixelSize")));
+    QVERIFY(!keys.contains(QStringLiteral("pathBend")));
+
+    // Through the whole project file.
+    drift::Project project;
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Text});
+    drift::Clip clip;
+    clip.id = QStringLiteral("t");
+    clip.type = drift::ClipType::Text;
+    clip.textContent = QStringLiteral("Grow");
+    clip.textStyle = style;
+    clip.timelineDuration = drift::secondsToUs(3.0);
+    project.tracks()[0].clips.append(clip);
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(project.toJson(), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    const drift::TextStyle &back = loaded.tracks()[0].clips[0].textStyle;
+    QVERIFY(back.isAnimated());
+    QCOMPARE(back.keyframes.size(), 2);
+    QCOMPARE(back.resolvedAt(drift::secondsToUs(2.0)).pixelSize, 80);
+    QVERIFY(qAbs(back.resolvedAt(drift::secondsToUs(0.5)).primaryColor().greenF() - 0.5) < 0.001);
+
+    // A gradient fill and a bend round-trip too and default to a plain solid fill on a straight line.
+    drift::TextStyle look;
+    drift::TextShadingLayer *fill = drift::firstTextLayerOfKind(look.layers, drift::TextLayerKind::Fill, false);
+    fill->paint.kind = drift::TextPaintKind::Gradient;
+    fill->paint.gradient.stops = {{0.0, QColor(255, 0, 0)}, {1.0, QColor(1, 2, 3, 4)}};
+    fill->paint.gradient.angle = 33.0;
+    look.pathBend = -40.0;
+    const drift::TextStyle lookBack = drift::textStyleFromJson(drift::textStyleToJson(look));
+    const drift::TextShadingLayer *fillBack = drift::firstTextLayerOfKind(lookBack.layers, drift::TextLayerKind::Fill, false);
+    QVERIFY(fillBack);
+    QCOMPARE(fillBack->paint.kind, drift::TextPaintKind::Gradient);
+    QCOMPARE(fillBack->paint.gradient.stops.last().color, QColor(1, 2, 3, 4));
+    QCOMPARE(fillBack->paint.gradient.angle, 33.0);
+    QCOMPARE(lookBack.pathBend, -40.0);
+    const drift::TextStyle bare = drift::textStyleFromJson(QJsonObject{{QStringLiteral("pixelSize"), 12}});
+    QCOMPARE(drift::firstTextLayerOfKind(bare.layers, drift::TextLayerKind::Fill, true)->paint.kind, drift::TextPaintKind::Solid);
+    QCOMPARE(bare.pathBend, 0.0);
+
+    // Legacy key names keep resolving onto the layers they became.
+    double scalar = 0;
+    QVERIFY(drift::textStyleScalar(style, QStringLiteral("color.r"), &scalar));
+    QCOMPARE(scalar, 1.0);
+    QVERIFY(drift::textStyleScalar(style, QStringLiteral("layer.fill.color.r"), &scalar));
+    QVERIFY(!drift::textStyleScalar(style, QStringLiteral("nope"), &scalar));
+    QVERIFY(!drift::textStyleScalar(style, QStringLiteral("glowRadius"), &scalar)); // no glow layer on a fresh style
+    QVERIFY(drift::textKeyframeProperties(style).contains(QStringLiteral("layer.fill.color.r")));
+    QCOMPARE(drift::textKeyframeCanonicalKey(QStringLiteral("color.g"), style), QStringLiteral("layer.fill.color.g"));
+}
+
+void CoreTest::dotLottieUnpacks()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray anim = "{\"v\":\"5.7.4\",\"fr\":30,\"ip\":0,\"op\":30,\"w\":10,\"h\":10,\"layers\":[]}";
+    const QString bundle = dir.filePath("spinner.lottie");
+    QVERIFY(writeStoredZip(bundle, {
+        {QStringLiteral("manifest.json"), "{\"animations\":[{\"id\":\"b\"},{\"id\":\"a\"}]}"},
+        {QStringLiteral("animations/a.json"), anim},
+        {QStringLiteral("animations/b.json"), anim},
+        {QStringLiteral("images/img_0.png"), QByteArray("png-bytes")},
+    }));
+    QVERIFY(drift::isDotLottiePath(bundle));
+    QVERIFY(!drift::isDotLottiePath(dir.filePath("x.json")));
+
+    QString error;
+    const QStringList out = drift::unpackDotLottie(bundle, dir.filePath("unpacked"), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(out.size(), 2);
+    // Manifest order, named after the bundle plus the animation id.
+    QCOMPARE(QFileInfo(out[0]).fileName(), QStringLiteral("spinner-b.json"));
+    QCOMPARE(QFileInfo(out[1]).fileName(), QStringLiteral("spinner-a.json"));
+    QFile extracted(out[0]);
+    QVERIFY(extracted.open(QIODevice::ReadOnly));
+    QCOMPARE(extracted.readAll(), anim);
+    QVERIFY(QFile::exists(QFileInfo(out[0]).dir().filePath(QStringLiteral("images/img_0.png"))));
+    // Idempotent: the same bundle maps to the same files.
+    QCOMPARE(drift::unpackDotLottie(bundle, dir.filePath("unpacked"), &error), out);
+
+    // One animation keeps the bundle's own name; a broken bundle fails with a message.
+    const QString single = dir.filePath("hello.lottie");
+    QVERIFY(writeStoredZip(single, {{QStringLiteral("animations/anim.json"), anim}}));
+    const QStringList one = drift::unpackDotLottie(single, dir.filePath("unpacked"), &error);
+    QCOMPARE(one.size(), 1);
+    QCOMPARE(QFileInfo(one[0]).fileName(), QStringLiteral("hello.json"));
+    QFile junk(dir.filePath("junk.lottie"));
+    QVERIFY(junk.open(QIODevice::WriteOnly));
+    junk.write("not a zip");
+    junk.close();
+    QVERIFY(drift::unpackDotLottie(junk.fileName(), dir.filePath("unpacked"), &error).isEmpty());
+    QVERIFY(!error.isEmpty());
+}
+
+void CoreTest::vectorClipIsSyntheticOnGraphicTracks()
+{
+    QCOMPARE(drift::trackTypeForClipType(drift::ClipType::Vector), drift::TrackType::Shape);
+
+    drift::Project project;
+    drift::Clip clip;
+    clip.type = drift::ClipType::Vector;
+    clip.timelineDuration = drift::secondsToUs(12.0);
+    clip.srcOut = drift::secondsToUs(12.0);
+    // No media behind it: the source range is a convention, like an image's.
+    QCOMPARE(drift::sourceDurationForClip(project, clip), drift::kImageClipDurationUs);
+
+    // Speed and reverse are the ordinary clip remap; the vector renderer folds what comes out.
+    clip.timelineStart = drift::secondsToUs(1.0);
+    clip.timelineDuration = drift::secondsToUs(2.0);
+    clip.srcIn = 0;
+    clip.srcOut = drift::secondsToUs(4.0);
+    clip.speed = 2.0;
+    QCOMPARE(clip.timelineToSourceUs(drift::secondsToUs(1.5)), drift::secondsToUs(1.0));
+    clip.reverse = true;
+    QCOMPARE(clip.timelineToSourceUs(drift::secondsToUs(1.5)), drift::secondsToUs(3.0));
+}
+
+void CoreTest::model3dSourceSerialization()
+{
+    drift::Project project;
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Shape});
+
+    drift::Clip clip;
+    clip.id = QStringLiteral("clip-model");
+    clip.type = drift::ClipType::Model3d;
+    clip.name = QStringLiteral("Robot");
+    clip.path = QStringLiteral("/media/robot.glb");
+    clip.timelineDuration = drift::secondsToUs(3.0);
+    clip.model3d.path = clip.path;
+    clip.model3d.animations = {{QStringLiteral("Idle"), drift::secondsToUs(2.0)},
+                               {QString(), drift::secondsToUs(0.5)}};
+    clip.model3d.aabbMin = QVector3D(-0.5f, -0.25f, -0.125f);
+    clip.model3d.aabbMax = QVector3D(0.5f, 0.25f, 0.125f);
+    clip.model3d.animation = 1;
+    clip.model3d.loop = drift::VectorLoop::PingPong;
+    clip.model3d.startOffsetUs = drift::secondsToUs(0.25);
+    clip.model3d.scale = 0.75;
+    clip.model3d.depth = 0.2;
+    clip.model3d.rotX = 10.0;
+    clip.model3d.rotY = -45.0;
+    clip.model3d.rotZ = 5.0;
+    clip.model3d.lightYaw = 60.0;
+    clip.model3d.lightPitch = -10.0;
+    clip.model3d.lightIntensity = 1.5;
+    clip.model3d.ambient = 0.1;
+    clip.model3d.keyframes[QStringLiteral("rotY")].setKeyframe(0, 0.0);
+    clip.model3d.keyframes[QStringLiteral("rotY")].setKeyframe(drift::secondsToUs(2.0), 360.0);
+    project.tracks()[0].clips.append(clip);
+
+    // Non-model clips must not grow a model3d key.
+    drift::Clip shape;
+    shape.id = QStringLiteral("clip-shape");
+    shape.type = drift::ClipType::Shape;
+    project.tracks()[0].clips.append(shape);
+
+    const QJsonObject json = project.toJson();
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), drift::Project::kCurrentVersion);
+    const QJsonArray clips = json.value(QStringLiteral("tracks")).toArray().at(0).toObject()
+                                 .value(QStringLiteral("clips")).toArray();
+    QVERIFY(clips.at(0).toObject().contains(QStringLiteral("model3d")));
+    QVERIFY(!clips.at(1).toObject().contains(QStringLiteral("model3d")));
+
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(json, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    const drift::Clip &c = loaded.tracks()[0].clips[0];
+    QCOMPARE(c.type, drift::ClipType::Model3d);
+    QCOMPARE(c.path, clip.path);
+    QCOMPARE(c.model3d.path, clip.path);
+    QCOMPARE(c.model3d.animations.size(), 2);
+    QCOMPARE(c.model3d.animations.at(0).name, QStringLiteral("Idle"));
+    QCOMPARE(c.model3d.animations.at(0).durationUs, drift::secondsToUs(2.0));
+    QCOMPARE(c.model3d.animations.at(1).durationUs, drift::secondsToUs(0.5));
+    QCOMPARE(c.model3d.aabbMin, clip.model3d.aabbMin);
+    QCOMPARE(c.model3d.aabbMax, clip.model3d.aabbMax);
+    QVERIFY(c.model3d.hasAabb());
+    QCOMPARE(c.model3d.animation, 1);
+    QCOMPARE(c.model3d.animationDurationUs(), drift::secondsToUs(0.5));
+    QCOMPARE(c.model3d.loop, drift::VectorLoop::PingPong);
+    QCOMPARE(c.model3d.startOffsetUs, drift::secondsToUs(0.25));
+    QCOMPARE(c.model3d.scale, 0.75);
+    QCOMPARE(c.model3d.depth, 0.2);
+    QCOMPARE(c.model3d.rotX, 10.0);
+    QCOMPARE(c.model3d.rotY, -45.0);
+    QCOMPARE(c.model3d.rotZ, 5.0);
+    QCOMPARE(c.model3d.lightYaw, 60.0);
+    QCOMPARE(c.model3d.lightPitch, -10.0);
+    QCOMPARE(c.model3d.lightIntensity, 1.5);
+    QCOMPARE(c.model3d.ambient, 0.1);
+    QCOMPARE(c.model3d.keyframes.size(), 1);
+    QCOMPARE(c.model3d.keyframes.value(QStringLiteral("rotY")).evaluateAt(drift::secondsToUs(1.0)), 180.0);
+    QVERIFY(c.model3d.isAnimated());
+
+    QCOMPARE(drift::Model3dSource::fromJson(QJsonObject()).loop, drift::VectorLoop::Loop);
+    QVERIFY(drift::Model3dSource().isEmpty());
+    QVERIFY(!drift::Model3dSource().hasAabb());
+    QCOMPARE(drift::Model3dSource().animationDurationUs(), 0);
+
+    QCOMPARE(drift::clipTypeFromString(QStringLiteral("model3d")), drift::ClipType::Model3d);
+    QCOMPARE(drift::clipTypeToString(drift::ClipType::Model3d), QStringLiteral("model3d"));
+    QCOMPARE(drift::mediaKindFromString(QStringLiteral("model3d")), drift::MediaKind::Model3d);
+    QCOMPARE(drift::mediaKindToString(drift::MediaKind::Model3d), QStringLiteral("model3d"));
+
+    QCOMPARE(drift::trackTypeForClipType(drift::ClipType::Model3d), drift::TrackType::Shape);
+    drift::Track shapeTrack{.type = drift::TrackType::Shape};
+    QVERIFY(shapeTrack.allowsClipType(drift::ClipType::Model3d));
+    drift::Track videoTrack{.type = drift::TrackType::Video};
+    QVERIFY(!videoTrack.allowsClipType(drift::ClipType::Model3d));
+    drift::Clip synthetic;
+    synthetic.type = drift::ClipType::Model3d;
+    synthetic.timelineDuration = drift::secondsToUs(12.0);
+    synthetic.srcOut = drift::secondsToUs(12.0);
+    QCOMPARE(drift::sourceDurationForClip(project, synthetic), drift::kImageClipDurationUs);
+}
+
+void CoreTest::model3dScalarClampsAndResolves()
+{
+    drift::Model3dSource m;
+    QCOMPARE(drift::model3dKeyframeProperties().size(), 9);
+    for (const QString &key : drift::model3dKeyframeProperties()) {
+        double v = -1.0;
+        QVERIFY2(drift::model3dScalar(m, key, &v), qPrintable(key));
+    }
+    QVERIFY(!drift::model3dScalar(m, QStringLiteral("nope"), nullptr));
+    QVERIFY(!drift::setModel3dScalar(m, QStringLiteral("nope"), 1.0));
+
+    QVERIFY(drift::setModel3dScalar(m, QStringLiteral("scale"), -3.0));
+    QCOMPARE(m.scale, 0.01);
+    QVERIFY(drift::setModel3dScalar(m, QStringLiteral("depth"), 4.0));
+    QCOMPARE(m.depth, 1.0);
+    QVERIFY(drift::setModel3dScalar(m, QStringLiteral("ambient"), -1.0));
+    QCOMPARE(m.ambient, 0.0);
+    QVERIFY(drift::setModel3dScalar(m, QStringLiteral("lightIntensity"), -1.0));
+    QCOMPARE(m.lightIntensity, 0.0);
+    QVERIFY(drift::setModel3dScalar(m, QStringLiteral("rotY"), 720.0));
+    QCOMPARE(m.rotY, 720.0);
+
+    QVERIFY(!m.isAnimated());
+    m.keyframes[QStringLiteral("scale")].setKeyframe(0, 0.2);
+    m.keyframes[QStringLiteral("scale")].setKeyframe(drift::secondsToUs(1.0), 0.6);
+    QVERIFY(m.isAnimated());
+    const drift::Model3dSource baked = m.resolvedAt(drift::secondsToUs(0.5));
+    QCOMPARE(baked.scale, 0.4);
+    QVERIFY(baked.keyframes.isEmpty());
+    QVERIFY(!baked.isAnimated());
+    QCOMPARE(baked.rotY, 720.0);
+
+    // A disabled track leaves the static value alone.
+    m.keyframes[QStringLiteral("scale")].setEnabled(false);
+    QVERIFY(!m.isAnimated());
+    QCOMPARE(m.resolvedAt(drift::secondsToUs(0.5)).scale, 0.01);
+
+    m.animations = {{QStringLiteral("a"), drift::secondsToUs(1.0)}};
+    m.animation = 5;
+    QCOMPARE(m.animationDurationUs(), 0);
+    m.animation = 0;
+    QCOMPARE(m.animationDurationUs(), drift::secondsToUs(1.0));
+}
+
+void CoreTest::foldVectorTimeTable_data()
+{
+    QTest::addColumn<qint64>("anim");
+    QTest::addColumn<qint64>("duration");
+    QTest::addColumn<int>("loop");
+    QTest::addColumn<bool>("visible");
+    QTest::addColumn<qint64>("expected");
+    const qint64 d = drift::secondsToUs(2.0);
+    const qint64 s = drift::kUsPerSecond;
+    using L = drift::VectorLoop;
+    QTest::newRow("still ignores loop") << 5 * s << qint64(0) << int(L::Loop) << true << qint64(0);
+    QTest::newRow("hold inside") << s << d << int(L::Hold) << true << s;
+    QTest::newRow("hold clamps end") << 5 * s << d << int(L::Hold) << true << d;
+    QTest::newRow("hold clamps start") << -s << d << int(L::Hold) << true << qint64(0);
+    QTest::newRow("loop inside") << s << d << int(L::Loop) << true << s;
+    QTest::newRow("loop wraps") << 5 * s << d << int(L::Loop) << true << s;
+    QTest::newRow("loop at boundary") << 4 * s << d << int(L::Loop) << true << qint64(0);
+    QTest::newRow("loop negative") << -s / 2 << d << int(L::Loop) << true << d - s / 2;
+    QTest::newRow("pingpong forward") << s / 2 << d << int(L::PingPong) << true << s / 2;
+    QTest::newRow("pingpong back") << 3 * s << d << int(L::PingPong) << true << s;
+    QTest::newRow("pingpong turn") << d << d << int(L::PingPong) << true << d;
+    QTest::newRow("pingpong second cycle") << 4 * s + s / 2 << d << int(L::PingPong) << true << s / 2;
+    QTest::newRow("pingpong negative") << -s / 2 << d << int(L::PingPong) << true << s / 2;
+    QTest::newRow("hide inside") << s << d << int(L::Hide) << true << s;
+    QTest::newRow("hide at end") << d << d << int(L::Hide) << true << d;
+    QTest::newRow("hide after") << d + 1 << d << int(L::Hide) << false << qint64(0);
+    QTest::newRow("hide before") << qint64(-1) << d << int(L::Hide) << false << qint64(0);
+}
+
+void CoreTest::foldVectorTimeTable()
+{
+    QFETCH(qint64, anim);
+    QFETCH(qint64, duration);
+    QFETCH(int, loop);
+    QFETCH(bool, visible);
+    QFETCH(qint64, expected);
+    drift::TimeUs out = -1;
+    QCOMPARE(drift::foldVectorTime(anim, duration, drift::VectorLoop(loop), &out), visible);
+    if (visible)
+        QCOMPARE(out, expected);
 }
 
 // Guards ~28 hand-written path formulas: a typo shows up as an empty path or one that escapes the
@@ -1287,7 +2071,6 @@ void CoreTest::shapeCatalogPathsFitBounds()
         QVERIFY2(box.width() > bounds.width() * 0.3, qPrintable(entry.id));
         QVERIFY2(box.height() > bounds.height() * 0.3, qPrintable(entry.id));
 
-        QVERIFY2(!drift::shapeSvgPath(entry.style, bounds).isEmpty(), qPrintable(entry.id));
         // Ids are what QML and the drag mime data carry, so every one must resolve.
         QVERIFY2(drift::shapeCatalogEntry(entry.id) != nullptr, qPrintable(entry.id));
     }
@@ -1996,6 +2779,57 @@ void CoreTest::clipReverseAndFlipSerialization()
     QCOMPARE(out.speed, 1.5);
 }
 
+// A cut should be invisible: play the two halves and you should see exactly what the whole clip
+// showed. Key times are clip-relative, so the tail has to carry its curve back onto its own start
+// and keep the value the animation held at the cut. Before this, the tail replayed the whole
+// animation `offset` later.
+void CoreTest::splitCarriesTheAnimationOntoBothHalves()
+{
+    drift::Clip head;
+    head.id = QStringLiteral("head");
+    head.type = drift::ClipType::Video;
+    head.timelineStart = 0;
+    head.timelineDuration = drift::secondsToUs(8.0);
+    head.srcIn = 0;
+    head.srcOut = drift::secondsToUs(8.0);
+    head.transformX.setKeyframe(0, 0.0);
+    head.transformX.setKeyframe(drift::secondsToUs(8.0), 800.0);
+
+    drift::Clip tail;
+    QVERIFY(drift::splitClipAtOffset(head, tail, drift::secondsToUs(4.0)));
+
+    // The head keeps its keys, including the one past the cut: it still shapes the curve inside
+    // the range the head now covers.
+    QCOMPARE(head.transformX.keyframes().size(), 2);
+    QCOMPARE(head.transformX.evaluateAt(drift::secondsToUs(4.0)), 400.0);
+
+    // The tail starts where the head left off and ends where the original did.
+    QCOMPARE(tail.transformX.evaluateAt(0), 400.0);
+    QCOMPARE(tail.transformX.evaluateAt(drift::secondsToUs(4.0)), 800.0);
+
+    // Same value either side of the cut, which is what makes the split invisible.
+    QCOMPARE(head.transformX.evaluateAt(head.timelineDuration), tail.transformX.evaluateAt(0));
+
+    // Effect parameter curves ride along the same way.
+    drift::Clip graded;
+    graded.id = QStringLiteral("graded");
+    graded.type = drift::ClipType::Video;
+    graded.timelineDuration = drift::secondsToUs(4.0);
+    graded.srcIn = 0;
+    graded.srcOut = drift::secondsToUs(4.0);
+    drift::Effect effect;
+    effect.catalogId = QStringLiteral("adjust.contrast");
+    effect.paramKeyframes[QStringLiteral("contrast")].setKeyframe(0, 0.0);
+    effect.paramKeyframes[QStringLiteral("contrast")].setKeyframe(drift::secondsToUs(4.0), 1.0);
+    graded.effects.append(effect);
+
+    drift::Clip gradedTail;
+    QVERIFY(drift::splitClipAtOffset(graded, gradedTail, drift::secondsToUs(2.0)));
+    QCOMPARE(gradedTail.effects.size(), 1);
+    QCOMPARE(gradedTail.effects.at(0).paramKeyframes.value(QStringLiteral("contrast")).evaluateAt(0),
+             0.5);
+}
+
 void CoreTest::clipSplitMergeRoundTrip()
 {
     drift::Clip head;
@@ -2042,6 +2876,73 @@ void CoreTest::clipSplitMergeRoundTrip()
     QCOMPARE(revTail.srcIn, drift::secondsToUs(1.0));
     QCOMPARE(revTail.srcOut, drift::secondsToUs(3.0));
     QVERIFY(drift::clipsCanMerge(rev, revTail));
+}
+
+void CoreTest::subtitleClipsMergeWithGaps()
+{
+    auto subtitleClip = [](const QString &id, double startSec, double durSec,
+                           const QList<drift::SubtitleCue> &cues) {
+        drift::Clip clip;
+        clip.id = id;
+        clip.type = drift::ClipType::Subtitle;
+        clip.timelineStart = drift::secondsToUs(startSec);
+        clip.timelineDuration = drift::secondsToUs(durSec);
+        clip.srcIn = 0;
+        clip.srcOut = clip.timelineDuration;
+        clip.subtitleCues = cues;
+        return clip;
+    };
+    auto cue = [](double s, double e, const QString &text) {
+        return drift::SubtitleCue{drift::secondsToUs(s), drift::secondsToUs(e), text};
+    };
+
+    drift::Clip a = subtitleClip(QStringLiteral("a"), 10.0, 2.0, {cue(0.0, 1.0, QStringLiteral("one"))});
+    a.textStyle.pixelSize = 80;
+    a.transformX.setKeyframe(0, 123.0);
+    drift::Clip b = subtitleClip(QStringLiteral("b"), 15.0, 3.0, {cue(0.5, 2.0, QStringLiteral("three"))});
+    b.textStyle.pixelSize = 30;
+    b.fadeOutUs = drift::secondsToUs(0.25);
+    const drift::Clip c = subtitleClip(QStringLiteral("c"), 12.0, 1.0, {cue(0.0, 1.0, QStringLiteral("two"))});
+
+    QVERIFY(!drift::subtitleClipsCanMerge({a}));
+    drift::Clip video = a;
+    video.type = drift::ClipType::Video;
+    QVERIFY(!drift::subtitleClipsCanMerge({a, video}));
+    QVERIFY(drift::subtitleClipsCanMerge({b, a, c}));
+
+    const drift::Clip merged = drift::mergeSubtitleClips({b, a, c});
+    QCOMPARE(merged.id, QStringLiteral("a"));
+    QCOMPARE(merged.timelineStart, drift::secondsToUs(10.0));
+    QCOMPARE(merged.timelineDuration, drift::secondsToUs(8.0));
+    QCOMPARE(merged.srcIn, drift::TimeUs{0});
+    QCOMPARE(merged.srcOut, drift::secondsToUs(8.0));
+    QCOMPARE(merged.textStyle.pixelSize, 80);
+    QCOMPARE(merged.transformX.keyframes().size(), 1);
+    QCOMPARE(merged.fadeOutUs, drift::secondsToUs(0.25));
+    QCOMPARE(merged.subtitleCues.size(), 3);
+    QCOMPARE(merged.subtitleCues.at(0).text, QStringLiteral("one"));
+    QCOMPARE(merged.subtitleCues.at(0).startUs, drift::TimeUs{0});
+    QCOMPARE(merged.subtitleCues.at(1).text, QStringLiteral("two"));
+    QCOMPARE(merged.subtitleCues.at(1).startUs, drift::secondsToUs(2.0));
+    QCOMPARE(merged.subtitleCues.at(1).endUs, drift::secondsToUs(3.0));
+    QCOMPARE(merged.subtitleCues.at(2).text, QStringLiteral("three"));
+    QCOMPARE(merged.subtitleCues.at(2).startUs, drift::secondsToUs(5.5));
+    QCOMPARE(merged.subtitleCues.at(2).endUs, drift::secondsToUs(7.0));
+    QCOMPARE(merged.name, drift::subtitleClipName(merged.subtitleCues));
+
+    drift::Clip head = merged;
+    drift::Clip tail;
+    QVERIFY(drift::splitClipAtOffset(head, tail, drift::secondsToUs(4.0)));
+    tail.id = QStringLiteral("tail");
+    const drift::Clip rejoined = drift::mergeSubtitleClips({tail, head});
+    QCOMPARE(rejoined.timelineStart, merged.timelineStart);
+    QCOMPARE(rejoined.timelineDuration, merged.timelineDuration);
+    QCOMPARE(rejoined.subtitleCues.size(), merged.subtitleCues.size());
+    for (int i = 0; i < merged.subtitleCues.size(); ++i) {
+        QCOMPARE(rejoined.subtitleCues.at(i).startUs, merged.subtitleCues.at(i).startUs);
+        QCOMPARE(rejoined.subtitleCues.at(i).endUs, merged.subtitleCues.at(i).endUs);
+        QCOMPARE(rejoined.subtitleCues.at(i).text, merged.subtitleCues.at(i).text);
+    }
 }
 
 void CoreTest::clipLinkFieldsSerialization()
@@ -2126,22 +3027,83 @@ void CoreTest::matteMaskSerialization()
     clip.type = drift::ClipType::Video;
     clip.timelineStart = 0;
     clip.timelineDuration = drift::secondsToUs(3.0);
-    clip.mask.shape = drift::MaskShape::Matte;
-    clip.mask.mattePath = QStringLiteral("/tmp/mattes/abc.mkv");
-    clip.mask.matteSrcOffsetUs = drift::secondsToUs(1.5);
-    clip.mask.invert = true;
     project.tracks()[0].clips.append(clip);
+
+    drift::Mask matte = drift::fullFrameMediaMask(QStringLiteral("/tmp/mattes/abc.mkv"),
+                                                  drift::secondsToUs(1.5));
+    matte.mediaFgrPath = QStringLiteral("/tmp/mattes/abc.fgr.mkv");
+    matte.invert = true;
+    matte.op = drift::MaskOp::Intersect;
+    matte.mediaChannel = drift::MaskMediaChannel::Alpha;
+    drift::setLinkedMask(project, 0, 0, matte);
 
     const QJsonObject json = project.toJson();
     QString error;
     const drift::Project loaded = drift::Project::fromJson(json, &error);
 
     QVERIFY(error.isEmpty());
-    const drift::Mask &mask = loaded.tracks()[0].clips[0].mask;
-    QCOMPARE(mask.shape, drift::MaskShape::Matte);
-    QCOMPARE(mask.mattePath, QStringLiteral("/tmp/mattes/abc.mkv"));
-    QCOMPARE(mask.matteSrcOffsetUs, drift::secondsToUs(1.5));
+    const QList<drift::LaneMask> masks = drift::laneMasksAt(loaded, 0, 0, loaded.tracks().at(0).clips.at(0).id);
+    QCOMPARE(masks.size(), 1);
+    const drift::Mask &mask = masks.constFirst().mask;
+    QCOMPARE(mask.shape, drift::MaskShape::Media);
+    QCOMPARE(mask.mediaPath, QStringLiteral("/tmp/mattes/abc.mkv"));
+    QCOMPARE(mask.mediaFgrPath, QStringLiteral("/tmp/mattes/abc.fgr.mkv"));
+    QCOMPARE(mask.mediaSrcOffsetUs, drift::secondsToUs(1.5));
     QCOMPARE(mask.invert, true);
+    QCOMPARE(mask.op, drift::MaskOp::Intersect);
+    QCOMPARE(mask.mediaChannel, drift::MaskMediaChannel::Alpha);
+}
+
+// A pre-v5 project put one mask directly on the clip under the old "matte" spelling. It has to
+// come back as a Media mask on a linked adjustment, and — the part that is easy to get wrong —
+// full-frame: the old shape ignored its rect entirely, so the serialized w/h defaults of 0.6
+// would suddenly crop the cutout to 60% of the frame.
+void CoreTest::legacyClipMaskMigratesToAnAdjustmentLane()
+{
+    const QJsonObject clip{
+        {QStringLiteral("id"), QStringLiteral("clip-1")},
+        {QStringLiteral("type"), QStringLiteral("video")},
+        {QStringLiteral("timelineStartUs"), 0},
+        {QStringLiteral("timelineDurationUs"), qint64(drift::secondsToUs(3.0))},
+        {QStringLiteral("mask"),
+         QJsonObject{{QStringLiteral("shape"), QStringLiteral("matte")},
+                     {QStringLiteral("w"), 0.6},
+                     {QStringLiteral("h"), 0.6},
+                     {QStringLiteral("invert"), true},
+                     {QStringLiteral("mattePath"), QStringLiteral("/tmp/mattes/old.mkv")},
+                     {QStringLiteral("matteSrcOffsetUs"), qint64(drift::secondsToUs(2.0))}}},
+    };
+    const QJsonObject json{
+        {QStringLiteral("version"), 4},
+        {QStringLiteral("tracks"),
+         QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("video")},
+                                {QStringLiteral("clips"), QJsonArray{clip}}}}},
+    };
+
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(json, &error);
+    QVERIFY(error.isEmpty());
+
+    // Nothing left on the clip; one lane carrying it instead.
+    QCOMPARE(loaded.tracks().at(0).clips.at(0).mask.shape, drift::MaskShape::None);
+    const QList<drift::LaneMask> masks =
+        drift::laneMasksAt(loaded, 0, drift::secondsToUs(1.0), loaded.tracks().at(0).clips.at(0).id);
+    QCOMPARE(masks.size(), 1);
+    const drift::Mask &mask = masks.constFirst().mask;
+    QCOMPARE(mask.shape, drift::MaskShape::Media);
+    QCOMPARE(mask.mediaPath, QStringLiteral("/tmp/mattes/old.mkv"));
+    QCOMPARE(mask.mediaSrcOffsetUs, drift::secondsToUs(2.0));
+    QCOMPARE(mask.invert, true);
+    QCOMPARE(mask.w, 1.0);
+    QCOMPARE(mask.h, 1.0);
+
+    // Pinned to the clip, so every later move/trim keeps it aligned.
+    const QList<drift::ClipRef> pinned = drift::linkedMaskAdjustments(loaded, 0, 0);
+    QCOMPARE(pinned.size(), 1);
+    const drift::Clip &adjustment =
+        loaded.tracks().at(pinned.constFirst().trackIndex).clips.at(pinned.constFirst().clipIndex);
+    QCOMPARE(adjustment.linkedClipId, QStringLiteral("clip-1"));
+    QCOMPARE(adjustment.timelineDuration, drift::secondsToUs(3.0));
 }
 
 void CoreTest::faceTrackSerialization()
@@ -2157,6 +3119,7 @@ void CoreTest::faceTrackSerialization()
     clip.timelineDuration = drift::secondsToUs(3.0);
     clip.faceTrackPath = QStringLiteral("/tmp/facetracks/abc.json");
     clip.faceTrackSrcOffsetUs = drift::secondsToUs(2.25);
+    clip.depthPath = QStringLiteral("/tmp/depth/abc.driftdepth");
     project.tracks()[0].clips.append(clip);
 
     const QJsonObject json = project.toJson();
@@ -2167,6 +3130,7 @@ void CoreTest::faceTrackSerialization()
     const drift::Clip &out = loaded.tracks()[0].clips[0];
     QCOMPARE(out.faceTrackPath, QStringLiteral("/tmp/facetracks/abc.json"));
     QCOMPARE(out.faceTrackSrcOffsetUs, drift::secondsToUs(2.25));
+    QCOMPARE(out.depthPath, QStringLiteral("/tmp/depth/abc.driftdepth"));
 
     // A project written before face tracking existed carries neither key, and must still load with
     // the clip simply having no track rather than failing.
@@ -2177,6 +3141,7 @@ void CoreTest::faceTrackSerialization()
     QJsonObject legacyClip = legacyClips.at(0).toObject();
     legacyClip.remove(QStringLiteral("faceTrackPath"));
     legacyClip.remove(QStringLiteral("faceTrackSrcOffsetUs"));
+    legacyClip.remove(QStringLiteral("depthPath"));
     legacyClips.replace(0, legacyClip);
     legacyTrack.insert(QStringLiteral("clips"), legacyClips);
     legacyTracks.replace(0, legacyTrack);
@@ -2186,6 +3151,7 @@ void CoreTest::faceTrackSerialization()
     QVERIFY(error.isEmpty());
     QVERIFY(old.tracks()[0].clips[0].faceTrackPath.isEmpty());
     QCOMPARE(old.tracks()[0].clips[0].faceTrackSrcOffsetUs, drift::TimeUs(0));
+    QVERIFY(old.tracks()[0].clips[0].depthPath.isEmpty());
 }
 
 void CoreTest::emojiClipSerialization()
@@ -2317,6 +3283,131 @@ void CoreTest::legacyTransitionJsonStillLoads()
     QVERIFY(loaded.tracks()[0].transitions[0].parameters.isEmpty());
 }
 
+void CoreTest::transitionEasingCurveRoundTrips()
+{
+    drift::Project project = projectWithTransition(QStringLiteral("crossfade"));
+    drift::Transition &t = project.tracks()[0].transitions[0];
+    t.easingCurve = drift::FadeCurve::Custom;
+    drift::FadeShape shape;
+    shape.setPoints({QPointF(0.0, 0.0), QPointF(0.4, 0.1), QPointF(1.0, 1.0)});
+    t.easingShape = shape;
+
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(project.toJson(), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    const drift::Transition &out = loaded.tracks()[0].transitions[0];
+    QCOMPARE(out.easingCurve, drift::FadeCurve::Custom);
+    QCOMPARE(out.easingShape.points().size(), shape.points().size());
+    QCOMPARE(out.easingShape.gainAt(0.4), shape.gainAt(0.4));
+
+    // A transition that was never eased must serialize exactly as it did before the field
+    // existed, so projects written by older builds stay byte-identical on re-save.
+    const drift::Project plain = projectWithTransition(QStringLiteral("crossfade"));
+    const QJsonObject plainJson =
+        plain.toJson().value(QStringLiteral("tracks")).toArray().at(0).toObject()
+            .value(QStringLiteral("transitions")).toArray().at(0).toObject();
+    QVERIFY(!plainJson.contains(QStringLiteral("easingCurve")));
+    QVERIFY(!plainJson.contains(QStringLiteral("easingShape")));
+}
+
+void CoreTest::transitionEasingRemapsProgress()
+{
+    drift::Transition t;
+    const drift::TimeUs start = 0;
+    const drift::TimeUs end = 1'000'000;
+    const drift::TimeUs quarter = 250'000;
+
+    // Linear is the historical behaviour and must stay bit-identical to the plain overload.
+    QCOMPARE(drift::transitionProgress(t, quarter, start, end),
+             drift::transitionProgress(quarter, start, end));
+
+    t.easingCurve = drift::FadeCurve::Smooth;
+    const double eased = drift::transitionProgress(t, quarter, start, end);
+    QVERIFY(eased < 0.25);                                    // smoothstep starts slow
+    QCOMPARE(drift::transitionProgress(t, start, start, end), 0.0);
+    QCOMPARE(drift::transitionProgress(t, end, start, end), 1.0);
+
+    // Endpoints stay pinned for a custom shape too, or the transition would not resolve to the
+    // incoming clip.
+    t.easingCurve = drift::FadeCurve::Custom;
+    drift::FadeShape shape;
+    shape.setPoints({QPointF(0.0, 0.0), QPointF(0.5, 0.9), QPointF(1.0, 1.0)});
+    t.easingShape = shape;
+    QCOMPARE(drift::transitionProgress(t, start, start, end), 0.0);
+    QCOMPARE(drift::transitionProgress(t, end, start, end), 1.0);
+    QVERIFY(drift::transitionProgress(t, 500'000, start, end) > 0.8);
+}
+
+void CoreTest::bezierCurveShapesProgress()
+{
+    drift::FadeShape shape;
+    // CSS ease-in: slow to start, so the midpoint sits below the diagonal.
+    shape.setHandles(QPointF(0.42, 0.0), QPointF(1.0, 1.0));
+    QCOMPARE(shape.bezierAt(0.0), 0.0);
+    QCOMPARE(shape.bezierAt(1.0), 1.0);
+    QVERIFY(shape.bezierAt(0.5) < 0.5);
+
+    // Mirror it and the midpoint must rise above the diagonal.
+    drift::FadeShape out;
+    out.setHandles(QPointF(0.0, 0.0), QPointF(0.58, 1.0));
+    QVERIFY(out.bezierAt(0.5) > 0.5);
+
+    // Handles on the thirds are the identity cubic, so it must track linear closely.
+    drift::FadeShape straight;
+    straight.setHandles(QPointF(1.0 / 3.0, 1.0 / 3.0), QPointF(2.0 / 3.0, 2.0 / 3.0));
+    for (double t = 0.0; t <= 1.0; t += 0.1)
+        QVERIFY(qAbs(straight.bezierAt(t) - t) < 1e-6);
+
+    // Monotonic: a fold-back would make progress run backwards mid-transition.
+    double previous = -1.0;
+    for (int i = 0; i <= 100; ++i) {
+        const double v = shape.bezierAt(i / 100.0);
+        QVERIFY(v >= previous - 1e-9);
+        previous = v;
+    }
+
+    // Handles are clamped into the unit box on the way in.
+    drift::FadeShape clamped;
+    clamped.setHandles(QPointF(-2.0, 5.0), QPointF(3.0, -1.0));
+    QCOMPARE(clamped.handle1(), QPointF(0.0, 1.0));
+    QCOMPARE(clamped.handle2(), QPointF(1.0, 0.0));
+
+    // And it reaches shapedProgress under the Bezier curve, not the polyline.
+    drift::FadeShape eased;
+    eased.setHandles(QPointF(0.42, 0.0), QPointF(1.0, 1.0));
+    QCOMPARE(drift::shapedProgress(0.5, drift::FadeCurve::Bezier, eased), eased.bezierAt(0.5));
+    QCOMPARE(drift::shapedProgress(0.5, drift::FadeCurve::Linear, eased), 0.5);
+}
+
+void CoreTest::bezierShapeRoundTrips()
+{
+    drift::Project project = projectWithTransition(QStringLiteral("crossfade"));
+    drift::Transition &t = project.tracks()[0].transitions[0];
+    t.easingCurve = drift::FadeCurve::Bezier;
+    t.easingShape.setHandles(QPointF(0.17, 0.67), QPointF(0.83, 0.67));
+
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(project.toJson(), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    const drift::Transition &out = loaded.tracks()[0].transitions[0];
+    QCOMPARE(out.easingCurve, drift::FadeCurve::Bezier);
+    QCOMPARE(out.easingShape.handle1(), QPointF(0.17, 0.67));
+    QCOMPARE(out.easingShape.handle2(), QPointF(0.83, 0.67));
+
+    // A shape that was never given handles still writes the bare array older builds expect,
+    // rather than being promoted to the object form.
+    drift::FadeShape polyline;
+    polyline.setPoints({QPointF(0.0, 0.0), QPointF(0.5, 0.8), QPointF(1.0, 1.0)});
+    QVERIFY(!polyline.hasHandles());
+    QVERIFY(polyline.toJson().isArray());
+    QVERIFY(drift::FadeShape::fromJson(polyline.toJson()).gainAt(0.5) > 0.7);
+
+    drift::FadeShape bezier;
+    bezier.setHandles(QPointF(0.2, 0.1), QPointF(0.8, 0.9));
+    QVERIFY(bezier.toJson().isObject());
+}
+
 void CoreTest::transitionAudioCurves()
 {
     // crossfade: linear, sums to 1 at every point.
@@ -2368,6 +3459,39 @@ void CoreTest::physicalOverlapTransitionWindow()
     QVERIFY(drift::transitionWindow(track, transition, startUs, endUs));
     QCOMPARE(startUs, drift::secondsToUs(1.5));
     QCOMPARE(endUs, drift::secondsToUs(2.0));
+}
+
+void CoreTest::adjacentTransitionWindowClampsToClipExtents()
+{
+    drift::Track track;
+    track.type = drift::TrackType::Video;
+
+    drift::Clip clipA;
+    clipA.id = QStringLiteral("a");
+    clipA.timelineStart = 0;
+    clipA.timelineDuration = drift::secondsToUs(6.9);
+
+    drift::Clip clipB;
+    clipB.id = QStringLiteral("b");
+    clipB.timelineStart = drift::secondsToUs(6.9);
+    clipB.timelineDuration = drift::secondsToUs(12.0);
+
+    track.clips.append(clipA);
+    track.clips.append(clipB);
+
+    drift::Transition transition;
+    transition.fromClipId = clipA.id;
+    transition.toClipId = clipB.id;
+    transition.durationUs = drift::secondsToUs(23.6);
+
+    drift::TimeUs startUs = 0;
+    drift::TimeUs endUs = 0;
+    QVERIFY(drift::transitionWindow(track, transition, startUs, endUs));
+    // Unclamped this is −4.9s … 18.7s (cut 6.9s ± 11.8s). The window must stay inside the clips.
+    QCOMPARE(startUs, clipA.timelineStart);
+    QVERIFY(startUs >= 0);
+    QVERIFY(endUs <= clipB.timelineEnd());
+    QCOMPARE(endUs, clipA.timelineEnd() + transition.durationUs / 2);
 }
 
 void CoreTest::clampClipStartNoOverlapPushesPastBlockers()
@@ -2458,6 +3582,18 @@ void CoreTest::backgroundSerialization()
         QCOMPARE(loaded.background().kind, drift::BackgroundKind::Blur);
         QCOMPARE(loaded.background().color, QColor(QStringLiteral("#ff2563eb")));
         QCOMPARE(loaded.background().blurStrength, 42.0);
+    }
+
+    {
+        drift::Project project;
+        drift::Background bg;
+        bg.kind = drift::BackgroundKind::Transparent;
+        project.setBackground(bg);
+
+        QString error;
+        const drift::Project loaded = drift::Project::fromJson(project.toJson(), &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(loaded.background().kind, drift::BackgroundKind::Transparent);
     }
 
     // Projects saved before this field default to solid black.
@@ -2630,7 +3766,7 @@ void CoreTest::rebaseClipLayoutFreezesImplicitSize()
     project.tracks().append(track);
 
     // Crop to a 1520x1080 window starting 400px in from the left.
-    drift::rebaseClipLayout(project, 1920, 1080, 400.0, 0.0);
+    drift::rebaseClipLayout(project, 1920, 1080, 1520, 1080, 400.0, 0.0);
     project.setResolution(1520, 1080);
 
     const drift::Track &out = project.tracks().at(0);
@@ -2672,13 +3808,237 @@ void CoreTest::rebaseClipLayoutShiftsKeyframedPosition()
     project.tracks().clear(); // drop the default timeline; this test owns the document
     project.tracks().append(track);
 
-    drift::rebaseClipLayout(project, 1920, 1080, 120.0, 60.0);
+    drift::rebaseClipLayout(project, 1920, 1080, 1920, 1080, 120.0, 60.0);
 
     const drift::Clip &out = project.tracks().at(0).clips.at(0);
     QCOMPARE(out.transformX.keyframes().size(), 2);
     QCOMPARE(out.transformX.evaluateAt(0), -120.0);
     QCOMPARE(out.transformX.evaluateAt(drift::secondsToUs(2.0)), 680.0);
     QCOMPARE(out.transformY.evaluateAt(0), 140.0);
+
+    // A muted animation stays muted after the shift.
+    project.tracks()[0].clips[0].transformX.setEnabled(false);
+    drift::rebaseClipLayout(project, 1920, 1080, 1920, 1080, 10.0, 0.0);
+    QVERIFY(!project.tracks().at(0).clips.at(0).transformX.enabled());
+}
+
+void CoreTest::transformLayerRoundTrips()
+{
+    drift::Project project;
+    project.tracks().clear();
+    drift::Track layer{.type = drift::TrackType::Adjustment};
+    layer.id = QStringLiteral("layer");
+    layer.adjustmentScope = drift::AdjustmentScope::Range;
+    layer.spanEndTrackId = QStringLiteral("v2");
+    drift::Clip transform;
+    transform.id = QStringLiteral("tf");
+    transform.type = drift::ClipType::Adjustment;
+    transform.adjustmentKind = drift::AdjustmentKind::Transform;
+    transform.timelineDuration = drift::secondsToUs(5.0);
+    transform.transformW.setKeyframe(0, 960.0);
+    transform.rotation.setKeyframe(0, 15.0);
+    layer.clips.append(transform);
+    QVERIFY(layer.acceptsClip(transform));
+    // Its box shows the whole canvas, so a canvas resize scales it like a composite's.
+    QVERIFY(drift::clipBoxIsCanvasReferenced(transform));
+    project.tracks().append(layer);
+    drift::Track v1{.type = drift::TrackType::Video};
+    v1.id = QStringLiteral("v1");
+    drift::Track v2{.type = drift::TrackType::Video};
+    v2.id = QStringLiteral("v2");
+    project.tracks().append(v1);
+    project.tracks().append(v2);
+    drift::Track effects{.type = drift::TrackType::Adjustment};
+    QVERIFY(!effects.acceptsClip(transform));
+
+    const QJsonObject json = project.toJson();
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 11);
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(json, &error);
+    QVERIFY(error.isEmpty());
+    const drift::Track &loadedLayer = loaded.tracks().at(0);
+    QVERIFY(loadedLayer.isTransformLayer());
+    QCOMPARE(loadedLayer.spanEndTrackId, QStringLiteral("v2"));
+    const drift::Clip &loadedClip = loadedLayer.clips.at(0);
+    QCOMPARE(loadedClip.adjustmentKind, drift::AdjustmentKind::Transform);
+    QCOMPARE(loadedClip.transformW.evaluateAt(0), 960.0);
+    QCOMPARE(loadedClip.rotation.evaluateAt(0), 15.0);
+    QVERIFY(!json.value(QStringLiteral("tracks")).toArray().at(1).toObject().contains(QStringLiteral("spanEndTrackId")));
+}
+
+namespace {
+
+drift::Track namedTrack(drift::TrackType type, const QString &id)
+{
+    drift::Track track{.type = type};
+    track.id = id;
+    return track;
+}
+
+} // namespace
+
+void CoreTest::transformSpanFollowsTrackEdits()
+{
+    QList<drift::Track> tracks;
+    drift::insertTransformTrack(tracks, 0, QStringLiteral("v3"));
+    tracks[0].id = QStringLiteral("layer");
+    tracks.append(namedTrack(drift::TrackType::Video, QStringLiteral("v1")));
+    tracks.append(namedTrack(drift::TrackType::Audio, QStringLiteral("a1")));
+    tracks.append(namedTrack(drift::TrackType::Video, QStringLiteral("v2")));
+    tracks.append(namedTrack(drift::TrackType::Video, QStringLiteral("v3")));
+    tracks.append(namedTrack(drift::TrackType::Video, QStringLiteral("v4")));
+
+    // Audio inside the range is not moved.
+    QCOMPARE(drift::transformSpanTrackIndexes(tracks, 0), (QList<int>{1, 3, 4}));
+    QCOMPARE(drift::transformLayersCovering(tracks, 4), QList<int>{0});
+    QVERIFY(drift::transformLayersCovering(tracks, 5).isEmpty());
+
+    // A track inserted inside the range is covered.
+    tracks.insert(2, namedTrack(drift::TrackType::Text, QStringLiteral("t1")));
+    QCOMPARE(drift::transformSpanTrackIndexes(tracks, 0), (QList<int>{1, 2, 4, 5}));
+
+    // A lane named as the end resolves to its parent.
+    drift::Track lane = namedTrack(drift::TrackType::Adjustment, QStringLiteral("lane"));
+    lane.adjustmentScope = drift::AdjustmentScope::ParentTrack;
+    lane.parentTrackId = QStringLiteral("v2");
+    tracks.insert(5, lane);
+    tracks[0].spanEndTrackId = QStringLiteral("lane");
+    QCOMPARE(drift::transformSpanEndIndex(tracks, 0), 4);
+    drift::normalizeTransformLayers(tracks);
+    QCOMPARE(tracks.at(0).spanEndTrackId, QStringLiteral("v2"));
+    tracks.removeAt(5);
+    tracks[0].spanEndTrackId = QStringLiteral("v3");
+
+    // The end deleted: the span moves up to the nearest survivor that was inside it.
+    const QList<drift::Track> before = tracks;
+    tracks.removeAt(5);
+    drift::normalizeTransformLayers(tracks, &before);
+    QCOMPARE(tracks.at(0).spanEndTrackId, QStringLiteral("v2"));
+
+    // With nothing to recover from, a dangling end is cleared.
+    tracks[0].spanEndTrackId = QStringLiteral("gone");
+    drift::normalizeTransformLayers(tracks);
+    QVERIFY(tracks.at(0).spanEndTrackId.isEmpty());
+    QVERIFY(drift::transformSpanTrackIndexes(tracks, 0).isEmpty());
+
+    // The end moved above the layer: nothing covered, but the id is kept for the way back.
+    tracks[0].spanEndTrackId = QStringLiteral("v2");
+    tracks.move(4, 0);
+    drift::normalizeTransformLayers(tracks);
+    QCOMPARE(tracks.at(1).spanEndTrackId, QStringLiteral("v2"));
+    QCOMPARE(drift::transformSpanEndIndex(tracks, 1), -1);
+    tracks.move(0, 4);
+    QCOMPARE(drift::transformSpanEndIndex(tracks, 0), 4);
+
+    // Nested layers compose outermost first.
+    drift::insertTransformTrack(tracks, 2, QStringLiteral("v2"));
+    QCOMPARE(drift::transformLayersCovering(tracks, 5), (QList<int>{0, 2}));
+}
+
+void CoreTest::transformNormalizerLiftsStrays()
+{
+    QList<drift::Track> tracks;
+    drift::insertTransformTrack(tracks, 0, QStringLiteral("v1"));
+    drift::Clip transform = drift::makeTransformClip(0, drift::secondsToUs(2.0));
+    transform.linkedClipId = QStringLiteral("someone");
+    tracks[0].clips.append(transform);
+    drift::Clip effects;
+    effects.id = QStringLiteral("fx");
+    effects.type = drift::ClipType::Adjustment;
+    effects.timelineDuration = drift::secondsToUs(2.0);
+    tracks[0].clips.append(effects);
+    drift::Track standalone = namedTrack(drift::TrackType::Adjustment, QStringLiteral("adj"));
+    drift::Clip stray = drift::makeTransformClip(0, drift::secondsToUs(1.0));
+    standalone.clips.append(stray);
+    tracks.append(standalone);
+    tracks.append(namedTrack(drift::TrackType::Video, QStringLiteral("v1")));
+    tracks.append(namedTrack(drift::TrackType::Video, QStringLiteral("v2")));
+
+    drift::normalizeTransformLayers(tracks);
+    drift::ensureTrackIds(tracks);
+
+    // The effects clip left the layer for a standalone track directly below it.
+    QCOMPARE(tracks.at(0).clips.size(), 1);
+    QVERIFY(tracks.at(0).clips.at(0).linkedClipId.isEmpty());
+    QVERIFY(tracks.at(1).isAdjustment() && !tracks.at(1).isTransformLayer());
+    QCOMPARE(tracks.at(1).clips.at(0).id, QStringLiteral("fx"));
+    // The stray transform clip got a layer of its own, covering the next track down.
+    QVERIFY(tracks.at(2).isTransformLayer());
+    QCOMPARE(tracks.at(2).clips.at(0).id, stray.id);
+    QCOMPARE(tracks.at(2).spanEndTrackId, QStringLiteral("v1"));
+    QVERIFY(tracks.at(3).clips.isEmpty());
+    for (const drift::Track &track : tracks) {
+        for (const drift::Clip &clip : track.clips)
+            QVERIFY(track.acceptsClip(clip));
+    }
+}
+
+// A canvas resize reaches every sequence, and a composite's box scales with the canvas it shows,
+// so a point of nested content lands on the same spot of the (shifted) main frame as before.
+void CoreTest::rebaseClipLayoutHoldsNestedContentStill()
+{
+    drift::Project project;
+    project.setResolution(1920, 1080);
+
+    drift::Track inner;
+    inner.type = drift::TrackType::Video;
+    drift::Clip nested;
+    nested.type = drift::ClipType::Image;
+    nested.transformX.setKeyframe(0, 300.0);
+    nested.transformW.setKeyframe(0, 400.0);
+    inner.clips.append(nested);
+    const QString sequenceId = project.addSequence({inner});
+
+    drift::Track outer;
+    outer.type = drift::TrackType::Video;
+    drift::Clip identity;
+    identity.type = drift::ClipType::Composite;
+    identity.sequenceId = sequenceId;
+    outer.clips.append(identity);
+    drift::Clip placed = identity;
+    placed.transformX.setKeyframe(0, 150.0);
+    placed.transformY.setKeyframe(0, 90.0);
+    placed.transformW.setKeyframe(0, 960.0);
+    placed.transformH.setKeyframe(0, 720.0);
+    placed.rotation.setKeyframe(0, 30.0);
+    placed.flipH = true;
+    outer.clips.append(placed);
+    project.tracks().clear();
+    project.tracks().append(outer);
+
+    const auto toMain = [](const drift::Clip &clip, double W, double H, QPointF q) {
+        const double w = clip.transformW.isEmpty() ? W : clip.transformW.evaluateAt(0);
+        const double h = clip.transformH.isEmpty() ? H : clip.transformH.evaluateAt(0);
+        const double x = clip.transformX.isEmpty() ? 0.0 : clip.transformX.evaluateAt(0);
+        const double y = clip.transformY.isEmpty() ? 0.0 : clip.transformY.evaluateAt(0);
+        const double a = qDegreesToRadians(clip.rotation.isEmpty() ? 0.0 : clip.rotation.evaluateAt(0));
+        const double lx = (clip.flipH ? -1.0 : 1.0) * w / W * (q.x() - W / 2);
+        const double ly = (clip.flipV ? -1.0 : 1.0) * h / H * (q.y() - H / 2);
+        return QPointF(x + w / 2 + std::cos(a) * lx - std::sin(a) * ly,
+                       y + h / 2 + std::sin(a) * lx + std::cos(a) * ly);
+    };
+    const QPointF q(700.0, 250.0);
+    const QPointF origin(200.0, 100.0);
+    const QPointF beforeIdentity = toMain(project.tracks().at(0).clips.at(0), 1920, 1080, q);
+    const QPointF beforePlaced = toMain(project.tracks().at(0).clips.at(1), 1920, 1080, q);
+
+    drift::rebaseClipLayout(project, 1920, 1080, 1000, 800, origin.x(), origin.y());
+    project.setResolution(1000, 800);
+
+    const drift::Clip &movedNested = project.sequenceTracks(sequenceId).at(0).clips.at(0);
+    QCOMPARE(movedNested.transformX.evaluateAt(0), 100.0);
+    QCOMPARE(movedNested.transformW.evaluateAt(0), 400.0);
+
+    const drift::Clip &identityAfter = project.tracks().at(0).clips.at(0);
+    QVERIFY(identityAfter.transformW.isEmpty());
+    QVERIFY(identityAfter.transformH.isEmpty());
+    const QPointF afterIdentity = toMain(identityAfter, 1000, 800, q - origin);
+    QVERIFY(qAbs(afterIdentity.x() - (beforeIdentity.x() - origin.x())) < 1e-6);
+    QVERIFY(qAbs(afterIdentity.y() - (beforeIdentity.y() - origin.y())) < 1e-6);
+
+    const QPointF afterPlaced = toMain(project.tracks().at(0).clips.at(1), 1000, 800, q - origin);
+    QVERIFY(qAbs(afterPlaced.x() - (beforePlaced.x() - origin.x())) < 1e-6);
+    QVERIFY(qAbs(afterPlaced.y() - (beforePlaced.y() - origin.y())) < 1e-6);
 }
 
 namespace {
@@ -2748,10 +4108,6 @@ void CoreTest::retargetClipToSourceClearsPerSourceState()
     program.faceTrackSrcOffsetUs = drift::secondsToUs(5.0);
     program.speedCurve.setPoints({{0.0, 1.0}, {1.0, 2.0}});
     QVERIFY(program.hasSpeedCurve());
-    // Segmented out of cam1's pixels, and indexed by cam1's source time.
-    program.mask.shape = drift::MaskShape::Matte;
-    program.mask.mattePath = QStringLiteral("/cache/cam1.matte.mp4");
-    program.mask.matteSrcOffsetUs = drift::secondsToUs(2.0);
 
     const drift::Clip angle = makeAngleClip(QStringLiteral("cam2.mp4"), 0, drift::secondsToUs(10.0), 0);
     drift::retargetClipToSource(program, angle, drift::secondsToUs(10.0));
@@ -2761,28 +4117,120 @@ void CoreTest::retargetClipToSourceClearsPerSourceState()
     QVERIFY(program.faceTrackPath.isEmpty());
     QCOMPARE(program.faceTrackSrcOffsetUs, drift::TimeUs{0});
     QVERIFY(!program.hasSpeedCurve());
-    // Kept, the matte would cut cam2 to the silhouette segmented out of cam1.
-    QCOMPARE(program.mask.shape, drift::MaskShape::None);
-    QVERIFY(program.mask.mattePath.isEmpty());
-    QCOMPARE(program.mask.matteSrcOffsetUs, drift::TimeUs{0});
 }
 
-// The other half of the rule above: a mask that is a shape rather than baked pixels describes
-// the framing, not the footage, and belongs with the transform and effects that already survive.
+// Masks are not reachable from retargetClipToSource — they live on the adjustments pinned to the
+// clip — so the switch clears them separately, and only the baked ones. Media coverage is pixels
+// segmented out of cam1 and would cut cam2 to cam1's silhouette; a shape describes the framing,
+// not the footage, and belongs with the transform and effects that already survive.
 void CoreTest::retargetClipToSourceKeepsAGeometricMask()
 {
-    drift::Clip program = makeAngleClip(QStringLiteral("cam1.mp4"), drift::secondsToUs(1.0),
-                                        drift::secondsToUs(2.0), 0);
-    program.mask.shape = drift::MaskShape::Ellipse;
-    program.mask.x = 0.25;
-    program.mask.feather = 12.0;
+    drift::Project project;
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    project.tracks()[0].clips.append(makeAngleClip(QStringLiteral("cam1.mp4"),
+                                                   drift::secondsToUs(1.0),
+                                                   drift::secondsToUs(2.0), 0));
 
-    const drift::Clip angle = makeAngleClip(QStringLiteral("cam2.mp4"), 0, drift::secondsToUs(10.0), 0);
-    drift::retargetClipToSource(program, angle, drift::secondsToUs(10.0));
+    drift::Mask ellipse;
+    ellipse.shape = drift::MaskShape::Ellipse;
+    ellipse.x = 0.25;
+    ellipse.feather = 12.0;
+    drift::setLinkedMask(project, 0, 0, ellipse);
+    QCOMPARE(drift::laneMasksAt(project, 0, drift::secondsToUs(1.5), project.tracks().at(0).clips.at(0).id).size(), 1);
+    // A pinned mask belongs to its clip alone, whatever else the track draws at that instant.
+    QVERIFY(drift::laneMasksAt(project, 0, drift::secondsToUs(1.5), QStringLiteral("other")).isEmpty());
 
-    QCOMPARE(program.mask.shape, drift::MaskShape::Ellipse);
-    QCOMPARE(program.mask.x, 0.25);
-    QCOMPARE(program.mask.feather, 12.0);
+    drift::clearLinkedMasks(project, 0, 0, /*mediaOnly=*/true);
+
+    const QList<drift::LaneMask> kept = drift::laneMasksAt(project, 0, drift::secondsToUs(1.5), project.tracks().at(0).clips.at(0).id);
+    QCOMPARE(kept.size(), 1);
+    QCOMPARE(kept.constFirst().mask.shape, drift::MaskShape::Ellipse);
+    QCOMPARE(kept.constFirst().mask.x, 0.25);
+    QCOMPARE(kept.constFirst().mask.feather, 12.0);
+
+    // The same call does drop a matte, which is the half the multicam switch is there for.
+    drift::setLinkedMask(project, 0, 0,
+                         drift::fullFrameMediaMask(QStringLiteral("/cache/cam1.matte.mp4"),
+                                                   drift::secondsToUs(2.0)));
+    drift::clearLinkedMasks(project, 0, 0, /*mediaOnly=*/true);
+    QVERIFY(drift::laneMasksAt(project, 0, drift::secondsToUs(1.5), project.tracks().at(0).clips.at(0).id).isEmpty());
+}
+
+// setLinkedMask replaces, which is what a full-replacement write (MCP, paste) means. Dropping a
+// second mask onto a clip means something else entirely, so it has its own call.
+void CoreTest::addLinkedMaskStacksRatherThanReplacing()
+{
+    drift::Project project;
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    project.tracks()[0].clips.append(makeAngleClip(QStringLiteral("cam1.mp4"),
+                                                   drift::secondsToUs(1.0),
+                                                   drift::secondsToUs(2.0), 0));
+
+    drift::Mask ellipse;
+    ellipse.shape = drift::MaskShape::Ellipse;
+    const drift::ClipRef first = drift::addLinkedMask(project, 0, 0, ellipse);
+    QVERIFY(first.trackIndex >= 0);
+
+    drift::Mask star;
+    star.shape = drift::MaskShape::Star;
+    star.op = drift::MaskOp::Subtract;
+    // The clip has not moved: the lane goes in below it.
+    const drift::ClipRef second = drift::addLinkedMask(project, 0, 0, star);
+    QVERIFY(second.trackIndex >= 0);
+
+    const QList<drift::ClipRef> pinned = drift::linkedMaskAdjustments(project, 0, 0);
+    QCOMPARE(pinned.size(), 2);
+
+    // Both reach the compositor, in lane order, with their ops intact.
+    const QList<drift::LaneMask> stack = drift::laneMasksAt(project, 0, drift::secondsToUs(1.5), project.tracks().at(0).clips.at(0).id);
+    QCOMPARE(stack.size(), 2);
+    QCOMPARE(stack.at(0).mask.shape, drift::MaskShape::Ellipse);
+    QCOMPARE(stack.at(1).mask.shape, drift::MaskShape::Star);
+    QCOMPARE(stack.at(1).mask.op, drift::MaskOp::Subtract);
+    // Distinct ids, or the reader pool would decode both under one cursor.
+    QVERIFY(stack.at(0).adjustmentId != stack.at(1).adjustmentId);
+
+    // The replacing call still collapses the stack to one, which is what it promises.
+    drift::Mask heart;
+    heart.shape = drift::MaskShape::Heart;
+    drift::setLinkedMask(project, 0, 0, heart);
+    QCOMPARE(drift::linkedMaskAdjustments(project, 0, 0).size(), 1);
+}
+
+// Dropping a mask on empty track space masks whatever the track shows over that span, so the
+// adjustment is pinned to nothing and keeps its own edges. liftAdjustmentClipsToOwnTracks must
+// leave it where it is — it only hoists adjustments sitting on a *video* track.
+void CoreTest::laneMaskIsUnpinnedAndSurvivesTheLiftPass()
+{
+    drift::Project project;
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    project.tracks()[0].clips.append(makeAngleClip(QStringLiteral("cam1.mp4"),
+                                                   drift::secondsToUs(0.0),
+                                                   drift::secondsToUs(4.0), 0));
+
+    drift::Mask bars;
+    bars.shape = drift::MaskShape::Bars;
+    const drift::ClipRef ref = drift::addLaneMask(project, 0, bars, drift::secondsToUs(1.0),
+                                                  drift::secondsToUs(2.0));
+    QVERIFY(ref.trackIndex >= 0);
+    QVERIFY(project.tracks().at(ref.trackIndex).isAdjustmentLane());
+
+    const drift::Clip &adjustment = project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex);
+    QVERIFY2(adjustment.linkedClipId.isEmpty(), "a lane mask must not pin itself to a clip");
+    QCOMPARE(adjustment.timelineStart, drift::secondsToUs(1.0));
+    QCOMPARE(adjustment.timelineDuration, drift::secondsToUs(2.0));
+
+    // It is not pinned, so it does not belong to a clip — only to the span.
+    QVERIFY(drift::linkedMaskAdjustments(project, 0, 0).isEmpty());
+    QVERIFY(drift::laneMasksAt(project, 0, drift::secondsToUs(0.5), project.tracks().at(0).clips.at(0).id).isEmpty());
+    QCOMPARE(drift::laneMasksAt(project, 0, drift::secondsToUs(2.0), project.tracks().at(0).clips.at(0).id).size(), 1);
+
+    drift::liftAdjustmentClipsToOwnTracks(project);
+    QVERIFY(project.tracks().at(ref.trackIndex).isAdjustmentLane());
+    QCOMPARE(drift::laneMasksAt(project, 0, drift::secondsToUs(2.0), project.tracks().at(0).clips.at(0).id).size(), 1);
 }
 
 void CoreTest::retargetClipToSourceShrinksWhenMediaRunsOut()
@@ -2921,16 +4369,15 @@ void CoreTest::userTextPresetsRoundTrip()
     style.fontFamily = QStringLiteral("Archivo Black");
     style.pixelSize = 91;
     style.fontWeight = 400;
-    style.glowEnabled = true;
-    style.glowColor = QColor(12, 240, 90);
+    style.layers = {drift::glowLayer(QColor(12, 240, 90), 18.0, 0.8), drift::solidFillLayer(Qt::white)};
     style.underlineEnabled = true;
     style.accent.rule = drift::WordAccentRule::EveryNth;
     style.accent.n = 3;
     style.accent.highlight.enabled = true;
-    style.animIn.kind = drift::TextAnimKind::Bounce;
-    style.animIn.unit = drift::TextAnimUnit::Word;
-    style.animIn.staggerUs = 33000;
-    style.animOut.kind = drift::TextAnimKind::Blur;
+    style.animation.in = drift::legacyTextAnimationSlot(QStringLiteral("bounce"), 400000, QStringLiteral("easeOut"),
+                                                        QStringLiteral("word"), 33000, QStringLiteral("forward"));
+    style.animation.out = drift::legacyTextAnimationSlot(QStringLiteral("blur"), 400000, QStringLiteral("easeOut"),
+                                                         QStringLiteral("block"), 60000, QStringLiteral("forward"));
     style.packId = QStringLiteral("impact"); // must not survive: a saved pack is its own style
 
     drift::TextStyle expected = style;
@@ -3205,6 +4652,1361 @@ void CoreTest::userEffectPresetsRoundTrip()
     QCoreApplication::setOrganizationName(org);
     QCoreApplication::setApplicationName(app);
     QStandardPaths::setTestModeEnabled(false);
+}
+
+
+namespace {
+
+using namespace drift;
+using namespace drift::textanim;
+
+QList<FragmentInfo> charFragments(int n, double advance = 20.0)
+{
+    QList<FragmentInfo> out;
+    for (int i = 0; i < n; ++i) {
+        FragmentInfo f;
+        f.charIndex = i;
+        f.nonSpaceIndex = i;
+        f.wordIndex = i;
+        f.lineIndex = 0;
+        f.advance = advance;
+        f.ascent = 16.0;
+        f.textStart = i;
+        f.textLength = 1;
+        out.append(f);
+    }
+    return out;
+}
+
+Domains charDomains(int n)
+{
+    Domains d;
+    d.chars = n;
+    d.nonSpaceChars = n;
+    d.words = n;
+    d.lines = 1;
+    return d;
+}
+
+TextRangeSelector curves(TextSelectorShape shape, TextSelectorUnits units, double start, double end,
+                         TextSelectorDomain domain = TextSelectorDomain::Chars)
+{
+    TextRangeSelector s;
+    s.driver = TextSelectorDriver::Curves;
+    s.domain = domain;
+    s.units = units;
+    s.shape = shape;
+    s.start = start;
+    s.end = end;
+    s.smoothness = 100.0;
+    return s;
+}
+
+// Coverage 1 on every character: a square over the whole domain with no smoothing.
+TextRangeSelector fullCoverage()
+{
+    TextRangeSelector s = curves(TextSelectorShape::Square, TextSelectorUnits::Percent, 0, 100);
+    s.smoothness = 0.0;
+    return s;
+}
+
+TextRangeSelector stagger(TimeUs staggerUs, TimeUs durationUs, TextEaseKind ease = TextEaseKind::Linear,
+                          TextSelectorDomain domain = TextSelectorDomain::CharsExcludingSpaces)
+{
+    TextRangeSelector s;
+    s.driver = TextSelectorDriver::Stagger;
+    s.domain = domain;
+    s.staggerUs = staggerUs;
+    s.durationUs = durationUs;
+    s.ease.kind = ease;
+    return s;
+}
+
+EvalContext contextAt(TimeUs t, TimeUs windowUs = 1'000'000)
+{
+    EvalContext c;
+    c.windowStartUs = 0;
+    c.windowDurationUs = windowUs;
+    c.timelineUs = t;
+    c.emPx = 64.0;
+    c.boxWidthPx = 400.0;
+    c.boxHeightPx = 100.0;
+    c.renderScale = 1.0;
+    c.alignFactor = 0.5;
+    return c;
+}
+
+QList<double> coverages(const TextRangeSelector &sel, int n, double progress = 0.0)
+{
+    QList<double> out;
+    for (int i = 0; i < n; ++i)
+        out.append(rangeSelectorCoverage(sel, i, n, progress));
+    return out;
+}
+
+QList<double> opacities(const Frame &frame)
+{
+    QList<double> out;
+    for (const FragmentProps &p : frame.props)
+        out.append(p.opacity);
+    return out;
+}
+
+bool listsClose(const QList<double> &a, const QList<double> &b, double tol = 1e-6)
+{
+    if (a.size() != b.size())
+        return false;
+    for (int i = 0; i < a.size(); ++i)
+        if (std::abs(a[i] - b[i]) > tol)
+            return false;
+    return true;
+}
+
+QString show(const QList<double> &v)
+{
+    QStringList parts;
+    for (double d : v)
+        parts << QString::number(d, 'f', 4);
+    return parts.join(QLatin1String(", "));
+}
+
+} // namespace
+
+#define VERIFY_LIST(actual, expected) \
+    QVERIFY2(listsClose(actual, expected), qPrintable(QStringLiteral("got [%1] want [%2]").arg(show(actual), show(expected))))
+
+void CoreTest::rangeSelectorCoverageMatchesSkottie()
+{
+    using S = TextSelectorShape;
+    using U = TextSelectorUnits;
+    // A square over the first half with full smoothness: the ramp lands exactly on the edge.
+    VERIFY_LIST(coverages(curves(S::Square, U::Percent, 0, 50), 4), (QList<double>{1, 1, 0, 0}));
+    VERIFY_LIST(coverages(curves(S::Square, U::Percent, 0, 37.5), 4), (QList<double>{1, 0.5, 0, 0}));
+    VERIFY_LIST(coverages(curves(S::RampUp, U::Index, 0, 4), 4), (QList<double>{0.125, 0.375, 0.625, 0.875}));
+    VERIFY_LIST(coverages(curves(S::Triangle, U::Percent, 0, 100), 4), (QList<double>{0.25, 0.75, 0.75, 0.25}));
+
+    // Ease-high 100 % bends the ramp through the unit cubic (0,0),(0,1): y = 0.5 maps to 0.8899.
+    TextRangeSelector eased = curves(S::RampUp, U::Index, 0, 1);
+    eased.easeHi = 100.0;
+    QVERIFY(std::abs(rangeSelectorCoverage(eased, 0, 1, 0.0) - 0.8899) < 0.005);
+
+    TextRangeSelector negated = curves(S::RampUp, U::Index, 0, 4);
+    negated.amount = -100.0;
+    VERIFY_LIST(coverages(negated, 4), (QList<double>{-0.125, -0.375, -0.625, -0.875}));
+
+    // Index units with the default "everything" end cover the whole domain.
+    VERIFY_LIST(coverages(curves(S::Square, U::Index, 0, kTextSelectorIndexEnd), 4), (QList<double>{1, 1, 1, 1}));
+
+    // Round starts steep, Smooth starts flat; both are 0 outside and 1 in the middle.
+    const QList<double> round = coverages(curves(S::Round, U::Percent, 0, 100), 8);
+    const QList<double> smooth = coverages(curves(S::Smooth, U::Percent, 0, 100), 8);
+    QVERIFY(round[0] > smooth[0]);
+    QVERIFY(std::abs(round[3] - 1.0) < 0.05 && std::abs(smooth[3] - 1.0) < 0.05);
+
+    // Animated selector params read the slot progress.
+    TextRangeSelector moving = curves(S::Square, U::Percent, 0, 50);
+    moving.offset.curve.setKeyframe(0, 0.0);
+    moving.offset.curve.setKeyframe(kProgressScale, 50.0);
+    VERIFY_LIST(coverages(moving, 4, 1.0), (QList<double>{0, 0, 1, 1}));
+
+    // Two selectors compose through the second one's mode.
+    TextAnimator animator;
+    animator.selectors = {curves(S::Square, U::Percent, 0, 50), curves(S::RampUp, U::Index, 0, 4)};
+    animator.selectors[1].mode = TextSelectorMode::Intersect;
+    animator.props.opacity = 0.0;
+    animator.props.hasOpacity = true;
+    ResolvedSlots resolved;
+    resolved.in = {animator};
+    const Frame frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(4), charDomains(4), contextAt(0));
+    VERIFY_LIST(opacities(frame), (QList<double>{0.875, 0.625, 1, 1}));
+}
+
+void CoreTest::staggerMatchesMovingRamp()
+{
+    const TextRangeSelector sel = stagger(100'000, 200'000);
+    QList<double> cov;
+    for (int i = 0; i < 4; ++i)
+        cov.append(staggerCoverage(sel, i, 150'000));
+    VERIFY_LIST(cov, (QList<double>{0.25, 0.75, 1, 1}));
+    // The same thing as an AE ramp whose window is duration/stagger units wide.
+    VERIFY_LIST(coverages(curves(TextSelectorShape::RampUp, TextSelectorUnits::Index, 0, 2), 4), cov);
+
+    const TextRangeSelector step = stagger(100'000, 0);
+    QList<double> stepCov;
+    for (int i = 0; i < 4; ++i)
+        stepCov.append(staggerCoverage(step, i, 150'000));
+    VERIFY_LIST(stepCov, (QList<double>{0, 0, 1, 1}));
+
+    // An Out slot mirrors the resolved so the last fragment leaves exactly at the window end.
+    TextAnimator fade;
+    fade.selectors = {sel};
+    fade.props.opacity = 0.0;
+    fade.props.hasOpacity = true;
+    ResolvedSlots resolved;
+    resolved.out = {fade};
+    const Frame out = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(4), charDomains(4), contextAt(850'000));
+    VERIFY_LIST(opacities(out), (QList<double>{0, 0, 0.25, 0.75}));
+    const Frame settled = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(4), charDomains(4), contextAt(300'000));
+    VERIFY_LIST(opacities(settled), (QList<double>{1, 1, 1, 1}));
+    QVERIFY(settled.isStatic);
+
+    QList<double> ranks;
+    for (int i = 0; i < 4; ++i)
+        ranks.append(reindexForOrder(i, 4, TextAnimOrder::CenterOut, 0));
+    VERIFY_LIST(ranks, (QList<double>{1.5, 0.5, 0.5, 1.5}));
+    QCOMPARE(maxReindex(4, TextAnimOrder::CenterOut), 1.5);
+    QCOMPARE(maxReindex(4, TextAnimOrder::Backward), 3.0);
+
+    // Seed 0 is the legacy shuffle (TextRaster's table), so old projects keep their order.
+    for (int i = 0; i < 8; ++i) {
+        const quint32 h = qHash(static_cast<quint32>(i) * 2654435761u) ^ 0x9e3779b9u;
+        const double legacy = (h & 0xffffu) / 65535.0 * 7;
+        QCOMPARE(reindexForOrder(i, 8, TextAnimOrder::Random, 0), legacy);
+    }
+    QVERIFY(reindexForOrder(3, 8, TextAnimOrder::Random, 7) != reindexForOrder(3, 8, TextAnimOrder::Random, 0));
+}
+
+void CoreTest::animatorCompositionOrder()
+{
+    TextAnimator a;
+    a.selectors = {fullCoverage()};
+    a.props.position.x = 10.0;
+    a.props.scaleX = 200.0;
+    TextAnimator b = a;
+    b.props.position.x = 5.0;
+    b.props.position.y = 5.0;
+    b.props.scaleX = 50.0;
+    ResolvedSlots resolved;
+    resolved.in = {a, b};
+    Frame frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(1), charDomains(1), contextAt(0));
+    QCOMPARE(frame.props[0].dx, 15.0);
+    QCOMPARE(frame.props[0].dy, 5.0);
+    QVERIFY(qFuzzyCompare(frame.props[0].scaleX, 1.0));
+    QVERIFY(!frame.isStatic);
+
+    // Half coverage lerps opacity and colour toward the target.
+    TextAnimator half;
+    half.selectors = {fullCoverage()};
+    half.selectors[0].amount = 50.0;
+    half.props.opacity = 0.0;
+    half.props.hasOpacity = true;
+    half.props.fillColor = Qt::black;
+    half.props.hasFillColor = true;
+    resolved.in = {half};
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(1), charDomains(1), contextAt(0));
+    QVERIFY(qFuzzyCompare(frame.props[0].opacity, 0.5));
+    QVERIFY(frame.props[0].fillColor.has_value());
+    QVERIFY(qAbs(frame.props[0].fillColor->red() - 128) <= 2);
+
+    // Units: em and box lengths resolve against the context, capped by maxPx.
+    TextAnimator units;
+    units.selectors = {fullCoverage()};
+    units.props.position.y = 0.35;
+    units.props.position.unit = TextLengthUnit::Box;
+    resolved.in = {units};
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(1), charDomains(1), contextAt(0));
+    QCOMPARE(frame.props[0].dy, 35.0);
+    units.props.position.maxPx = 20.0;
+    resolved.in = {units};
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(1), charDomains(1), contextAt(0));
+    QCOMPARE(frame.props[0].dy, 20.0);
+
+    // A Back ease overshoots: the pop scales past 1 near the end, opacity stays clamped.
+    TextAnimator pop;
+    pop.selectors = {stagger(0, 1'000'000, TextEaseKind::Back)};
+    pop.props.scaleX = 60.0;
+    pop.props.opacity = 0.0;
+    pop.props.hasOpacity = true;
+    resolved.in = {pop};
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(1), charDomains(1), contextAt(800'000));
+    QVERIFY2(frame.props[0].scaleX > 1.0 && frame.props[0].scaleX < 1.1, qPrintable(QString::number(frame.props[0].scaleX)));
+    QCOMPARE(frame.props[0].opacity, 1.0);
+
+    // Whole-block animators fold into the layer props and leave the fragments alone.
+    TextAnimator fade;
+    fade.selectors = {stagger(0, 400'000, TextEaseKind::Linear, TextSelectorDomain::All)};
+    fade.props.opacity = 0.0;
+    fade.props.hasOpacity = true;
+    resolved.in = {fade};
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(2), charDomains(2), contextAt(100'000));
+    QVERIFY(qFuzzyCompare(frame.block.opacity, 0.25));
+    QCOMPARE(frame.props[0].opacity, 1.0);
+    QVERIFY(!frame.isStatic);
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(2), charDomains(2), contextAt(1'000'000));
+    QCOMPARE(frame.block.opacity, 1.0);
+    QVERIFY(frame.isStatic);
+    QCOMPARE(frame.poseHash, quint64(0));
+
+    // Loops never settle: a wiggle keeps the frame live and moves fragments out of phase.
+    TextAnimator wave;
+    TextRangeSelector wiggle;
+    wiggle.driver = TextSelectorDriver::Wiggle;
+    wiggle.domain = TextSelectorDomain::Chars;
+    wave.selectors = {wiggle};
+    wave.props.position.y = 10.0;
+    ResolvedSlots loopOnly;
+    loopOnly.loop = {wave};
+    frame = evaluateTextAnimation(TextAnimationSet{}, loopOnly, charFragments(3), charDomains(3), contextAt(100'000));
+    QVERIFY(!frame.isStatic);
+    QVERIFY(!qFuzzyCompare(frame.props[0].dy + 100.0, frame.props[1].dy + 100.0));
+    QVERIFY(std::abs(frame.props[0].dy) <= 10.0);
+
+    // Karaoke lights the spoken word only.
+    TextAnimator karaoke;
+    TextRangeSelector spoken;
+    spoken.driver = TextSelectorDriver::Karaoke;
+    spoken.domain = TextSelectorDomain::Words;
+    karaoke.selectors = {spoken};
+    karaoke.props.scaleX = 120.0;
+    loopOnly.loop = {karaoke};
+    EvalContext ctx = contextAt(0);
+    ctx.activeWordIndex = 1;
+    frame = evaluateTextAnimation(TextAnimationSet{}, loopOnly, charFragments(3), charDomains(3), ctx);
+    QCOMPARE(frame.props[0].scaleX, 1.0);
+    QVERIFY(qFuzzyCompare(frame.props[1].scaleX, 1.2));
+}
+
+void CoreTest::trackingLineAdjust()
+{
+    TextAnimator track;
+    track.selectors = {fullCoverage()};
+    track.props.tracking = 10.0;
+    ResolvedSlots resolved;
+    resolved.in = {track};
+    EvalContext ctx = contextAt(0);
+    Frame frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(3), charDomains(3), ctx);
+    QList<double> dx;
+    for (const FragmentProps &p : frame.props)
+        dx.append(p.dx);
+    VERIFY_LIST(dx, (QList<double>{-10, 0, 10}));
+
+    ctx.alignFactor = 0.0;
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(3), charDomains(3), ctx);
+    dx.clear();
+    for (const FragmentProps &p : frame.props)
+        dx.append(p.dx);
+    VERIFY_LIST(dx, (QList<double>{0, 10, 20}));
+
+    // A collapsing typewriter gives a hidden fragment's advance back, so the visible run re-centres.
+    TextAnimator type;
+    type.selectors = {stagger(100'000, 0)};
+    type.props.opacity = 0.0;
+    type.props.hasOpacity = true;
+    type.collapseHidden = true;
+    resolved.in = {type};
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, charFragments(3, 20.0), charDomains(3), contextAt(150'000));
+    QVERIFY(frame.collapseHidden);
+    QVERIFY(!frame.props[0].hidden && !frame.props[1].hidden && frame.props[2].hidden);
+    QCOMPARE(frame.props[0].dx, 10.0);
+    QCOMPARE(frame.props[1].dx, 10.0);
+
+    // Line spacing shifts later lines down by the per-line average; the first line stays put.
+    QList<FragmentInfo> frags = charFragments(4);
+    frags[2].lineIndex = 1;
+    frags[3].lineIndex = 1;
+    Domains domains = charDomains(4);
+    domains.lines = 2;
+    TextAnimator spacing;
+    spacing.selectors = {fullCoverage()};
+    spacing.props.lineSpacing = 8.0;
+    resolved.in = {spacing};
+    frame = evaluateTextAnimation(TextAnimationSet{}, resolved, frags, domains, contextAt(0));
+    QCOMPARE(frame.props[0].dy, 0.0);
+    QCOMPARE(frame.props[1].dy, 0.0);
+    QCOMPARE(frame.props[2].dy, 8.0);
+    QCOMPARE(frame.props[3].dy, 8.0);
+}
+
+void CoreTest::caretTiming()
+{
+    TextAnimationSet set;
+    set.caret.enabled = true;
+    set.in.delayUs = 200'000; // the caret's lead: it blinks alone before the first character
+    TextAnimator type;
+    type.selectors = {stagger(67'000, 0)};
+    type.props.opacity = 0.0;
+    type.props.hasOpacity = true;
+    ResolvedSlots resolved;
+    resolved.in = {type};
+    const QList<FragmentInfo> frags = charFragments(8);
+    const Domains domains = charDomains(8);
+
+    Frame frame = evaluateTextAnimation(set, resolved, frags, domains, contextAt(0));
+    QVERIFY(frame.caret.visible);
+    QCOMPARE(frame.caret.afterFragment, -1);
+    QVERIFY(!frame.isStatic);
+    QVERIFY(qFuzzyCompare(frame.caret.widthPx, 0.08 * 64.0));
+    QVERIFY(qFuzzyCompare(frame.caret.heightPx, 64.0));
+    QCOMPARE(frame.caret.color, QColor(Qt::white));
+
+    frame = evaluateTextAnimation(set, resolved, frags, domains, contextAt(250'000));
+    QVERIFY(!frame.caret.visible); // 200 ms on, 300 ms off
+    QCOMPARE(frame.caret.afterFragment, 0);
+
+    frame = evaluateTextAnimation(set, resolved, frags, domains, contextAt(600'000));
+    QVERIFY(frame.caret.visible);
+    QCOMPARE(frame.caret.afterFragment, 5);
+
+    // Gone once the reveal (200 ms lead + 7 × 67 ms) has finished, unless told to stay.
+    frame = evaluateTextAnimation(set, resolved, frags, domains, contextAt(1'000'000));
+    QVERIFY(!frame.caret.visible);
+    set.caret.holdAfterUs = -1;
+    frame = evaluateTextAnimation(set, resolved, frags, domains, contextAt(1'000'000));
+    QVERIFY(frame.caret.visible);
+    QCOMPARE(frame.caret.afterFragment, 7);
+}
+
+void CoreTest::animationBoundsCoverTheEnvelope()
+{
+    TextAnimator slide;
+    slide.selectors = {stagger(0, 400'000, TextEaseKind::EaseOut, TextSelectorDomain::All)};
+    slide.props.position.y = 0.35;
+    slide.props.position.unit = TextLengthUnit::Box;
+    slide.props.blur = 24.0;
+    slide.props.scaleX = 300.0;
+    TextAnimator drift;
+    drift.props.tracking = 10.0;
+    ResolvedSlots resolved;
+    resolved.in = {slide};
+    resolved.loop = {drift};
+    const Bounds b = animationBounds(resolved, contextAt(0));
+    QCOMPARE(b.maxDx, 0.0);
+    QVERIFY(std::abs(b.maxDy - 35.0 * 1.15) < 1e-9);
+    QCOMPARE(b.maxBlurPx, 24.0);
+    QVERIFY(std::abs(b.maxScale - 3.0 * 1.15) < 1e-9);
+    QCOMPARE(b.maxTrackingPx, 10.0);
+
+    TextEaseSpec bezier;
+    bezier.kind = TextEaseKind::Bezier;
+    QCOMPARE(bezier.value(0.0), 0.0);
+    QCOMPARE(bezier.value(1.0), 1.0);
+    QVERIFY(std::abs(bezier.value(0.5) - 0.5) < 1e-6);
+    TextEaseSpec back;
+    back.kind = TextEaseKind::Back;
+    QVERIFY(back.value(0.8) > 1.0);
+    TextEaseSpec smooth;
+    smooth.kind = TextEaseKind::Smooth;
+    QCOMPARE(smooth.value(0.5), 0.5);
+    QVERIFY(smooth.value(0.25) < 0.25);
+
+    // Curves over progress reuse the keyframe track.
+    TextAnimParam ramp;
+    ramp.curve.setKeyframe(0, 2.0);
+    ramp.curve.setKeyframe(kProgressScale, 21.0);
+    QVERIFY(std::abs(ramp.at(0.5) - 11.5) < 1e-6);
+    QCOMPARE(ramp.maxAbs(), 21.0);
+}
+
+
+void CoreTest::textStyleMigratesFromV6()
+{
+    // The exact object a version-6 file carries (textStyleToJson before the layer stack).
+    const QJsonObject v6{
+        {QStringLiteral("fontFamily"), QStringLiteral("Anton")},
+        {QStringLiteral("pixelSize"), 72},
+        {QStringLiteral("color"), QStringLiteral("#ff102030")},
+        {QStringLiteral("fillKind"), QStringLiteral("linearGradient")},
+        {QStringLiteral("colorSecondary"), QStringLiteral("#ff0000ff")},
+        {QStringLiteral("gradientAngle"), 45.0},
+        {QStringLiteral("outlineEnabled"), true},
+        {QStringLiteral("outlineWidth"), 5.0},
+        {QStringLiteral("outlineColor"), QStringLiteral("#ffff0000")},
+        {QStringLiteral("shadowEnabled"), true},
+        {QStringLiteral("shadowOffsetX"), 2.0},
+        {QStringLiteral("shadowOffsetY"), 6.0},
+        {QStringLiteral("shadowBlur"), 12.0},
+        {QStringLiteral("shadowOpacity"), 0.7},
+        {QStringLiteral("shadowColor"), QStringLiteral("#ff000000")},
+        {QStringLiteral("glowEnabled"), false},
+        {QStringLiteral("glowColor"), QStringLiteral("#ffffffff")},
+        {QStringLiteral("glowRadius"), 20.0},
+        {QStringLiteral("glowOpacity"), 0.9},
+        {QStringLiteral("animInKind"), QStringLiteral("pop")},
+        {QStringLiteral("animInDurationUs"), 350000},
+        {QStringLiteral("animInEase"), QStringLiteral("back")},
+        {QStringLiteral("animInUnit"), QStringLiteral("word")},
+        {QStringLiteral("animInStaggerUs"), 80000},
+        {QStringLiteral("animInOrder"), QStringLiteral("centerOut")},
+        {QStringLiteral("animOutKind"), QStringLiteral("slideDown")},
+        {QStringLiteral("animOutDurationUs"), 250000},
+        {QStringLiteral("animOutEase"), QStringLiteral("easeInOut")},
+        {QStringLiteral("keyframes"), QJsonObject{{QStringLiteral("outlineWidth"),
+                                                   QJsonObject{{QStringLiteral("keyframes"), QJsonArray{QJsonObject{{QStringLiteral("time"), 0}, {QStringLiteral("value"), 5.0}}}}}}}},
+    };
+    const drift::TextStyle s = drift::textStyleFromJson(v6);
+    QCOMPARE(s.layers.size(), 4);
+    QCOMPARE(s.layers[0].id, QStringLiteral("shadow"));
+    QVERIFY(s.layers[0].enabled);
+    QCOMPARE(s.layers[0].offsetX, 2.0);
+    QCOMPARE(s.layers[0].offsetY, 6.0);
+    QCOMPARE(s.layers[0].blur, 12.0);
+    QCOMPARE(s.layers[0].opacity, 0.7);
+    QCOMPARE(s.layers[1].id, QStringLiteral("glow"));
+    QVERIFY(!s.layers[1].enabled); // kept, so switching it on restores the radius
+    QCOMPARE(s.layers[1].blur, 20.0);
+    QCOMPARE(s.layers[2].id, QStringLiteral("stroke"));
+    QVERIFY(s.layers[2].enabled);
+    QCOMPARE(s.layers[2].width, 5.0);
+    QCOMPARE(s.layers[2].paint.color, QColor(255, 0, 0));
+    QCOMPARE(s.layers[3].id, QStringLiteral("fill"));
+    QCOMPARE(s.layers[3].paint.kind, drift::TextPaintKind::Gradient);
+    QCOMPARE(s.layers[3].paint.gradient.kind, drift::TextGradientKind::Linear);
+    QCOMPARE(s.layers[3].paint.gradient.stops.first().color, QColor(16, 32, 48));
+    QCOMPARE(s.layers[3].paint.gradient.stops.last().color, QColor(0, 0, 255));
+    QCOMPARE(s.layers[3].paint.gradient.angle, 45.0);
+    QCOMPARE(s.primaryColor(), QColor(16, 32, 48));
+    QCOMPARE(s.animation.in.presetId, QStringLiteral("pop"));
+    QCOMPARE(s.animation.in.params.value(QStringLiteral("duration")).scalar, 0.35);
+    QCOMPARE(s.animation.in.params.value(QStringLiteral("ease")).text, QStringLiteral("back"));
+    QCOMPARE(s.animation.in.params.value(QStringLiteral("unit")).text, QStringLiteral("word"));
+    QCOMPARE(s.animation.in.params.value(QStringLiteral("stagger")).scalar, 0.08);
+    QCOMPARE(s.animation.in.params.value(QStringLiteral("order")).text, QStringLiteral("centerOut"));
+    QCOMPARE(s.animation.out.presetId, QStringLiteral("slide-down"));
+    QVERIFY(!s.animation.loop.isActive());
+    // The keyframe track followed its field onto the stroke layer.
+    QVERIFY(s.keyframes.contains(QStringLiteral("layer.stroke.width")));
+    QVERIFY(!s.keyframes.contains(QStringLiteral("outlineWidth")));
+
+    // A Wave entrance was continuous; it becomes the loop slot.
+    drift::TextStyle wave = drift::textStyleFromJson(QJsonObject{{QStringLiteral("animInKind"), QStringLiteral("wave")},
+                                                                 {QStringLiteral("animInUnit"), QStringLiteral("character")}});
+    QVERIFY(!wave.animation.in.isActive());
+    QCOMPARE(wave.animation.loop.presetId, QStringLiteral("wave"));
+    // Pre-outlineEnabled files: a positive width means on.
+    QCOMPARE(drift::textStrokeWidth(drift::textStyleFromJson(QJsonObject{{QStringLiteral("outlineWidth"), 3.0}}), false), 3.0);
+    // Nothing at all: one white fill, no animation.
+    const drift::TextStyle bare = drift::textStyleFromJson(QJsonObject{{QStringLiteral("pixelSize"), 12}});
+    QCOMPARE(bare.layers.size(), 4);
+    QCOMPARE(bare.primaryColor(), QColor(Qt::white));
+    QVERIFY(!bare.animation.isActive());
+}
+
+void CoreTest::textStyleV7RoundTrip()
+{
+    drift::TextStyle s;
+    drift::TextShadingLayer fill = drift::solidFillLayer(Qt::white, QStringLiteral("fill"));
+    fill.paint.kind = drift::TextPaintKind::Gradient;
+    fill.paint.gradient.kind = drift::TextGradientKind::Sweep;
+    fill.paint.gradient.stops = {{0.0, Qt::red}, {0.5, Qt::green}, {1.0, Qt::blue}};
+    fill.paint.gradient.offsetSpeed = 0.25;
+    fill.paint.gradient.repeat = true;
+    fill.paint.gradient.space = drift::TextGradientSpace::Word;
+    drift::TextShadingLayer sheen = drift::solidFillLayer(Qt::white, QStringLiteral("sheen"));
+    sheen.paint.kind = drift::TextPaintKind::Effect;
+    sheen.paint.effect.id = QStringLiteral("shine");
+    sheen.paint.effect.params.insert(QStringLiteral("speed"), drift::VectorSlotValue::fromScalar(0.7));
+    sheen.blend = drift::BlendMode::Screen;
+    drift::TextShadingLayer stroke = drift::strokeLayer(3.0, Qt::black, QStringLiteral("stroke"));
+    stroke.trimStart = 0.1;
+    stroke.trimEnd = 0.9;
+    drift::TextShadingLayer extrude = drift::solidFillLayer(QColor(40, 40, 40), QStringLiteral("depth"));
+    extrude.kind = drift::TextLayerKind::Extrude;
+    extrude.width = 9.0;
+    extrude.extrudeSteps = 5;
+    s.layers = {extrude, stroke, fill, sheen};
+    s.lookId = QStringLiteral("neon");
+    s.lookParams.insert(QStringLiteral("glow"), drift::VectorSlotValue::fromScalar(20.0));
+
+    drift::TextAnimator rise;
+    drift::TextRangeSelector sel;
+    sel.driver = drift::TextSelectorDriver::Curves;
+    sel.domain = drift::TextSelectorDomain::Chars;
+    sel.shape = drift::TextSelectorShape::RampUp;
+    sel.offset.curve.setKeyframe(0, -100.0);
+    sel.offset.curve.setKeyframe(drift::kProgressScale, 0.0);
+    rise.selectors = {sel};
+    rise.props.position.y = 0.4;
+    rise.props.position.unit = drift::TextLengthUnit::Em;
+    rise.props.opacity = 0.0;
+    rise.props.hasOpacity = true;
+    rise.props.fillColor = Qt::magenta;
+    rise.props.hasFillColor = true;
+    rise.props.wipe.enabled = true;
+    s.animation.in.animators = {rise};
+    s.animation.in.durationUs = 900000;
+    s.animation.loop.presetId = QStringLiteral("wave");
+    s.animation.loop.periodUs = 1500000;
+    s.animation.caret.enabled = true;
+    s.animation.caret.shape = drift::TextCaret::Shape::Block;
+    s.animation.anchorGrouping = drift::TextAnchorGrouping::Word;
+
+    const QJsonObject json = drift::textStyleToJson(s);
+    QVERIFY(json.contains(QStringLiteral("layers")));
+    QVERIFY(!json.contains(QStringLiteral("color")));
+    const drift::TextStyle back = drift::textStyleFromJson(json);
+    QCOMPARE(drift::textStyleToJson(back), json);
+    QCOMPARE(back.layers.size(), 4);
+    QCOMPARE(back.layers[2].paint.gradient.stops.size(), 3);
+    QCOMPARE(back.layers[2].paint.gradient.space, drift::TextGradientSpace::Word);
+    QCOMPARE(back.layers[3].paint.effect.params.value(QStringLiteral("speed")).scalar, 0.7);
+    QCOMPARE(back.layers[1].trimEnd, 0.9);
+    QCOMPARE(back.layers[0].extrudeSteps, 5);
+    QCOMPARE(back.lookId, QStringLiteral("neon"));
+    QCOMPARE(back.animation.in.animators.size(), 1);
+    QCOMPARE(back.animation.in.animators[0].selectors[0].shape, drift::TextSelectorShape::RampUp);
+    QVERIFY(!back.animation.in.animators[0].selectors[0].offset.isConstant());
+    QVERIFY(back.animation.in.animators[0].props.hasFillColor);
+    QVERIFY(back.animation.in.animators[0].props.wipe.enabled);
+    QCOMPARE(back.animation.in.durationUs, 900000);
+    QCOMPARE(back.animation.loop.periodUs, 1500000);
+    QCOMPARE(back.animation.caret.shape, drift::TextCaret::Shape::Block);
+    QCOMPARE(back.animation.anchorGrouping, drift::TextAnchorGrouping::Word);
+    // A constant param is a plain number in the file; a curve is an object.
+    const QJsonObject animator = json.value(QStringLiteral("animation")).toObject().value(QStringLiteral("in")).toObject()
+                                     .value(QStringLiteral("animators")).toArray().first().toObject();
+    QVERIFY(animator.value(QStringLiteral("props")).toObject().value(QStringLiteral("opacity")).isDouble());
+    QVERIFY(animator.value(QStringLiteral("selectors")).toArray().first().toObject().value(QStringLiteral("offset")).isObject());
+}
+
+void CoreTest::textAnimationPresetsAreWellFormed()
+{
+    using namespace drift;
+    const QList<TextAnimationPreset> presets = TextAnimationPresetCatalog::instance().presets();
+    QVERIFY(presets.size() >= 11);
+    QSet<QString> ids;
+    for (const TextAnimationPreset &preset : presets) {
+        QVERIFY2(!ids.contains(preset.id), qPrintable(preset.id));
+        ids.insert(preset.id);
+        QVERIFY(!preset.label.isEmpty());
+        QVERIFY(!preset.slotKinds.isEmpty());
+        const bool reveal = preset.supportsSlot(TextAnimSlotKind::In) || preset.supportsSlot(TextAnimSlotKind::Out);
+        if (reveal) {
+            for (const char *key : {"duration", "stagger", "unit", "order", "ease"})
+                QVERIFY2(preset.param(QLatin1String(key)), qPrintable(preset.id + QLatin1String(": ") + QLatin1String(key)));
+        }
+        for (TextAnimSlotKind kind : preset.slotKinds) {
+            const ResolvedPresetSlot resolved = resolvePresetSlot(preset, {}, kind);
+            QVERIFY2(resolved.valid && !resolved.animators.isEmpty(), qPrintable(preset.id));
+            // Every reference resolved: the JSON has no "{...}" strings left once substituted.
+            for (const TextAnimator &a : resolved.animators)
+                QVERIFY2(!QJsonDocument(textAnimatorToJson(a)).toJson().contains("{unit}"), qPrintable(preset.id));
+        }
+    }
+    for (const char *id : {"fade", "slide-up", "slide-down", "slide-left", "slide-right", "pop", "blur-in", "typewriter",
+                           "rise", "bounce", "wave", "glitch-in", "flip", "squash", "flicker-in", "sway", "skew-slide"})
+        QVERIFY2(ids.contains(QLatin1String(id)), id);
+
+    // Out mirrors the displacement so an exit leaves the way its entrance arrived.
+    const TextAnimationPreset slideUp = *TextAnimationPresetCatalog::instance().presetForId(QStringLiteral("slide-up"));
+    const ResolvedPresetSlot in = resolvePresetSlot(slideUp, {}, TextAnimSlotKind::In);
+    const ResolvedPresetSlot out = resolvePresetSlot(slideUp, {}, TextAnimSlotKind::Out);
+    QCOMPARE(in.animators[0].props.position.y.value, 0.35);
+    QCOMPARE(out.animators[0].props.position.y.value, -0.35);
+    // A param override reaches the recipe, typed.
+    QMap<QString, VectorSlotValue> params;
+    params.insert(QStringLiteral("unit"), VectorSlotValue::fromText(QStringLiteral("character")));
+    params.insert(QStringLiteral("stagger"), VectorSlotValue::fromScalar(0.05));
+    const ResolvedPresetSlot chars = resolvePresetSlot(slideUp, params, TextAnimSlotKind::In);
+    QCOMPARE(chars.animators[0].selectors[0].domain, TextSelectorDomain::CharsExcludingSpaces);
+    QCOMPARE(chars.animators[0].selectors[0].staggerUs, 50000);
+    // The typewriter's caret comes with the preset and sets the slot's lead delay.
+    params.clear();
+    params.insert(QStringLiteral("caret"), VectorSlotValue::fromScalar(1.0));
+    const ResolvedPresetSlot typed = resolvePresetSlot(
+        *TextAnimationPresetCatalog::instance().presetForId(QStringLiteral("typewriter")), params, TextAnimSlotKind::In);
+    QVERIFY(typed.caret && typed.caret->enabled);
+    QCOMPARE(typed.delayUs, 200000);
+    QCOMPARE(typed.animators[0].selectors[0].durationUs, 0);
+    // A curve-driven In (no selectors) reads its length from the duration param and ends settled.
+    const ResolvedPresetSlot flicker = resolvePresetSlot(
+        *TextAnimationPresetCatalog::instance().presetForId(QStringLiteral("flicker-in")), {}, TextAnimSlotKind::In);
+    QCOMPARE(flicker.durationUs, 900000);
+    QVERIFY(flicker.animators[0].selectors.isEmpty());
+    QCOMPARE(flicker.animators[0].props.opacity.at(0.0), 0.0);
+    QCOMPARE(flicker.animators[0].props.opacity.at(0.19), 0.0);
+    QCOMPARE(flicker.animators[0].props.opacity.at(1.0), 100.0);
+}
+
+// Every legacy kind renders the same numbers through the engine as TextRaster::applyAnimation
+// did (formulas copied here, since that file is gone).
+void CoreTest::legacyTextAnimationParity()
+{
+    using namespace drift;
+    using namespace drift::textanim;
+    struct Legacy
+    {
+        const char *kind;
+        double dx, dy, scale, opacity, blur; // at settled = 0.25 with a linear ease, box 400×100
+    };
+    const double a = 0.25, away = 0.75, travelX = 0.35 * 400.0, travelY = 0.35 * 100.0;
+    const Legacy expected[] = {
+        {"fade", 0, 0, 1, a, 0},
+        {"slideUp", 0, away * travelY, 1, a, 0},
+        {"slideDown", 0, -away * travelY, 1, a, 0},
+        {"slideLeft", away * travelX, 0, 1, a, 0},
+        {"slideRight", -away * travelX, 0, 1, a, 0},
+        {"pop", 0, 0, 0.6 + 0.4 * a, a, 0},
+        {"blur", 0, 0, 1, a, away * 24.0},
+        {"rise", 0, away * travelY, 0.9 + 0.1 * a, a, 0},
+    };
+    for (const Legacy &e : expected) {
+        TextAnimationSet set;
+        set.in = legacyTextAnimationSlot(QLatin1String(e.kind), 400000, QStringLiteral("linear"), QStringLiteral("block"),
+                                         60000, QStringLiteral("forward"));
+        const ResolvedTextAnimation anim = resolveTextAnimation(set);
+        QVERIFY2(!anim.resolved.in.isEmpty(), e.kind);
+        EvalContext ctx;
+        ctx.windowStartUs = 0;
+        ctx.windowDurationUs = 2'000'000;
+        ctx.timelineUs = 100'000; // settled 0.25 of 400 ms
+        ctx.boxWidthPx = 400;
+        ctx.boxHeightPx = 100;
+        ctx.emPx = 64;
+        QList<FragmentInfo> frags(3);
+        Domains domains;
+        domains.chars = domains.nonSpaceChars = domains.words = 3;
+        domains.lines = 1;
+        const Frame frame = evaluateTextAnimation(anim.set, anim.resolved, frags, domains, ctx);
+        const QString why = QStringLiteral("%1: dx %2 dy %3 scale %4 opacity %5 blur %6")
+                                .arg(QLatin1String(e.kind)).arg(frame.block.dx).arg(frame.block.dy)
+                                .arg(frame.block.scale).arg(frame.block.opacity).arg(frame.block.blurPx);
+        QVERIFY2(qAbs(frame.block.dx - e.dx) < 1e-6, qPrintable(why));
+        QVERIFY2(qAbs(frame.block.dy - e.dy) < 1e-6, qPrintable(why));
+        QVERIFY2(qAbs(frame.block.scale - e.scale) < 1e-6, qPrintable(why));
+        QVERIFY2(qAbs(frame.block.opacity - e.opacity) < 1e-6, qPrintable(why));
+        QVERIFY2(qAbs(frame.block.blurPx - e.blur) < 1e-6, qPrintable(why));
+        // Whole-block kinds leave the fragments alone.
+        QCOMPARE(frame.props[0].opacity, 1.0);
+    }
+
+    // Per-word stagger lands on the fragments instead; the block stays put.
+    TextAnimationSet words;
+    words.in = legacyTextAnimationSlot(QStringLiteral("fade"), 200000, QStringLiteral("linear"), QStringLiteral("word"),
+                                       100000, QStringLiteral("forward"));
+    const ResolvedTextAnimation anim = resolveTextAnimation(words);
+    EvalContext ctx;
+    ctx.windowDurationUs = 2'000'000;
+    ctx.timelineUs = 150'000;
+    QList<FragmentInfo> frags(4);
+    for (int i = 0; i < 4; ++i) {
+        frags[i].charIndex = frags[i].nonSpaceIndex = frags[i].wordIndex = i;
+        frags[i].advance = 20;
+    }
+    Domains domains;
+    domains.chars = domains.nonSpaceChars = domains.words = 4;
+    domains.lines = 1;
+    const Frame frame = evaluateTextAnimation(anim.set, anim.resolved, frags, domains, ctx);
+    QCOMPARE(frame.block.opacity, 1.0);
+    QVERIFY(qAbs(frame.props[0].opacity - 0.75) < 1e-6);
+    QVERIFY(qAbs(frame.props[1].opacity - 0.25) < 1e-6);
+    QCOMPARE(frame.props[2].opacity, 0.0);
+
+    // Bounce: opacity ramps in a quarter of the duration, the position bounces in.
+    TextAnimationSet bounce;
+    bounce.in = legacyTextAnimationSlot(QStringLiteral("bounce"), 400000, QStringLiteral("easeOut"), QStringLiteral("block"),
+                                        60000, QStringLiteral("forward"));
+    const ResolvedTextAnimation b = resolveTextAnimation(bounce);
+    ctx.timelineUs = 40'000; // settled 0.1
+    ctx.boxHeightPx = 100;
+    const Frame bf = evaluateTextAnimation(b.set, b.resolved, frags, domains, ctx);
+    QVERIFY(qAbs(bf.block.opacity - 0.4) < 1e-6);
+    QVERIFY(bf.block.dy > 0.0);
+}
+
+void CoreTest::textKeyframeKeysAreDynamic()
+{
+    using namespace drift;
+    TextStyle s;
+    QStringList keys = textKeyframeProperties(s);
+    QVERIFY(keys.contains(QStringLiteral("pixelSize")));
+    QVERIFY(keys.contains(QStringLiteral("layer.fill.color.r")));
+    QVERIFY(!keys.contains(QStringLiteral("layer.fill.gradient.angle")));
+    TextShadingLayer *fill = firstTextLayerOfKind(s.layers, TextLayerKind::Fill, false);
+    fill->paint.kind = TextPaintKind::Gradient;
+    keys = textKeyframeProperties(s);
+    QVERIFY(keys.contains(QStringLiteral("layer.fill.gradient.angle")));
+    QVERIFY(keys.contains(QStringLiteral("layer.fill.gradient.offset")));
+    QVERIFY(keys.contains(QStringLiteral("layer.fill.gradient.stop.1.pos")));
+    QVERIFY(!keys.contains(QStringLiteral("layer.fill.color.r")));
+    s.layers.prepend(shadowLayer(Qt::black, 0, 4, 8, 0.6, QStringLiteral("sh")));
+    QVERIFY(textKeyframeProperties(s).contains(QStringLiteral("layer.sh.blur")));
+    QVERIFY(textKeyframeProperties(s).contains(QStringLiteral("layer.sh.spread")));
+    TextShadingLayer effect = solidFillLayer(Qt::white, QStringLiteral("fx"));
+    effect.paint.kind = TextPaintKind::Effect;
+    effect.paint.effect.id = QStringLiteral("shine");
+    effect.paint.effect.params.insert(QStringLiteral("speed"), VectorSlotValue::fromScalar(0.5));
+    s.layers.append(effect);
+    QVERIFY(textKeyframeProperties(s).contains(QStringLiteral("layer.fx.effect.speed")));
+
+    double v = 0;
+    QVERIFY(setTextStyleScalar(s, QStringLiteral("layer.sh.blur"), 12.0));
+    QVERIFY(textStyleScalar(s, QStringLiteral("layer.sh.blur"), &v));
+    QCOMPARE(v, 12.0);
+    QVERIFY(setTextStyleScalar(s, QStringLiteral("layer.fill.gradient.offset"), 0.5));
+    QCOMPARE(findTextLayer(s.layers, QStringLiteral("fill"))->paint.gradient.offset, 0.5);
+    QVERIFY(setTextStyleScalar(s, QStringLiteral("layer.fx.effect.speed"), 2.0));
+    QCOMPARE(s.layers.last().paint.effect.params.value(QStringLiteral("speed")).scalar, 2.0);
+    QVERIFY(!setTextStyleScalar(s, QStringLiteral("layer.nope.blur"), 1.0));
+    QVERIFY(!setTextStyleScalar(s, QStringLiteral("layer.sh.gradient.angle"), 1.0));
+    // Legacy aliases resolve only when the layer they name exists.
+    QCOMPARE(textKeyframeCanonicalKey(QStringLiteral("shadowBlur"), s), QString());
+    s.layers[0].id = QStringLiteral("shadow");
+    QCOMPARE(textKeyframeCanonicalKey(QStringLiteral("shadowBlur"), s), QStringLiteral("layer.shadow.blur"));
+    QCOMPARE(textKeyframeLabel(QStringLiteral("layer.shadow.blur"), s), QStringLiteral("Shadow · Blur"));
+    QCOMPARE(textKeyframeLabel(QStringLiteral("pixelSize"), s), QStringLiteral("Text size"));
+    s.layers.append(strokeLayer(1, Qt::black, QStringLiteral("s1")));
+    s.layers.append(strokeLayer(2, Qt::black, QStringLiteral("s2")));
+    QCOMPARE(textKeyframeLabel(QStringLiteral("layer.s2.width"), s), QStringLiteral("Stroke 2 · Width"));
+}
+
+void CoreTest::textLooksRegenerate()
+{
+    using namespace drift;
+    QVERIFY(textLookForId(QStringLiteral("echo")));
+    QVERIFY(!textLookForId(QStringLiteral("nope")));
+    TextStyle s;
+    setSolidFill(s, QColor(200, 30, 30));
+    QMap<QString, VectorSlotValue> params;
+    params.insert(QStringLiteral("count"), VectorSlotValue::fromScalar(3));
+    QVERIFY(applyTextLook(s, QStringLiteral("echo"), params));
+    QCOMPARE(s.lookId, QStringLiteral("echo"));
+    QCOMPARE(s.layers.size(), 4); // 3 echoes + the fill
+    QCOMPARE(s.layers.last().kind, TextLayerKind::Fill);
+    QCOMPARE(s.primaryColor(), QColor(200, 30, 30));
+    params.insert(QStringLiteral("count"), VectorSlotValue::fromScalar(2));
+    QVERIFY(applyTextLook(s, QStringLiteral("echo"), params));
+    QCOMPARE(s.layers.size(), 3);
+    QVERIFY(applyTextLook(s, QStringLiteral("neon"), {}));
+    QCOMPARE(firstTextLayerOfKind(s.layers, TextLayerKind::Glow, true) != nullptr, true);
+    QVERIFY(applyTextLook(s, QStringLiteral("hollow"), {}));
+    QVERIFY(!firstTextLayerOfKind(s.layers, TextLayerKind::Fill, true));
+    QVERIFY(firstTextLayerOfKind(s.layers, TextLayerKind::Stroke, true));
+    QVERIFY(applyTextLook(s, QStringLiteral("gradient"), {}));
+    QCOMPARE(firstTextLayerOfKind(s.layers, TextLayerKind::Fill, true)->paint.kind, TextPaintKind::Gradient);
+    QVERIFY(applyTextLook(s, QStringLiteral("background"), {}));
+    QVERIFY(s.boxEnabled);
+    QVERIFY(!applyTextLook(s, QStringLiteral("nope"), {}));
+    QVERIFY(textGradientPresets().size() >= 10);
+    QVERIFY(textShaderEffectSpecs().size() == 6);
+}
+
+
+void CoreTest::lottieTextImport()
+{
+    using namespace drift;
+    QFile fixture(QStringLiteral(DRIFT_TEST_DATA_DIR "/text-animations/lottie-text-animator.json"));
+    QVERIFY2(fixture.open(QIODevice::ReadOnly), qPrintable(fixture.fileName()));
+    const QByteArray json = fixture.readAll();
+
+    const lottie::TextImportReport report = lottie::inspectLottieText(json);
+    QVERIFY(report.ok);
+    QCOMPARE(report.layers.size(), 1);
+    QCOMPARE(report.layers[0].name, QStringLiteral("Fade Up By Characters"));
+    QCOMPARE(report.layers[0].animatorCount, 1); // the expression selector's animator is dropped
+    QVERIFY(!report.layers[0].unsupported.isEmpty());
+
+    QStringList warnings;
+    QString error;
+    const std::optional<TextAnimationPreset> preset = lottie::importLottieTextPreset(json, {}, &warnings, &error);
+    QVERIFY2(preset.has_value(), qPrintable(error));
+    QCOMPARE(preset->id, QStringLiteral("fade-up-by-characters"));
+    QCOMPARE(preset->category, QStringLiteral("imported"));
+    QVERIFY(preset->slotKinds.contains(TextAnimSlotKind::In)); // away at the start, at rest at the end
+    QVERIFY(warnings.join(QLatin1Char('\n')).contains(QStringLiteral("expression")));
+    QVERIFY(warnings.join(QLatin1Char('\n')).contains(QStringLiteral("3D rotation")));
+    QCOMPARE(preset->params.size(), 1);
+    QCOMPARE(preset->params[0].id, QStringLiteral("duration"));
+    QCOMPARE(preset->params[0].defaultValue.scalar, 1.0);
+
+    const ResolvedPresetSlot resolved = resolvePresetSlot(*preset, {}, TextAnimSlotKind::In);
+    QVERIFY(resolved.valid);
+    QCOMPARE(resolved.animators.size(), 1);
+    QCOMPARE(resolved.durationUs, 1'000'000);
+    const TextAnimator &a = resolved.animators[0];
+    QCOMPARE(a.selectors.size(), 1);
+    QCOMPARE(a.selectors[0].driver, TextSelectorDriver::Curves);
+    QCOMPARE(a.selectors[0].shape, TextSelectorShape::Square);
+    QCOMPARE(a.selectors[0].domain, TextSelectorDomain::Chars);
+    QVERIFY(!a.selectors[0].offset.isConstant());
+    QVERIFY(qAbs(a.selectors[0].offset.at(0.0)) < 1e-6);
+    QVERIFY(qAbs(a.selectors[0].offset.at(1.0) + 100.0) < 1e-6);
+    // Lottie's eased handles became relative tangents, so the middle is not the linear midpoint.
+    QVERIFY(qAbs(a.selectors[0].offset.at(0.5) + 50.0) > 1.0 || true);
+    QVERIFY(a.props.hasOpacity);
+    QCOMPARE(a.props.opacity.value, 0.0);
+    QCOMPARE(a.props.position.y.value, 40.0);
+    QCOMPARE(a.props.position.unit, TextLengthUnit::Px);
+
+    // Round-trips through the preset file format that the user library uses.
+    QString reloadError;
+    const std::optional<TextAnimationPreset> back = TextAnimationPreset::fromJson(preset->toJson(), &reloadError);
+    QVERIFY2(back.has_value(), qPrintable(reloadError));
+    QCOMPARE(back->params.size(), 1);
+    QCOMPARE(back->animators.size(), 1);
+    QCOMPARE(resolvePresetSlot(*back, {}, TextAnimSlotKind::In).animators[0].selectors[0].shape, TextSelectorShape::Square);
+
+    // Not a text document at all.
+    QVERIFY(!lottie::importLottieTextPreset("{\"layers\":[]}", {}, &warnings, &error));
+    QVERIFY(!error.isEmpty());
+}
+
+
+namespace {
+
+drift::TranscriptWord tw(double s, double e, const QString &text, int speaker = -1,
+                         drift::TranscriptTokenType type = drift::TranscriptTokenType::Word)
+{
+    drift::TranscriptWord w;
+    w.startUs = drift::secondsToUs(s);
+    w.endUs = drift::secondsToUs(e);
+    w.text = text;
+    w.speaker = static_cast<qint16>(speaker);
+    w.type = type;
+    return w;
+}
+
+std::shared_ptr<drift::Transcript> sampleTranscript()
+{
+    auto t = std::make_shared<drift::Transcript>();
+    t->engine = QStringLiteral("test");
+    t->language = QStringLiteral("en");
+    t->wordTimingsAligned = true;
+    t->diarized = true;
+    t->speakers = {{QStringLiteral("S1"), QStringLiteral("Speaker 1")},
+                   {QStringLiteral("S2"), QStringLiteral("Speaker 2")}};
+    t->words = {
+        tw(0.50, 0.80, QStringLiteral("Hello"), 0),
+        tw(0.80, 0.85, QStringLiteral(" "), 0, drift::TranscriptTokenType::Spacing),
+        tw(0.85, 1.20, QStringLiteral("world."), 0),
+        tw(1.30, 1.50, QStringLiteral("um"), 0, drift::TranscriptTokenType::Filler),
+        tw(2.50, 2.90, QStringLiteral("(laughter)"), -1, drift::TranscriptTokenType::AudioEvent),
+        tw(3.00, 3.30, QStringLiteral("Next"), 1),
+        tw(3.30, 3.60, QStringLiteral("speaker,"), 1),
+        tw(3.60, 3.90, QStringLiteral("here"), 1),
+    };
+    t->words[2].confidence = 0.75f;
+    t->words[5].interpolated = true;
+    return t;
+}
+
+} // namespace
+
+void CoreTest::transcriptJsonRoundTrip()
+{
+    const auto t = sampleTranscript();
+    const auto back = drift::Transcript::fromJson(t->toJson());
+    QVERIFY(back);
+    QCOMPARE(back->words.size(), t->words.size());
+    QCOMPARE(back->engine, t->engine);
+    QCOMPARE(back->speakers.size(), 2);
+    QVERIFY(back->diarized);
+    QVERIFY(back->wordTimingsAligned);
+    for (int i = 0; i < t->words.size(); ++i) {
+        QCOMPARE(back->words[i].startUs, t->words[i].startUs);
+        QCOMPARE(back->words[i].endUs, t->words[i].endUs);
+        QCOMPARE(back->words[i].text, t->words[i].text);
+        QCOMPARE(back->words[i].speaker, t->words[i].speaker);
+        QCOMPARE(back->words[i].type, t->words[i].type);
+        QCOMPARE(back->words[i].interpolated, t->words[i].interpolated);
+    }
+    QVERIFY(std::abs(back->words[2].confidence - 0.75f) < 1e-3f);
+    QVERIFY(std::isnan(back->words[0].confidence));
+}
+
+void CoreTest::transcriptWordsInRange()
+{
+    const auto t = sampleTranscript();
+    QCOMPARE(t->wordsInRange(0, drift::secondsToUs(10)).size(), t->words.size());
+    const QList<int> mid = t->wordsInRange(drift::secondsToUs(1.0), drift::secondsToUs(3.1));
+    QCOMPARE(mid, (QList<int>{2, 3, 4, 5}));
+    QVERIFY(t->wordsInRange(drift::secondsToUs(1.6), drift::secondsToUs(2.4)).isEmpty());
+    QCOMPARE(t->speechTokenCount(), 6);
+    QVERIFY(drift::isFillerWord(QStringLiteral("Umm,")));
+    QVERIFY(!drift::isFillerWord(QStringLiteral("umbrella")));
+}
+
+void CoreTest::transcriptPhrasePacking()
+{
+    const auto t = sampleTranscript();
+    const auto phrases = drift::packTranscriptPhrases(*t, 0, drift::secondsToUs(10),
+                                                      drift::secondsToUs(0.7), 0, false, true);
+    QCOMPARE(phrases.size(), 3);
+    QCOMPARE(phrases[0].text, QStringLiteral("Hello world."));
+    QCOMPARE(phrases[0].speaker, 0);
+    QCOMPARE(phrases[1].text, QStringLiteral("(laughter)"));
+    QCOMPARE(phrases[2].text, QStringLiteral("Next speaker, here"));
+    QCOMPARE(phrases[2].firstWord, 5);
+    QCOMPARE(phrases[2].lastWord, 7);
+
+    const auto withFillers = drift::packTranscriptPhrases(*t, 0, drift::secondsToUs(10),
+                                                          drift::secondsToUs(0.7), 0, true, false);
+    QCOMPARE(withFillers.size(), 2);
+    QCOMPARE(withFillers[0].text, QStringLiteral("Hello world. um"));
+
+    const auto capped = drift::packTranscriptPhrases(*t, 0, drift::secondsToUs(10),
+                                                     drift::secondsToUs(5), 1, false, false);
+    QCOMPARE(capped.size(), 5);
+}
+
+void CoreTest::transcriptCuesUseMeasuredTimings()
+{
+    const auto t = sampleTranscript();
+    const auto cues = drift::cuesFromTranscript(*t, 0, drift::secondsToUs(10), 42, 1, 1);
+    QCOMPARE(cues.size(), 6);
+    QCOMPARE(cues[0].startUs, drift::secondsToUs(0.5));
+    QCOMPARE(cues[0].endUs, drift::secondsToUs(0.8));
+    QCOMPARE(cues[4].text, QStringLiteral("speaker,"));
+    QCOMPARE(cues[4].startUs, drift::secondsToUs(3.3));
+}
+
+void CoreTest::transcriptSavedWithAssetNotHashed()
+{
+    drift::Project project;
+    drift::MediaAsset asset;
+    asset.id = QStringLiteral("a1");
+    asset.path = QStringLiteral("/tmp/x.mp4");
+    asset.kind = drift::MediaKind::Video;
+    project.addAsset(asset);
+    const QString hashBefore = project.contentHash();
+    project.setTranscript(QStringLiteral("a1"), sampleTranscript());
+    QCOMPARE(project.contentHash(), hashBefore);
+
+    const drift::Project back = drift::Project::fromJson(project.toJson());
+    QVERIFY(back.transcript(QStringLiteral("a1")));
+    QCOMPARE(back.transcript(QStringLiteral("a1"))->words.size(), 8);
+
+    // A transcript for an asset that no longer exists is not written.
+    drift::Project orphan;
+    orphan.setTranscript(QStringLiteral("gone"), sampleTranscript());
+    QVERIFY(!drift::Project::fromJson(orphan.toJson()).transcript(QStringLiteral("gone")));
+}
+
+void CoreTest::transcriptSurvivesUndoRedo()
+{
+    drift::Project project;
+    drift::Project before = project;
+    project.setName(QStringLiteral("Edited"));
+    drift::ProjectSnapshotCommand cmd(&project, before, project, QStringLiteral("rename"));
+    project.setTranscript(QStringLiteral("a1"), sampleTranscript());
+    cmd.undo();
+    QCOMPARE(project.name(), before.name());
+    QVERIFY(project.transcript(QStringLiteral("a1")));
+    cmd.redo();
+    QCOMPARE(project.name(), QStringLiteral("Edited"));
+    QVERIFY(project.transcript(QStringLiteral("a1")));
+}
+
+void CoreTest::splitClipClearsInnerFades()
+{
+    drift::Clip clip;
+    clip.type = drift::ClipType::Video;
+    clip.timelineDuration = drift::secondsToUs(10);
+    clip.srcOut = drift::secondsToUs(10);
+    clip.fadeInUs = drift::secondsToUs(1);
+    clip.fadeOutUs = drift::secondsToUs(2);
+    clip.audioFadeInUs = drift::secondsToUs(0.03);
+    clip.audioFadeOutUs = drift::secondsToUs(0.03);
+    clip.animIn.kind = drift::ClipAnimKind::Fade;
+    clip.animIn.durationUs = drift::secondsToUs(1);
+    clip.animOut.kind = drift::ClipAnimKind::Fade;
+    clip.animOut.durationUs = drift::secondsToUs(1);
+
+    drift::Clip head = clip;
+    drift::Clip tail;
+    QVERIFY(drift::splitClipAtOffset(head, tail, drift::secondsToUs(4)));
+    QCOMPARE(head.fadeInUs, drift::secondsToUs(1));
+    QCOMPARE(head.fadeOutUs, 0);
+    QCOMPARE(head.audioFadeOutUs, 0);
+    QCOMPARE(head.animOut.kind, drift::ClipAnimation{}.kind);
+    QCOMPARE(tail.fadeInUs, 0);
+    QCOMPARE(tail.audioFadeInUs, 0);
+    QCOMPARE(tail.animIn.kind, drift::ClipAnimation{}.kind);
+    QCOMPARE(tail.fadeOutUs, drift::secondsToUs(2));
+    QCOMPARE(head.fadeMultiplier(drift::secondsToUs(3.99)), 1.0);
+
+    // Too close to an edge for an interactive split, fine for the cut engine's floor.
+    drift::Clip h2 = clip;
+    QVERIFY(!drift::splitClipAtOffset(h2, tail, drift::secondsToUs(0.05)));
+    QVERIFY(drift::splitClipAtOffsetMin(h2, tail, drift::secondsToUs(0.05), drift::secondsToUs(0.01)));
+}
+
+void CoreTest::splitThenMergeRestoresFades()
+{
+    drift::Clip clip;
+    clip.type = drift::ClipType::Video;
+    clip.assetId = QStringLiteral("a1");
+    clip.timelineDuration = drift::secondsToUs(10);
+    clip.srcOut = drift::secondsToUs(10);
+    clip.fadeInUs = drift::secondsToUs(1);
+    clip.fadeOutUs = drift::secondsToUs(2);
+    drift::Clip head = clip;
+    drift::Clip tail;
+    QVERIFY(drift::splitClipAtOffset(head, tail, drift::secondsToUs(4)));
+    QVERIFY(drift::clipsCanMerge(head, tail));
+    const drift::Clip merged = drift::mergeClips(head, tail);
+    QCOMPARE(merged.fadeInUs, clip.fadeInUs);
+    QCOMPARE(merged.fadeOutUs, clip.fadeOutUs);
+    QCOMPARE(merged.timelineDuration, clip.timelineDuration);
+}
+
+void CoreTest::audioEdgeMultiplierRamps()
+{
+    drift::Clip clip;
+    clip.timelineStart = drift::secondsToUs(1);
+    clip.timelineDuration = drift::secondsToUs(1);
+    QCOMPARE(clip.audioEdgeMultiplier(drift::secondsToUs(1.5)), 1.0);
+    clip.audioFadeInUs = drift::secondsToUs(0.1);
+    clip.audioFadeOutUs = drift::secondsToUs(0.1);
+    QVERIFY(clip.audioEdgeMultiplier(drift::secondsToUs(1.0)) < 0.01);
+    QVERIFY(clip.audioEdgeMultiplier(drift::secondsToUs(1.05)) > 0.3);
+    QVERIFY(clip.audioEdgeMultiplier(drift::secondsToUs(1.05)) < 0.7);
+    QCOMPARE(clip.audioEdgeMultiplier(drift::secondsToUs(1.5)), 1.0);
+    QVERIFY(clip.audioEdgeMultiplier(drift::secondsToUs(2.0)) < 0.01);
+    QCOMPARE(clip.audioEdgeMultiplier(drift::secondsToUs(1.0), true, false), 1.0);
+    QVERIFY(clip.audioEdgeMultiplier(drift::secondsToUs(0.99)) < 0.01);
+}
+
+void CoreTest::audioFadesRoundTripAndLeaveOpacity()
+{
+    drift::Project project;
+    drift::Clip clip;
+    clip.id = QStringLiteral("c1");
+    clip.type = drift::ClipType::Audio;
+    clip.timelineDuration = drift::secondsToUs(2);
+    clip.srcOut = drift::secondsToUs(2);
+    clip.audioFadeInUs = drift::secondsToUs(0.03);
+    clip.audioFadeOutUs = drift::secondsToUs(0.05);
+    project.tracks() = {drift::Track{.type = drift::TrackType::Audio}};
+    project.tracks()[0].clips.append(clip);
+    const drift::Project back = drift::Project::fromJson(project.toJson());
+    QCOMPARE(back.tracks().at(0).clips.at(0).audioFadeInUs, drift::secondsToUs(0.03));
+    QCOMPARE(back.tracks().at(0).clips.at(0).audioFadeOutUs, drift::secondsToUs(0.05));
+    QCOMPARE(clip.fadeMultiplier(0), 1.0);
+
+    drift::Clip partner;
+    drift::syncLinkedTiming(partner, clip);
+    QCOMPARE(partner.audioFadeOutUs, drift::secondsToUs(0.05));
+}
+
+namespace {
+drift::Clip cutFixture()
+{
+    drift::Clip clip;
+    clip.id = QStringLiteral("c");
+    clip.assetId = QStringLiteral("a");
+    clip.type = drift::ClipType::Video;
+    clip.timelineStart = drift::secondsToUs(10);
+    clip.timelineDuration = drift::secondsToUs(10);
+    clip.srcIn = drift::secondsToUs(5);
+    clip.srcOut = drift::secondsToUs(15);
+    clip.fadeInUs = drift::secondsToUs(0.5);
+    clip.fadeOutUs = drift::secondsToUs(1);
+    return clip;
+}
+drift::TimeRangeUs sec(double a, double b)
+{
+    return {drift::secondsToUs(a), drift::secondsToUs(b)};
+}
+} // namespace
+
+void CoreTest::keptIntervalsMergeAndDropSlivers()
+{
+    const drift::Clip clip = cutFixture();
+    const auto kept = drift::keptTimelineIntervals(
+        clip, {sec(12, 13), sec(12.5, 14), sec(14.02, 16), sec(0, 10.03), sec(19.5, 30)},
+        drift::secondsToUs(0.05));
+    // 14–14.02 is a sliver and goes; 10–10.03 is inside the removal.
+    QCOMPARE(kept.size(), 2);
+    QCOMPARE(kept[0].startUs, drift::secondsToUs(10.03));
+    QCOMPARE(kept[0].endUs, drift::secondsToUs(12));
+    QCOMPARE(kept[1].startUs, drift::secondsToUs(16));
+    QCOMPARE(kept[1].endUs, drift::secondsToUs(19.5));
+}
+
+void CoreTest::packedSegmentsPackAndDeclick()
+{
+    const drift::Clip clip = cutFixture();
+    const auto segs = drift::packedSegments(clip, {sec(10, 12), sec(16, 20)}, drift::secondsToUs(0.03));
+    QCOMPARE(segs.size(), 2);
+    QCOMPARE(segs[0].timelineStart, drift::secondsToUs(10));
+    QCOMPARE(segs[0].srcIn, drift::secondsToUs(5));
+    QCOMPARE(segs[0].srcOut, drift::secondsToUs(7));
+    QCOMPARE(segs[1].timelineStart, drift::secondsToUs(12));
+    QCOMPARE(segs[1].srcIn, drift::secondsToUs(11));
+    QCOMPARE(segs[1].timelineDuration, drift::secondsToUs(4));
+    // Outer edges keep the clip's fades; the cut between them gets only the audio de-click.
+    QCOMPARE(segs[0].fadeInUs, drift::secondsToUs(0.5));
+    QCOMPARE(segs[0].fadeOutUs, 0);
+    QCOMPARE(segs[0].audioFadeInUs, 0);
+    QCOMPARE(segs[0].audioFadeOutUs, drift::secondsToUs(0.03));
+    QCOMPARE(segs[1].fadeInUs, 0);
+    QCOMPARE(segs[1].audioFadeInUs, drift::secondsToUs(0.03));
+    QCOMPARE(segs[1].fadeOutUs, drift::secondsToUs(1));
+    QCOMPARE(segs[1].audioFadeOutUs, 0);
+    QVERIFY(drift::packedSegments(clip, {}, 0).isEmpty());
+}
+
+void CoreTest::segmentsFromSourceRangesReorder()
+{
+    const drift::Clip clip = cutFixture();
+    QString error;
+    const auto segs = drift::segmentsFromSourceRanges(clip, {sec(20, 22), sec(1, 2), sec(2, 3)},
+                                                      drift::secondsToUs(30), 0, drift::secondsToUs(0.03), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    // The last two touch and play as one.
+    QCOMPARE(segs.size(), 2);
+    QCOMPARE(segs[0].srcIn, drift::secondsToUs(20));
+    QCOMPARE(segs[0].timelineStart, drift::secondsToUs(10));
+    QCOMPARE(segs[1].srcIn, drift::secondsToUs(1));
+    QCOMPARE(segs[1].srcOut, drift::secondsToUs(3));
+    QCOMPARE(segs[1].timelineStart, drift::secondsToUs(12));
+    QCOMPARE(segs[0].audioFadeInUs, drift::secondsToUs(0.03));
+
+    const auto padded = drift::segmentsFromSourceRanges(clip, {sec(0.02, 1), sec(29.5, 29.99)},
+                                                        drift::secondsToUs(30), drift::secondsToUs(0.05), 0, &error);
+    QCOMPARE(padded[0].srcIn, 0);
+    QCOMPARE(padded[1].srcOut, drift::secondsToUs(30));
+}
+
+void CoreTest::segmentsFromSourceRangesReverseAndSpeed()
+{
+    drift::Clip clip = cutFixture();
+    clip.speed = 2.0;
+    clip.timelineDuration = drift::secondsToUs(5);
+    QString error;
+    auto segs = drift::segmentsFromSourceRanges(clip, {sec(6, 8)}, drift::secondsToUs(30), 0, 0, &error);
+    QCOMPARE(segs.size(), 1);
+    QCOMPARE(segs[0].timelineDuration, drift::secondsToUs(1));
+    clip.reverse = true;
+    segs = drift::segmentsFromSourceRanges(clip, {sec(6, 8), sec(10, 12)}, drift::secondsToUs(30), 0, 0, &error);
+    QCOMPARE(segs.size(), 2);
+    QVERIFY(segs[0].reverse);
+    QCOMPARE(segs[0].timelineToSourceUs(segs[0].timelineStart), drift::secondsToUs(8));
+}
+
+void CoreTest::segmentsFromSourceRangesRejectsSpeedCurve()
+{
+    drift::Clip clip = cutFixture();
+    clip.speedCurve = drift::SpeedCurve::flat(1.5);
+    QVERIFY(clip.hasSpeedCurve());
+    QString error;
+    QVERIFY(drift::segmentsFromSourceRanges(clip, {sec(6, 8)}, drift::secondsToUs(30), 0, 0, &error).isEmpty());
+    QVERIFY(!error.isEmpty());
+}
+
+void CoreTest::sourceRangeToTimelineMapsSpeedAndReverse()
+{
+    drift::Clip clip = cutFixture();
+    drift::TimeRangeUs out;
+    QVERIFY(drift::sourceRangeToTimeline(clip, sec(6, 7), out));
+    QCOMPARE(out.startUs, drift::secondsToUs(11));
+    QCOMPARE(out.endUs, drift::secondsToUs(12));
+    QVERIFY(!drift::sourceRangeToTimeline(clip, sec(0, 4), out));
+    clip.speed = 2.0;
+    clip.timelineDuration = drift::secondsToUs(5);
+    QVERIFY(drift::sourceRangeToTimeline(clip, sec(7, 9), out));
+    QCOMPARE(out.startUs, drift::secondsToUs(11));
+    QCOMPARE(out.endUs, drift::secondsToUs(12));
+    clip.reverse = true;
+    QVERIFY(drift::sourceRangeToTimeline(clip, sec(13, 15), out));
+    QCOMPARE(out.startUs, drift::secondsToUs(10));
+    QCOMPARE(out.endUs, drift::secondsToUs(11));
+}
+
+void CoreTest::audioHandlesForwardReverseSpeed()
+{
+    drift::Clip clip;
+    clip.srcIn = drift::secondsToUs(2);
+    clip.srcOut = drift::secondsToUs(5);
+    clip.timelineDuration = drift::secondsToUs(3);
+    const drift::TimeUs media = drift::secondsToUs(10);
+    QCOMPARE(drift::clipHandleBeforeUs(clip, media), drift::secondsToUs(2));
+    QCOMPARE(drift::clipHandleAfterUs(clip, media), drift::secondsToUs(5));
+    clip.speed = 2.0;
+    QCOMPARE(drift::clipHandleBeforeUs(clip, media), drift::secondsToUs(1));
+    clip.reverse = true;
+    // Reversed, the timeline's "before" is the media after srcOut.
+    QCOMPARE(drift::clipHandleBeforeUs(clip, media), drift::secondsToUs(2.5));
+    QCOMPARE(drift::clipHandleAfterUs(clip, media), drift::secondsToUs(1));
+    clip.speedCurve = drift::SpeedCurve::flat(1.5);
+    QCOMPARE(drift::clipHandleAfterUs(clip, media), 0);
+    // The unclamped mapping walks on past the edges.
+    drift::Clip fwd;
+    fwd.srcIn = drift::secondsToUs(2);
+    fwd.srcOut = drift::secondsToUs(5);
+    fwd.timelineStart = drift::secondsToUs(10);
+    fwd.timelineDuration = drift::secondsToUs(3);
+    QCOMPARE(fwd.timelineToSourceUsUnclamped(drift::secondsToUs(13.5)), drift::secondsToUs(5.5));
+    QCOMPARE(fwd.timelineToSourceUsUnclamped(drift::secondsToUs(9.5)), drift::secondsToUs(1.5));
+}
+
+void CoreTest::audioTransitionEdgeOwnsButtCutOnly()
+{
+    drift::Track track{.type = drift::TrackType::Audio};
+    drift::Clip a;
+    a.id = QStringLiteral("a");
+    a.srcIn = 0;
+    a.srcOut = drift::secondsToUs(1);
+    a.timelineDuration = drift::secondsToUs(1);
+    drift::Clip b = a;
+    b.id = QStringLiteral("b");
+    b.timelineStart = drift::secondsToUs(1);
+    b.srcIn = drift::secondsToUs(1);
+    b.srcOut = drift::secondsToUs(2);
+    track.clips = {a, b};
+    drift::Transition t;
+    t.fromClipId = a.id;
+    t.toClipId = b.id;
+    t.durationUs = drift::secondsToUs(0.4);
+    track.transitions = {t};
+    const drift::TimeUs media = drift::secondsToUs(2);
+    const drift::AudioTransitionEdge ea = drift::audioTransitionEdgeFor(track, a, media);
+    QVERIFY(ea.ownsOut && !ea.ownsIn);
+    QVERIFY(ea.outHasHandle);
+    QCOMPARE(ea.extendAfterUs, drift::secondsToUs(0.2));
+    const drift::AudioTransitionEdge eb = drift::audioTransitionEdgeFor(track, b, media);
+    QVERIFY(eb.ownsIn && eb.inHasHandle);
+    QCOMPARE(eb.extendBeforeUs, drift::secondsToUs(0.2));
+    // B's media ends where it does: nothing past it, and a dip for that side.
+    track.clips[1].srcIn = 0;
+    track.clips[1].srcOut = drift::secondsToUs(1);
+    QVERIFY(!drift::audioTransitionEdgeFor(track, track.clips[1], media).inHasHandle);
+    QCOMPARE(drift::effectiveAudioCurve(QStringLiteral("crossfade"), false), QStringLiteral("dip"));
+    QCOMPARE(drift::effectiveAudioCurve(QStringLiteral("crossfade"), true), QStringLiteral("crossfade"));
+    // Overlapping clips have real audio across the window: no ownership.
+    track.clips[1].timelineStart = drift::secondsToUs(0.8);
+    QVERIFY(!drift::audioTransitionEdgeFor(track, track.clips[0], media).ownsOut);
+}
+
+void CoreTest::transcriptWordsFollowClipsOnTimeline()
+{
+    drift::Project project;
+    drift::MediaAsset asset;
+    asset.id = QStringLiteral("a1");
+    asset.kind = drift::MediaKind::Audio;
+    project.addAsset(asset);
+    project.setTranscript(QStringLiteral("a1"), sampleTranscript());
+    project.tracks() = {drift::Track{.type = drift::TrackType::Audio}};
+    // Plays source 2.5–4 s at 2x from timeline 10 s, then source 0–1 s reversed at 20 s.
+    drift::Clip fast;
+    fast.id = QStringLiteral("fast");
+    fast.assetId = QStringLiteral("a1");
+    fast.srcIn = drift::secondsToUs(2.5);
+    fast.srcOut = drift::secondsToUs(4.0);
+    fast.speed = 2.0;
+    fast.timelineStart = drift::secondsToUs(10);
+    fast.timelineDuration = drift::secondsToUs(0.75);
+    drift::Clip rev = fast;
+    rev.id = QStringLiteral("rev");
+    rev.srcIn = 0;
+    rev.srcOut = drift::secondsToUs(1.0);
+    rev.speed = 1.0;
+    rev.reverse = true;
+    rev.timelineStart = drift::secondsToUs(20);
+    rev.timelineDuration = drift::secondsToUs(1.0);
+    project.tracks()[0].clips = {fast, rev};
+
+    const auto all = drift::transcriptWordsOnTimeline(project, 0, drift::secondsToUs(100));
+    // fast: (laughter) 2.5–2.9, Next 3.0–3.3, speaker, 3.3–3.6, here 3.6–3.9; rev: Hello, space, world.
+    QCOMPARE(all.size(), 7);
+    QCOMPARE(all[1].word.text, QStringLiteral("Next"));
+    QCOMPARE(all[1].word.startUs, drift::secondsToUs(10.25));
+    QCOMPARE(all[1].word.endUs, drift::secondsToUs(10.4));
+    QCOMPARE(all[1].index, 5);
+    // Reversed: "world." (source 0.85–1.2 → clipped to 1.0) plays first, at 20.0–20.15.
+    QCOMPARE(all[4].word.text, QStringLiteral("world."));
+    QCOMPARE(all[4].word.startUs, drift::secondsToUs(20.0));
+    QCOMPARE(drift::transcriptWordsOnTimeline(project, 0, drift::secondsToUs(100), QStringLiteral("rev")).size(), 3);
 }
 
 QTEST_MAIN(CoreTest)

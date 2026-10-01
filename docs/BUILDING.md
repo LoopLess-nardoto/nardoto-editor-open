@@ -13,17 +13,33 @@ see is what you get.
 |---|---|
 | CMake | ≥ 3.21 |
 | C++ compiler | C++20 |
-| Qt | 6.5+ (Quick, QuickControls2, Multimedia, Test, Concurrent, Widgets, OpenGL, Network, Svg, LinguistTools) |
+| Qt | 6.10+ (Quick, QuickControls2, Multimedia, Test, Concurrent, Widgets, OpenGL, Network, Svg, LinguistTools) |
+| Qt ImageFormats | runtime only — supplies the `qwebp` / `qtiff` plugins |
 | FFmpeg | 8.x (libavformat, libavcodec, libavutil, libswscale, libswresample, libavfilter) |
 | libzstd | any (addon package decompression) |
 | OpenSSL | 3.x, libcrypto only (addon signature verification) |
 | SoundTouch | any (pitch shifting behind the voice effects) |
+| zlib | any (inflate for the Premiere / Kdenlive / Resolve / MOGRT project importers) |
 
 ONNX Runtime powers auto-subtitles (and related ML features). Drift does not link it — only its headers are needed to build, and the library itself is an addon the user installs from the Acceleration category, which is what makes the CPU / CUDA / WebGPU choice theirs rather than the packager's. The headers are downloaded automatically at configure time; pass `-DDRIFT_FETCH_ONNXRUNTIME=OFF` to use a system install instead. A development build also stages a CPU runtime into `<build>/onnxruntime` so it works before anything is installed — `-DDRIFT_BUNDLE_ONNXRUNTIME=OFF` (what the Flatpak manifests use) turns that off, and `DRIFT_ONNXRUNTIME_DIR` points at an extracted release instead.
 
-On Debian/Ubuntu install `libzstd-dev`, `libssl-dev` and `libsoundtouch-dev`; on Arch, `zstd`, `openssl` and `soundtouch`; on macOS, `brew install qt ffmpeg zstd openssl@3 sound-touch` (see [macOS](#macos)). None of them has a download fallback — configure fails with a pkg-config error if the development headers are missing.
+Qt ImageFormats is a **runtime** dependency: nothing links against it, so a build without it
+succeeds and then decodes every `.webp` and `.tiff` still to a null `QImage` — a blank bin card
+and a clip that renders as nothing. Install `qt6-imageformats` (Arch), `qt6-imageformats-dev`
+(Debian/Ubuntu), or add `qtimageformats` to the aqtinstall module list. For Android builds it
+must be present in the Qt kit that `QT_ANDROID_ROOT` points at, because `androiddeployqt` can
+only bundle plugins the kit actually has:
+
+```bash
+aqt install-qt all_os android 6.11.1 android_arm64_v8a \
+  -m qtmultimedia qtshadertools qtimageformats -O "$HOME/Qt"
+```
+
+On Debian/Ubuntu install `libzstd-dev`, `libssl-dev`, `libsoundtouch-dev` and `zlib1g-dev`; on Arch, `zstd`, `openssl`, `soundtouch` and `zlib`; on macOS, `brew install qt ffmpeg zstd openssl@3 sound-touch` — zlib comes with the SDK there (see [macOS](#macos)). None of them has a download fallback — configure fails with a pkg-config error if the development headers are missing.
 
 Optional: OpenCV for experimental background-removal builds (`-DWITH_BGREMOVAL=ON`). Only `core`, `imgproc`, and `imgcodecs` are linked.
+
+Skia draws text, shapes and Lottie/SVG clips on the GPU and is on by default (`-DDRIFT_WITH_SKIA=OFF` builds a video/image/audio-only editor: text, shape and Lottie/SVG clips draw nothing). Skia has no distro package Drift can rely on, so `third_party/build-skia.sh <target>` compiles a pinned milestone into `third_party/prebuilt/skia/<target>/` (linux-x64 by default; also `linux-arm64`, `mac-arm64`, `mac-x64` and `android-<abi>`). It needs `clang`, `ninja`, `python3` and `git`, plus on Linux the development packages for HarfBuzz, ICU, FreeType, fontconfig, expat, libpng and zlib (`gn` is downloaded by the script unless one is on `PATH`). The first build takes 20–40 minutes; the result is picked up by `cmake/FindSkia.cmake` automatically, or point `DRIFT_SKIA_DIR` at any directory holding a generated `SkiaConfig.cmake`. Windows CI uses vcpkg's `skia[gl,harfbuzz,icu,freetype,png]:x64-windows-static-md` instead, which pins the same commit. Every packaging lane builds with the option on.
 
 **Nothing has to be placed by hand.** Fonts, emoji stickers, and speech models are addons (see below), so a clone builds and runs with no bundled assets.
 
@@ -213,9 +229,22 @@ The token is not a secret — it ships in every binary. It exists so the bucket 
 
 These are CMake *cache* variables: changing the default in `CMakeLists.txt` does not affect an existing build directory, so pass `-D...` again or reconfigure from scratch.
 
+### Marketplace
+
+Stock media (photos, video, audio) is fetched from `https://market.cutwire.org/api/v1`. Drift has no per-store adapters; types and providers come from the catalog. Contract: [docs/marketplace/README.md](marketplace/README.md).
+
+```bash
+cmake -B build -DDRIFT_MARKET_API_URL=https://market.example.com/api/v1 \
+               -DDRIFT_MARKET_CLIENT_KEY=your-hmac-key
+
+cmake -B build -DDRIFT_MARKET_API_URL=      # build with no marketplace
+```
+
+The HMAC key is also not a user secret. It signs requests and derives a stable client id so wiping app data does not mint a new download quota. See the marketplace doc for the canonical string.
+
 ## Agent access (MCP)
 
-Optional, **off at every launch**. Settings → Agent access starts a localhost MCP server so Cursor or Claude Code can edit the open project (import media, place/trim clips, capture a still of the composition).
+Optional, **off at every launch by default**. Settings → Agent access starts a localhost MCP server so Cursor or Claude Code can edit the open project (import media, place/trim clips, capture a still of the composition). A "Start agent on startup" switch, shown once access is on, opts into starting it automatically instead — turning access off elsewhere resets that switch, so it never survives past an explicit disable.
 
 This is local process control of the editor, not a sandbox. Any process on the machine with the session token can use it. Bind is `127.0.0.1` only; the token rotates each time you enable it.
 
@@ -234,7 +263,9 @@ This is local process control of the editor, not a sandbox. Any process on the m
 }
 ```
 
-`drift --mcp-stdio` attaches to a running editor. If Agent access is off, it exits with a one-line error.
+`drift --mcp-stdio` attaches to a running editor, speaking newline-delimited JSON-RPC as the MCP stdio transport specifies. If Agent access is off it says so on stderr and answers each call with a JSON-RPC error rather than quitting, so switching Agent access on is enough to bring it to life.
+
+`drift --headless` instead runs the editor with no window and serves MCP itself — no editor, no token, no display needed for project edits. Rendering and export still want an OpenGL 3.3 context, so on a server run it as `QT_QPA_PLATFORM=xcb xvfb-run -a drift --headless`. See [MCP.md](MCP.md#headless) for the transports and flags.
 
 Agents should call `catalog`, then `toolbox`, then `apply` with a list of ops. `inspect({clips:true})` returns clip ids. `capture` returns a JPEG of the composition. See [AGENTS.md](../AGENTS.md) for the full agent guide. The `export` toolbox encodes the timeline (settings + `export({path})`).
 
@@ -296,6 +327,51 @@ GitHub release. Before tagging:
 
 Flathub is submitted separately from `flatpak/org.cutwire.Drift.flathub.yml`; pin its `commit:` to
 the tagged commit first.
+
+**After tagging, bump `main` to the next version** (`CMakeLists.txt` and `packaging/arch/PKGBUILD`
+again). Nightly builds label themselves `<project version>-nightly.<stamp>`, so leaving `main` on
+the version that just shipped would name them after a release that is already out.
+
+### Nightly builds
+
+[`.github/workflows/nightly.yml`](../.github/workflows/nightly.yml) runs at 18:30 UTC (midnight in UTC+05:30), skips
+itself when `main` has not moved since the last one, and rewrites a single pre-release tagged
+`nightly` — assets, notes and tag — rather than adding a release per build. Being a pre-release
+keeps it off `releases/latest` and out of the in-app update check. It can also be dispatched
+manually, one platform at a time.
+
+Everything channel-specific comes from two CMake variables, `DRIFT_CHANNEL` (`stable` or
+`nightly`) and `DRIFT_BUILD_ID`:
+
+| | stable | nightly |
+|---|---|---|
+| Version reported by the app | `0.7.0` | `0.7.0-nightly.20260922.ac5601e` |
+| Linux / Flatpak app id | `org.cutwire.Drift` | `org.cutwire.Drift.Nightly` |
+| macOS bundle | `Drift.app`, `org.cutwire.Drift` | `Drift Nightly.app`, `org.cutwire.Drift.Nightly` |
+| Windows | AppId `{1FC80696-…}`, `%ProgramFiles%\Drift` | AppId `{1699D9B5-…}`, `…\Drift Nightly` |
+| Android | `org.cutwire.drift` | `org.cutwire.drift.nightly` |
+| Arch | `drift` | `drift-nightly` (`conflicts=('drift')`) |
+| In-app update check | on | compiled out |
+
+So a nightly installs beside a stable copy everywhere except Arch, where both packages own
+`/usr/bin/drift`. All channels deliberately share `~/.config/CutWire Drift` (and `%APPDATA%\Drift`),
+so a nightly opens your real projects and reuses addons you have already downloaded.
+
+The Arch PKGBUILD and the Flatpak manifest for the nightly channel are *derived* from the stable
+ones at build time by `scripts/make-nightly-pkgbuild.sh` and
+`scripts/make-nightly-flatpak-manifest.py`, so a new dependency or cmake flag only has to be added
+in one place. Both are runnable locally:
+
+```bash
+scripts/make-nightly-pkgbuild.sh 20260922.ac5601e "$(git rev-parse HEAD)"
+scripts/make-nightly-flatpak-manifest.py 20260922.ac5601e
+```
+
+To build the nightly channel by hand, add the two flags to any configure line:
+
+```bash
+cmake -B build -DDRIFT_CHANNEL=nightly -DDRIFT_BUILD_ID=20260922.ac5601e
+```
 
 ### CMake targets
 

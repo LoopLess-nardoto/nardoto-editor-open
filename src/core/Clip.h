@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BlendMode.h"
 #include "ClipAnimation.h"
 #include "Effect.h"
 #include "FadeShape.h"
@@ -11,21 +12,30 @@
 #include "SubtitleCue.h"
 #include "TextStyle.h"
 #include "Time.h"
+#include "Model3dSource.h"
+#include "VectorSource.h"
 
 #include <QList>
 #include <QString>
 
 namespace drift {
 
-enum class ClipType { Video, Audio, Image, Text, Subtitle, Shape };
+// Vector is a Lottie animation or SVG document and Model3d a glTF binary; like Image and Shape
+// they have no media file behind their source range, so they are synthetic and unbounded.
+// Composite plays a nested timeline (Project::sequenceTracks(sequenceId)) as its source.
+enum class ClipType { Video, Audio, Image, Text, Subtitle, Shape, Adjustment, Vector, Model3d, Composite };
 
 QString clipTypeToString(ClipType type);
 ClipType clipTypeFromString(const QString &type);
 
-enum class BlendMode { Normal, Multiply, Screen, Overlay, Add, Darken, Lighten };
+// Which of an adjustment clip's payload members is the meaningful one. An adjustment carries
+// the same `effects` / `audioEffects` / `mask` members every clip has; the kind says which one
+// it is for, and drives the inspector tab and timeline tint. Transform is the odd one out: its
+// payload is the clip's own transform, applied as a parent to every track its Range track covers.
+enum class AdjustmentKind { VideoEffects, AudioEffects, Mask, Transform };
 
-QString blendModeToString(BlendMode mode);
-BlendMode blendModeFromString(const QString &mode);
+QString adjustmentKindToString(AdjustmentKind kind);
+AdjustmentKind adjustmentKindFromString(const QString &kind);
 
 enum class StabilizeMode { Bake, Keyframes };
 
@@ -39,10 +49,23 @@ struct Clip
     // Shared by linked video/audio companions; empty when unlinked.
     QString linkId;
     ClipType type = ClipType::Video;
+
+    // Adjustment clips only.
+    AdjustmentKind adjustmentKind = AdjustmentKind::VideoEffects;
+    // Id of the media clip this adjustment is pinned to; empty when unlinked. While set, the
+    // adjustment's timeline extent mirrors that clip's and its edges are not draggable — the
+    // mirroring is enforced centrally so every move/trim/split path keeps it true.
+    // Directional, unlike `linkId`, which symmetrically pairs A/V companions.
+    QString linkedClipId;
+
     // When true, AudioMixer skips this video clip's embedded audio (companion audio track plays it).
     bool suppressEmbeddedAudio = false;
     // 0-based index among the audio streams in `path` (for multi-track video/audio files from OBS, etc.)
     int audioStreamIndex = 0;
+    // Stereo balance: -1 hard left, 0 centre, +1 hard right. A balance law rather than a
+    // constant-power pan — it attenuates one side and is unity at centre, so the default
+    // leaves the mix bit-identical to a project that never set it.
+    double pan = 0.0;
 
     TimeUs timelineStart = 0;
     TimeUs timelineDuration = 0;
@@ -54,6 +77,13 @@ struct Clip
     TextStyle textStyle; // meaningful when type == Text or Subtitle
     QList<SubtitleCue> subtitleCues; // only meaningful when type == Subtitle
     ShapeStyle shapeStyle; // only meaningful when type == Shape
+    VectorSource vector;   // only meaningful when type == Vector
+    Model3dSource model3d; // only meaningful when type == Model3d
+    // Nested timeline this clip plays: set on a Composite clip and on the Audio companion that
+    // "Separate audio" splits off it.
+    QString sequenceId;
+
+    QRectF sourceFrame{0, 0, 1, 1};
 
     QString path;
     QString thumbnailPath;
@@ -73,6 +103,9 @@ struct Clip
     bool reverse = false; // play source range backward; speed still applies as magnitude
     bool flipH = false;
     bool flipV = false;
+    // Meaningful on a Mask-kind adjustment clip and nowhere else — a media clip's masks live on
+    // the adjustments pinned to it, which is what makes them timed, stackable and visible on the
+    // timeline. Reach them through drift::laneMasksAt / setLinkedMask, never through this.
     Mask mask;
 
     // Baked face landmarks driving the face warp effects, written once by the detect job and read
@@ -80,6 +113,11 @@ struct Clip
     // indexed at (sourceUs - faceTrackSrcOffsetUs).
     QString faceTrackPath;
     TimeUs faceTrackSrcOffsetUs = 0;
+
+    // Estimated depth (DepthSidecar) driving the depth effects. Timestamped in source time, so
+    // unlike a matte it needs no offset to be looked up; it only has to be dropped whenever the
+    // pixels it was estimated from change.
+    QString depthPath;
 
     // Baked stabilized video written by the two-pass ffmpeg job, plus the settings
     // last used to produce it. `stabilizing` is transient UI state and is not saved.
@@ -108,6 +146,11 @@ struct Clip
     FadeCurve fadeCurve = FadeCurve::Smooth;
     // Used when fadeCurve == Custom; shared by fade-in and fade-out.
     FadeShape fadeShape;
+    // Audio-only edge ramps: the de-click at cut points made by remove_silence, cut_words and
+    // keep_ranges. Unlike fadeInUs/fadeOutUs they never touch opacity, so a cut in a talking-head
+    // clip doesn't flash the picture.
+    TimeUs audioFadeInUs = 0;
+    TimeUs audioFadeOutUs = 0;
 
     // CapCut-style body intro/outro (whole-clip opacity/transform motion).
     ClipAnimation animIn;
@@ -121,6 +164,22 @@ struct Clip
     KeyframeTrack<double> transformW;
     KeyframeTrack<double> transformH;
     KeyframeTrack<double> rotation;
+    // 3D pose on top of the layout (see engine/ClipTransform3d.h). layer3d is the inspector's
+    // "3D layer" switch: on whenever any of the four tracks has data, and switching it off clears
+    // them, so a flat clip never carries a pose. It can also be on with all four empty. Empty
+    // tracks mean 0 for the tilts and depth, and kDefaultClipPerspective px for the eye distance.
+    bool layer3d = false;
+    KeyframeTrack<double> rotationX;
+    KeyframeTrack<double> rotationY;
+    KeyframeTrack<double> positionZ;
+    KeyframeTrack<double> perspective;
+    // Discrete pixel-orientation correction (0/90/180/270), applied losslessly at decode time —
+    // distinct from `rotation` above, which is a free decorative spin effect. Relative, not
+    // absolute: added on top of whatever display-matrix rotation the file actually being decoded
+    // carries. That is what lets one value stay right across every file a clip can read from —
+    // the original, a reverse proxy (tag preserved) or a vidstab bake (ffmpeg autorotated the
+    // pixels and dropped the tag). 0 = show the file as its own tag says.
+    int rotationCorrection = 0;
     KeyframeTrack<double> volume;
     QList<Effect> effects;
     QList<Effect> audioEffects; // libavfilter chains applied to this clip's audio in the mixer
@@ -154,6 +213,16 @@ struct Clip
             return srcIn;
         const TimeUs range = srcOut - srcIn;
         return srcOut - qMin(offset, range);
+    }
+
+    // Constant-speed mapping that keeps going past either end of the clip, into the media on
+    // either side of its trim: where a transition handle reads from. Ramped clips have no handles,
+    // so this ignores the curve.
+    TimeUs timelineToSourceUsUnclamped(TimeUs timelineUs) const
+    {
+        const TimeUs rel = timelineUs - timelineStart;
+        const TimeUs offset = static_cast<TimeUs>(llround(static_cast<double>(rel) * effectiveSpeed()));
+        return reverse ? srcOut - offset : srcIn + offset;
     }
 
     // Inverse of timelineToSourceUs relative to timelineStart: source time → clip-local time.
@@ -197,10 +266,11 @@ struct Clip
     // Fade gain in [0,1] at a timeline time. CapCut Fade In/Out animations own
     // the ramp when set; otherwise edge fadeInUs/Out + clip fadeCurve apply
     // (audio, timeline handles, legacy projects).
-    double fadeMultiplier(TimeUs timelineUs) const
+    // skipIn/skipOut drop that edge's ramp, for an edge an audio transition already shapes.
+    double fadeMultiplier(TimeUs timelineUs, bool skipIn = false, bool skipOut = false) const
     {
-        const bool animFadeIn = animIn.kind == ClipAnimKind::Fade && animIn.durationUs > 0;
-        const bool animFadeOut = animOut.kind == ClipAnimKind::Fade && animOut.durationUs > 0;
+        const bool animFadeIn = !skipIn && animIn.kind == ClipAnimKind::Fade && animIn.durationUs > 0;
+        const bool animFadeOut = !skipOut && animOut.kind == ClipAnimKind::Fade && animOut.durationUs > 0;
         if (!animFadeIn && !animFadeOut && fadeInUs <= 0 && fadeOutUs <= 0)
             return 1.0;
 
@@ -211,7 +281,7 @@ struct Clip
         if (animFadeIn && rel < animIn.durationUs) {
             const double t = static_cast<double>(rel) / static_cast<double>(animIn.durationUs);
             in = shapedProgress(t, animIn.curve, animIn.shape);
-        } else if (fadeInUs > 0 && rel < fadeInUs) {
+        } else if (!skipIn && fadeInUs > 0 && rel < fadeInUs) {
             in = shapedProgress(static_cast<double>(rel) / static_cast<double>(fadeInUs),
                                 fadeCurve, fadeShape);
         }
@@ -220,12 +290,31 @@ struct Clip
         if (animFadeOut && fromEnd < animOut.durationUs) {
             const double t = static_cast<double>(fromEnd) / static_cast<double>(animOut.durationUs);
             out = shapedProgress(t, animOut.curve, animOut.shape);
-        } else if (fadeOutUs > 0 && fromEnd < fadeOutUs) {
+        } else if (!skipOut && fadeOutUs > 0 && fromEnd < fadeOutUs) {
             out = shapedProgress(static_cast<double>(fromEnd) / static_cast<double>(fadeOutUs),
                                  fadeCurve, fadeShape);
         }
 
         return in * out;
+    }
+
+    // Gain from audioFadeInUs/audioFadeOutUs. Clamped at the edges like fadeMultiplier: the mixer
+    // times samples by truncated µs, so the first sample of a clip can read as a hair before it.
+    double audioEdgeMultiplier(TimeUs timelineUs, bool skipIn = false, bool skipOut = false) const
+    {
+        if ((audioFadeInUs <= 0 || skipIn) && (audioFadeOutUs <= 0 || skipOut))
+            return 1.0;
+        const TimeUs rel = qBound(TimeUs{0}, timelineUs - timelineStart, timelineDuration);
+        const TimeUs half = qMax<TimeUs>(1, timelineDuration / 2);
+        const TimeUs inLen = qMin(audioFadeInUs, half);
+        const TimeUs outLen = qMin(audioFadeOutUs, half);
+        const TimeUs fromEnd = timelineDuration - rel;
+        double gain = 1.0;
+        if (!skipIn && inLen > 0 && rel < inLen)
+            gain *= shapedProgress(static_cast<double>(rel) / static_cast<double>(inLen), FadeCurve::Smooth, {});
+        if (!skipOut && outLen > 0 && fromEnd < outLen)
+            gain *= shapedProgress(static_cast<double>(fromEnd) / static_cast<double>(outLen), FadeCurve::Smooth, {});
+        return gain;
     }
 };
 
