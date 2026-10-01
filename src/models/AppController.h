@@ -154,6 +154,7 @@ class AppController : public QObject
     Q_PROPERTY(bool exportInProgress READ exportInProgress NOTIFY exportInProgressChanged)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY exportProgressChanged)
     Q_PROPERTY(bool canShareExport READ canShareExport NOTIFY canShareExportChanged)
+    Q_PROPERTY(QString lastExportFile READ lastExportFile NOTIFY lastExportFileChanged)
     Q_PROPERTY(bool subtitleGenerating READ subtitleGenerating NOTIFY subtitleGeneratingChanged)
     // Id of the asset whose replacement is being probed, empty when idle. Only that one bin row
     // goes busy: the rest of the panel stays usable, and the wait belongs to the row the user
@@ -346,6 +347,7 @@ public:
     bool exportInProgress() const { return m_exportInProgress; }
     double exportProgress() const;
     bool canShareExport() const;
+    QString lastExportFile() const { return m_lastExportFile; }
     bool subtitleGenerating() const { return m_subtitleGenerating; }
     QString replacingAssetId() const { return m_replacingAssetId; }
     bool editingAsset() const { return m_editingAsset; }
@@ -435,6 +437,7 @@ public:
     Q_INVOKABLE void copyMcpAgentGuide();
     QString mcpAgentGuide() const;
     Q_INVOKABLE void copyStudioChatPrompt();
+    Q_INVOKABLE void copyMotionChatPrompt(const QString &path, const QString &request);
     Q_INVOKABLE QVariantMap debugInfo() const;
     Q_INVOKABLE QString debugInfoText() const;
     Q_INVOKABLE void copyDebugInfo();
@@ -731,6 +734,9 @@ public:
     Q_INVOKABLE QStringList emojiGroups() const;
     Q_INVOKABLE QString emojiFontFamily() const;
     Q_INVOKABLE void addEmojiClip(const QString &emoji, const QString &name, double atSeconds);
+    // Motion ao vivo: poe uma composicao HyperFrames (pasta ou index.html) na timeline como clipe
+    // que desenha no preview sem renderizar. Devolve o id do clipe (vazio se nao achou o html).
+    Q_INVOKABLE QString addMotionClip(const QString &pathOrFolder, double atSeconds);
     Q_INVOKABLE QVariantList builtinShapes() const;
     Q_INVOKABLE QVariantList builtinShapeCategories() const;
     // SVG "d" string for the assets-panel thumbnail, on the 0..100 grid ShapePreview.qml uses.
@@ -1137,6 +1143,8 @@ public:
     // sheet. Deferred to this point rather than done as part of the export because it is a second
     // full copy of the video, and most exports are never shared. Android only; false/no-op elsewhere.
     Q_INVOKABLE void shareLastExport();
+    // Abre a pasta do ultimo export com o arquivo selecionado (desktop).
+    Q_INVOKABLE void revealLastExport();
     Q_INVOKABLE QUrl fileUrl(const QString &path) const;
     Q_INVOKABLE QString imageUrl(const QString &path) const;
     // Same as imageUrl but requests a single frame of a filmstrip strip (see DriftImageProvider).
@@ -1177,6 +1185,7 @@ signals:
     void exportInProgressChanged();
     void exportProgressChanged();
     void canShareExportChanged();
+    void lastExportFileChanged();
     void subtitleGeneratingChanged();
     void subtitleGenProgressChanged();
     void subtitleGenStatusChanged();
@@ -1381,7 +1390,8 @@ protected:
 
     // Stickers and emoji are both a PNG dropped on an image track at the playhead.
     void addImageOverlayClip(const QString &path, const QString &name, const QString &emoji,
-                             double atSeconds, const QString &undoText);
+                             double atSeconds, const QString &undoText,
+                             drift::TimeUs durationUs = 0, bool useAsThumbnail = true);
 
     QVariantMap clipToMap(const drift::Clip &clip) const;
     int assetIndexForClip(const drift::Clip &clip) const;
@@ -1485,6 +1495,7 @@ protected:
     QAtomicInt m_exportCancel = 0;
     QUrl m_lastExportUrl;
     QString m_lastExportName;
+    QString m_lastExportFile; // caminho local do ultimo export que deu certo (desktop)
     // Android: the publish-to-gallery copy behind Share is on a worker, so canShareExport reports
     // false while it runs — that both hides the button (the dialog binds its visibility to it) and
     // stops a second tap from starting the copy again. Unused on desktop.

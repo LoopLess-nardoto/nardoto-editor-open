@@ -4,6 +4,7 @@
 #include "FrameCompositor.h"
 #include "GpuCompositor.h"
 #include "HwAccel.h"
+#include "MotionHost.h"
 #include "core/Project.h"
 #include "core/Time.h"
 
@@ -1315,6 +1316,11 @@ bool runGifExport(const drift::Project &project, const ExportSettings &settings,
             const drift::TimeUs t = rangeStartUs + static_cast<drift::TimeUs>(
                 std::llround(static_cast<double>(i) * 1e6 * frameRate.den / frameRate.num));
             QImage img = compositor.compositeAt(t);
+            if (const QString motionError = drift::MotionHost::instance().takeExactFailure();
+                !motionError.isEmpty()) {
+                error = motionError;
+                goto cleanup;
+            }
             if (img.isNull()) {
                 img = QImage(projW, projH, QImage::Format_RGBA8888);
                 img.fill(Qt::black);
@@ -1856,6 +1862,14 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
         return runToDocument(project, settings, target, errorOut, onProgress);
 #endif
 
+    // Motion ao vivo: no export cada quadro da composicao tem que ser o do instante certo, nunca
+    // o ultimo que chegou (que e o que o preview aceita para nao travar).
+    struct ExactMotionFrames
+    {
+        ExactMotionFrames() { drift::MotionHost::setExactForCurrentThread(true); }
+        ~ExactMotionFrames() { drift::MotionHost::setExactForCurrentThread(false); }
+    } exactMotionFrames;
+
     if (settings.gifExport)
         return runGifExport(project, settings, outputPath, errorOut, onProgress);
     if (settings.audioOnly)
@@ -2276,6 +2290,14 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
                     scene.backgroundColor = Qt::black;
                 }
 
+                // Motion ao vivo: quadro exato que nao chegou para o export com erro. Usar o
+                // anterior (ou nenhum) entregaria um video com quadro trocado sem aviso.
+                if (const QString motionError = drift::MotionHost::instance().takeExactFailure();
+                    !motionError.isEmpty()) {
+                    error = motionError;
+                    goto cleanup;
+                }
+
                 const int slot = int(i % GpuCompositor::kExportNv12Slots);
                 const bool packed = GpuCompositor::beginExportNv12(scene, outW, outH, slot);
                 inflight[inflightCount++] = InflightNv12{slot, i, packed};
@@ -2283,6 +2305,11 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
             }
 
             QImage img = compositor.compositeAt(t);
+            if (const QString motionError = drift::MotionHost::instance().takeExactFailure();
+                !motionError.isEmpty()) {
+                error = motionError;
+                goto cleanup;
+            }
             if (img.isNull()) {
                 img = QImage(projW, projH, QImage::Format_RGBA8888);
                 img.fill(Qt::black);

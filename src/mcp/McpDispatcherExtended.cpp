@@ -1490,6 +1490,17 @@ QJsonObject McpDispatcher::applyOneExtended(const QString &tool, const QJsonObje
         return ok({{QStringLiteral("shifted_by"), seconds}});
     }
 
+    if (tool == QLatin1String("add_motion")) {
+        const QString path = args.value(QStringLiteral("path")).toString();
+        if (path.isEmpty())
+            return err("bad_args", QStringLiteral("path required"));
+        const double at = args.contains(QStringLiteral("at")) ? jsonNumber(args.value(QStringLiteral("at")), 0.0) : -1.0;
+        const QString clipId = m_controller->addMotionClip(path, at);
+        if (clipId.isEmpty())
+            return err("not_found", QStringLiteral("index.html not found at %1").arg(path));
+        return ok({{QStringLiteral("clip"), clipId}});
+    }
+
     if (tool == QLatin1String("set_snap")) {
         if (!args.contains(QStringLiteral("enabled")))
             return err("bad_args", QStringLiteral("enabled required"));

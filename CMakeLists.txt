@@ -481,6 +481,8 @@ add_library(driftengine STATIC
     src/engine/CompositorFrameHistory.cpp
     src/engine/FrameCompositor.h
     src/engine/FrameCompositor.cpp
+    src/engine/MotionHost.h
+    src/engine/MotionHost.cpp
     src/engine/MaskApplier.h
     src/engine/MaskApplier.cpp
     src/engine/AudioEffectCatalog.h
@@ -538,7 +540,7 @@ target_include_directories(driftengine PUBLIC src)
 target_include_directories(driftengine SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/cgltf)
 target_link_libraries(driftengine PUBLIC Qt6::Core Qt6::Gui Qt6::OpenGL FFmpeg::FFmpeg driftcore
     driftaudiodsp onnxruntime::headers)
-target_link_libraries(driftengine PRIVATE ${DRIFT_ZSTD_TARGET} OpenSSL::Crypto ${CMAKE_DL_LIBS})
+target_link_libraries(driftengine PRIVATE ${DRIFT_ZSTD_TARGET} OpenSSL::Crypto Qt6::Network ${CMAKE_DL_LIBS})
 target_compile_definitions(driftengine PRIVATE DRIFT_VERSION="${PROJECT_VERSION}")
 
 if(WITH_BGREMOVAL)

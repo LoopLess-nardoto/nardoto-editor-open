@@ -740,6 +740,15 @@
                         {QStringLiteral("seconds"), numberProp(QStringLiteral("Hole width in seconds (> 0)"))},
                         {QStringLiteral("track"), integerProp(QStringLiteral("Track index; omit for all tracks"))}},
                        {QStringLiteral("at"), QStringLiteral("seconds")}) },
+        { "add_motion", "timeline", "Place a live HyperFrames composition",
+          "Put a HyperFrames composition (its folder or its index.html) on the timeline as a LIVE "
+          "motion clip: the preview draws it directly, with no render, and export renders it frame "
+          "by frame through the same engine. Duration comes from data-duration on the composition "
+          "root. To change the motion, edit its index.html on disk: the preview reloads by itself. "
+          "Goes on a new image track at `at` (playhead when omitted); returns the clip id.",
+          objectSchema({{QStringLiteral("path"), stringProp(QStringLiteral("Composition folder or index.html"))},
+                        {QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds; omit for the playhead"))}},
+                       {QStringLiteral("path")}) },
         { "set_snap", "timeline", "Toggle snapping",
           "Editor snap-to-clips/beats/bookmarks. Not undoable.",
           objectSchema({{QStringLiteral("enabled"), boolProp(QStringLiteral("Snap on"))}},

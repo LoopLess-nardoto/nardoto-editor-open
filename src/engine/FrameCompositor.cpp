@@ -8,6 +8,7 @@
 #include "GpuCompositor.h"
 #include "GpuEffectExecutor.h"
 #include "MaskApplier.h"
+#include "MotionHost.h"
 #include "ReverseProxyCache.h"
 #include "TextRaster.h"
 #include "TransitionCatalog.h"
@@ -40,12 +41,17 @@ void collectActivePaths(const drift::Project *project, drift::TimeUs timelineUs,
 {
     if (!project)
         return;
+    drift::MotionHost::setCacheFps(project->fps());
 
     for (const drift::Track &track : project->tracks()) {
         if (track.hidden)
             continue;
 
         for (const drift::Clip &clip : track.clips) {
+            // Todo motion da timeline ja pede o cache, nao so o que esta sob a agulha: quando o
+            // export chegar nele, o arquivo ja esta pronto.
+            if (drift::MotionHost::isMotionPath(clip.path))
+                drift::MotionHost::instance().cachedVideo(clip.path);
             if (!clip.containsTime(timelineUs))
                 continue;
 
@@ -58,6 +64,14 @@ void collectActivePaths(const drift::Project *project, drift::TimeUs timelineUs,
                 continue;
             if (clip.type == drift::ClipType::Shape)
                 continue;
+            // A composicao de motion vem do MotionHost, nao de um leitor FFmpeg -- a nao ser
+            // que o cache em video esteja pronto: ai o leitor dele fica vivo entre quadros.
+            if (drift::MotionHost::isMotionPath(clip.path)) {
+                const QString cache = drift::MotionHost::instance().cachedVideo(clip.path, false);
+                if (!cache.isEmpty())
+                    videoPaths.insert(cache);
+                continue;
+            }
 
             if ((track.type == drift::TrackType::Video || track.type == drift::TrackType::Shape)
                 && clip.type != drift::ClipType::Text) {
@@ -99,6 +113,17 @@ QList<ClipReaderPool::VideoRequest> collectVideoRequests(const drift::Project *p
                     qMax<drift::TimeUs>(0, clip.timelineToSourceUs(timelineUs)
                                                - clip.mask.matteSrcOffsetUs),
                     maxWidth, maxHeight});
+            }
+
+            // Motion com cache pronto le como video: sem entrar aqui, cada quadro do export fazia
+            // uma busca no arquivo e 132 s levavam 420 s (medido).
+            if (drift::MotionHost::isMotionPath(clip.path)) {
+                const QString cache = drift::MotionHost::instance().cachedVideo(clip.path, false);
+                if (!cache.isEmpty())
+                    requests.append(ClipReaderPool::VideoRequest{
+                        cache, ClipReaderPool::streamIdForClip(clip.id),
+                        qMax<drift::TimeUs>(0, clip.timelineToSourceUs(timelineUs)), maxWidth, maxHeight});
+                continue;
             }
 
             if (clip.type != drift::ClipType::Video || clip.path.isEmpty())
@@ -270,8 +295,19 @@ QImage decodeClipMediaFrame(const drift::Clip &clip, drift::TimeUs timelineUs, i
     if (clip.path.isEmpty())
         return {};
 
-    if (clip.type == drift::ClipType::Image)
+    if (clip.type == drift::ClipType::Image) {
+        // Motion ao vivo: a composicao HyperFrames desenha o quadro deste instante.
+        // Cache em video pronto: le como video comum (ver MotionHost::cachedVideo).
+        if (drift::MotionHost::isMotionPath(clip.path)) {
+            const drift::TimeUs sourceUs = qMax<drift::TimeUs>(0, clip.timelineToSourceUs(timelineUs));
+            const QString cache = drift::MotionHost::instance().cachedVideo(clip.path);
+            if (!cache.isEmpty())
+                return ClipReaderPool::instance().readVideoFrame(
+                    cache, ClipReaderPool::streamIdForClip(clip.id), sourceUs, maxWidth, maxHeight);
+            return drift::MotionHost::instance().frame(clip.path, sourceUs, maxWidth, maxHeight);
+        }
         return decodedStillImage(clip.path, maxWidth, maxHeight);
+    }
 
     if (clip.type == drift::ClipType::Video) {
         const drift::VideoRead read = drift::resolveVideoRead(clip, timelineUs);
@@ -564,6 +600,20 @@ void fillGpuLayerPixels(GpuLayer &layer, const drift::Clip &clip, drift::TimeUs 
         if (video.isValid()) {
             layer.video = video;
             return;
+        }
+    }
+    // Motion com cache pronto: mesmo caminho do video comum (quadro decodificado direto pra GPU).
+    // Pelo caminho de imagem cada quadro virava RGBA na CPU e o export ficava mais lento que ao vivo.
+    if (!timeEcho && drift::MotionHost::isMotionPath(clip.path)) {
+        const QString cache = drift::MotionHost::instance().cachedVideo(clip.path);
+        if (!cache.isEmpty()) {
+            const PreviewVideoFrame video = ClipReaderPool::instance().readPreviewVideoFrame(
+                cache, ClipReaderPool::streamIdForClip(clip.id),
+                qMax<drift::TimeUs>(0, clip.timelineToSourceUs(timelineUs)), maxWidth, maxHeight);
+            if (video.isValid()) {
+                layer.video = video;
+                return;
+            }
         }
     }
 

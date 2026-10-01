@@ -4477,6 +4477,42 @@
 <context>
     <name>ExportProgressDialog</name>
     <message>
+        <source>Open folder</source>
+        <translation>Abrir pasta</translation>
+    </message>
+    <message>
+        <source>Took %1</source>
+        <translation>Levou %1</translation>
+    </message>
+    <message>
+        <source>Elapsed: %1</source>
+        <translation>Tempo: %1</translation>
+    </message>
+    <message>
+        <source>Report a problem</source>
+        <translation>Reportar problema</translation>
+    </message>
+    <message>
+        <source>Send to Studio</source>
+        <translation>Enviar ao Studio</translation>
+    </message>
+    <message>
+        <source>Copies a diagnostic report to send to support</source>
+        <translation>Copia um relatório de diagnóstico para enviar ao suporte</translation>
+    </message>
+    <message>
+        <source>Report copied. Send it to support or paste it into the Studio chat</source>
+        <translation>Relatório copiado. Envie ao suporte ou cole no chat do Studio</translation>
+    </message>
+    <message>
+        <source>A ready request for the Studio chat to fix the problem and render for you</source>
+        <translation>Um pedido pronto para o chat do Studio corrigir o problema e renderizar para você</translation>
+    </message>
+    <message>
+        <source>Copied. Paste it into the Studio chat</source>
+        <translation>Copiado. Cole no chat do Studio</translation>
+    </message>
+    <message>
         <source>Exporting video</source>
         <translation>Exportando vídeo</translation>
     </message>

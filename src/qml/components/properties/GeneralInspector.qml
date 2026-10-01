@@ -13,6 +13,11 @@ Item {
     }
     readonly property bool hasSelection: !!clipData && Object.keys(clipData).length > 0
     readonly property string clipKind: hasSelection ? (clipData.kind || "") : ""
+    // Motion ao vivo: clipe de imagem cujo arquivo e uma composicao HyperFrames (.html). O preview
+    // desenha a composicao sem render; o chat do Studio edita o index.html e o preview recarrega.
+    readonly property string clipPath: hasSelection ? (clipData.path || "") : ""
+    readonly property bool isMotion: clipKind === "image" && /\.html?$/i.test(clipPath)
+    readonly property string motionFolder: isMotion ? clipPath.replace(/[\\/][^\\/]*$/, "") : ""
 
     height: contentCol.height
     implicitHeight: contentCol.height
@@ -94,12 +99,70 @@ Item {
             }
             Text {
                 // Human label rather than the raw internal id.
-                text: root.clipKindLabel(root.clipKind)
+                text: root.isMotion ? qsTr("Live motion") : root.clipKindLabel(root.clipKind)
                 color: Theme.panelForeground
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeSm
                 elide: Text.ElideRight
                 width: parent.width - x
+            }
+        }
+
+        // Motion ao vivo: de onde vem a composicao e como muda-la pelo chat do Studio.
+        Column {
+            visible: root.isMotion
+            width: root.width
+            spacing: 8
+
+            Text {
+                width: parent.width
+                text: qsTr("Plays straight from the composition, no render. Change it from the Studio chat: the preview reloads when its index.html is saved.")
+                color: Theme.mutedForeground
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeXs
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                width: parent.width
+                text: root.motionFolder
+                color: Theme.panelForeground
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeXs
+                elide: Text.ElideMiddle
+            }
+
+            ThemedTextField {
+                id: motionRequestField
+                width: parent.width
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeSm
+                placeholderText: qsTr("Ask for a change in this motion...")
+            }
+
+            Row {
+                width: parent.width
+                spacing: 8
+
+                ThemedButton {
+                    width: (parent.width - parent.spacing) / 2
+                    variant: "primary"
+                    glyph: Theme.icons.image
+                    text: qsTr("Moment print")
+                    tooltip: qsTr("Takes a print of this moment and copies it, with the exact time and the composition path, to paste into the Studio chat")
+                    onClicked: {
+                        EditorState.copyMotionChatPrompt(root.clipPath, motionRequestField.text)
+                        Toasts.success(qsTr("Print copied. Paste it into the Studio chat"))
+                    }
+                }
+
+                ThemedButton {
+                    width: (parent.width - parent.spacing) / 2
+                    variant: "secondary"
+                    glyph: Theme.icons.folder
+                    text: qsTr("Open folder")
+                    onClicked: Qt.openUrlExternally("file:///" + root.motionFolder.replace(/\\/g, "/"))
+                }
             }
         }
 

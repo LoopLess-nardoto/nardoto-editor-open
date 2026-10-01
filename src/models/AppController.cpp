@@ -20,6 +20,7 @@
 #include "engine/ClipReaderPool.h"
 #include "engine/DebugReport.h"
 #include "engine/HwAccel.h"
+#include "engine/MotionHost.h"
 #include "engine/ProjectDependencies.h"
 #include "engine/AudioEffectCatalog.h"
 #include "engine/EffectCatalog.h"
@@ -64,6 +65,7 @@
 
 #include <QBuffer>
 #include <QClipboard>
+#include <QMimeData>
 #include <QColor>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -73,6 +75,9 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QDesktopServices>
+#include <QProcess>
+#include <QRegularExpression>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -767,6 +772,11 @@ AppController::AppController(AssetLibrary *assetLibrary, QObject *parent)
     }
     connect(&m_mediaDevices, &QMediaDevices::audioOutputsChanged, this,
             &AppController::audioOutputDevicesChanged);
+    // Motion ao vivo: o chat editou o index.html e o motor ja recarregou a composicao. Pede o
+    // quadro de novo para o preview mostrar a versao nova sem a pessoa mexer em nada.
+    connect(&drift::MotionHost::instance(), &drift::MotionHost::compositionChanged, this,
+            [this](const QString &) { m_playback.refreshFrame(); }, Qt::QueuedConnection);
+
     // Silent playback used to be entirely invisible: the sink failed to open and nothing said so,
     // in the UI or the log.
     connect(&m_playback, &PlaybackEngine::audioError, this, [this](const QString &message) {
@@ -8197,8 +8207,10 @@ void AppController::addEmojiClip(const QString &emoji, const QString &name, doub
 
 void AppController::addImageOverlayClip(const QString &path, const QString &name,
                                         const QString &emoji, double atSeconds,
-                                        const QString &undoText)
+                                        const QString &undoText, drift::TimeUs durationUs,
+                                        bool useAsThumbnail)
 {
+    const drift::TimeUs duration = durationUs > 0 ? durationUs : drift::kImageClipDurationUs;
     const drift::Project before = m_project;
     const int trackIndex = drift::ensureTrackForClipType(m_project, drift::ClipType::Image, true);
     if (trackIndex < 0)
@@ -8207,26 +8219,82 @@ void AppController::addImageOverlayClip(const QString &path, const QString &name
     drift::Track &track = m_project.tracks()[trackIndex];
     const drift::TimeUs startSeconds = atSeconds < 0.0 ? m_playheadUs : drift::secondsToUs(atSeconds);
     const drift::TimeUs start = drift::resolveClipStart(m_project, track, -1, startSeconds,
-                                                        drift::kImageClipDurationUs, m_snapEnabled, m_playheadUs);
+                                                        duration, m_snapEnabled, m_playheadUs);
 
     drift::Clip clip;
     clip.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     clip.type = drift::ClipType::Image;
     clip.name = name;
     clip.path = path;
-    clip.thumbnailPath = path;
-    clip.filmstripPath = path;
+    if (useAsThumbnail) {
+        clip.thumbnailPath = path;
+        clip.filmstripPath = path;
+    }
     clip.emoji = emoji;
     clip.timelineStart = start;
-    clip.timelineDuration = drift::kImageClipDurationUs;
+    clip.timelineDuration = duration;
     clip.srcIn = 0;
-    clip.srcOut = drift::kImageClipDurationUs;
+    clip.srcOut = duration;
     applyDefaultVisualLayout(clip, m_project.width(), m_project.height());
 
     track.clips.append(clip);
     pushProjectEdit(before, undoText);
     finishEdit(undoText);
     selectClip(trackIndex, track.clips.size() - 1);
+}
+
+QString AppController::addMotionClip(const QString &pathOrFolder, double atSeconds)
+{
+    const QFileInfo info(pathOrFolder);
+    const QString html = info.isDir() ? QDir(pathOrFolder).filePath(QStringLiteral("index.html"))
+                                      : pathOrFolder;
+    if (!drift::MotionHost::isMotionPath(html) || !QFileInfo::exists(html)) {
+        setLastMessage(tr("Composition index.html not found"), QStringLiteral("warning"));
+        return {};
+    }
+
+    // Duracao e tamanho: data-duration/data-width/data-height da raiz da composicao (contrato do
+    // HyperFrames). Ler o arquivo e instantaneo; abrir o motor so pra isso custaria segundos.
+    drift::TimeUs durationUs = 0;
+    QSize contentSize;
+    QFile file(html);
+    if (file.open(QIODevice::ReadOnly)) {
+        const QString source = QString::fromUtf8(file.read(256 * 1024));
+        static const QRegularExpression rootTag(
+            QStringLiteral("<[^>]*data-composition-id[^>]*>"), QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch tag = rootTag.match(source);
+        const auto attr = [&tag](const char *name) {
+            const QRegularExpression re(QString::fromLatin1(name) + QStringLiteral("\\s*=\\s*\"([0-9.]+)\""));
+            const QRegularExpressionMatch m = re.match(tag.captured(0));
+            return m.hasMatch() ? m.captured(1).toDouble() : 0.0;
+        };
+        if (tag.hasMatch()) {
+            durationUs = drift::secondsToUs(attr("data-duration"));
+            contentSize = QSize(int(attr("data-width")), int(attr("data-height")));
+        }
+    }
+
+    // Nome: a pasta da composicao ("intro", "vitrine"), que e como a pessoa chama o motion.
+    QString name = QFileInfo(html).dir().dirName();
+    if (name.compare(QStringLiteral("source"), Qt::CaseInsensitive) == 0)
+        name = QFileInfo(QFileInfo(html).dir().absolutePath()).dir().dirName();
+    // O .html nao e imagem: sem miniatura de arquivo, para o leitor de imagens nao tentar abri-lo.
+    addImageOverlayClip(QDir::cleanPath(QFileInfo(html).absoluteFilePath()), name, QString(), atSeconds,
+                        tr("Motion added"), durationUs, false);
+    if (!isValidClipIndex(m_selectedTrack, m_selectedClip))
+        return {};
+
+    // Tela inteira, centrado e sem distorcer, na proporcao da composicao. O padrao de imagem sem
+    // tamanho conhecido e uma caixinha de figurinha no canto superior esquerdo.
+    if (!contentSize.isValid())
+        contentSize = QSize(m_project.width(), m_project.height());
+    drift::Clip &clip = m_project.tracks()[m_selectedTrack].clips[m_selectedClip];
+    const double cw = m_project.width(), ch = m_project.height();
+    const double scale = qMin(cw / contentSize.width(), ch / contentSize.height());
+    const double w = contentSize.width() * scale, h = contentSize.height() * scale;
+    setClipLayoutPixels(clip, (cw - w) / 2.0, (ch - h) / 2.0, w, h);
+    emitPreviewFrame();
+    return clip.id;
 }
 
 QVariantList AppController::previewClipsAtPlayhead() const
@@ -14971,7 +15039,8 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
                 m_lastExportName = ok ? exportDisplayName(outputUrl) : QString();
                 emit canShareExportChanged();
 #else
-                Q_UNUSED(outputUrl);
+                m_lastExportFile = ok ? outputUrl.toLocalFile() : QString();
+                emit lastExportFileChanged();
 #endif
                 emit exportProgressChanged();
                 emit exportInProgressChanged();
@@ -14981,6 +15050,20 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
             },
             Qt::QueuedConnection);
     });
+}
+
+void AppController::revealLastExport()
+{
+    if (m_lastExportFile.isEmpty())
+        return;
+    const QString nativo = QDir::toNativeSeparators(m_lastExportFile);
+#if defined(Q_OS_WIN)
+    QProcess::startDetached(QStringLiteral("explorer.exe"), {QStringLiteral("/select,") + nativo});
+#elif defined(Q_OS_MACOS)
+    QProcess::startDetached(QStringLiteral("open"), {QStringLiteral("-R"), nativo});
+#else
+    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(m_lastExportFile).absolutePath()));
+#endif
 }
 
 bool AppController::canShareExport() const
@@ -15171,6 +15254,47 @@ void AppController::copyStudioChatPrompt()
 {
     copyToClipboard(tr("Build a video in Nardoto Editor with the narration [audio file], "
                        "the subtitles [.srt file] and the images in the folder [folder]."));
+}
+
+// Motion ao vivo: "print do momento". Grava o quadro do cursor em PNG e copia para o chat do Studio
+// o pedido com o caminho da composicao, o tempo exato e o print -- a IA ve o que a pessoa ve e
+// sabe qual cena e. Vai texto e imagem juntos no clipboard: colar no chat anexa a imagem.
+void AppController::copyMotionChatPrompt(const QString &path, const QString &request)
+{
+    // mcpCaptureFrame responde no formato do MCP: o resultado vem como JSON em content[0].text.
+    const QJsonObject wrapped = mcpCaptureFrame(-1.0, true);
+    const QJsonObject shot = QJsonDocument::fromJson(wrapped.value(QStringLiteral("content"))
+                                                         .toArray().at(0).toObject()
+                                                         .value(QStringLiteral("text")).toString().toUtf8())
+                                 .object();
+    const QString shotPath = shot.value(QStringLiteral("path")).toString();
+    const double at = shot.value(QStringLiteral("at")).toDouble(drift::usToSeconds(m_playheadUs));
+
+    // Tempo da timeline e tempo dentro da composicao (o que o index.html entende).
+    double local = at;
+    if (isValidClipIndex(m_selectedTrack, m_selectedClip)) {
+        const drift::Clip &clip = m_project.tracks().at(m_selectedTrack).clips.at(m_selectedClip);
+        local = drift::usToSeconds(clip.timelineToSourceUs(drift::secondsToUs(at)));
+    }
+
+    const QString pedido = request.trimmed().isEmpty() ? tr("[describe the change]") : request.trimmed();
+    QString text = tr("In Nardoto Editor, change the live motion composition at %1: %2.\n"
+                      "Moment: %3 s of the composition (%4 s on the timeline).")
+                       .arg(QDir::toNativeSeparators(path), pedido)
+                       .arg(local, 0, 'f', 2)
+                       .arg(at, 0, 'f', 2);
+    if (!shotPath.isEmpty())
+        text += QLatin1Char('\n') + tr("Screenshot of that moment: %1").arg(QDir::toNativeSeparators(shotPath));
+    text += QLatin1Char('\n')
+            + tr("Edit its index.html and save; the editor preview reloads by itself, no render needed.");
+
+    auto *mime = new QMimeData;
+    mime->setText(text);
+    const QImage image(shotPath);
+    if (!image.isNull())
+        mime->setImageData(image);
+    if (QClipboard *clip = QGuiApplication::clipboard())
+        clip->setMimeData(mime);
 }
 
 QVariantMap AppController::debugInfo() const
@@ -15512,9 +15636,13 @@ QJsonObject AppController::mcpCaptureFrame(double atSeconds, bool full)
     auto frame = std::make_shared<QImage>();
     QEventLoop loop;
     (void)QtConcurrent::run([snapshot, timeUs, options, frame, &loop]() {
+        // Captura e prova visual: motion ao vivo tem que vir no instante certo, nunca o ultimo
+        // quadro que chegou (que e o que o preview aceita para nao travar).
+        drift::MotionHost::setExactForCurrentThread(true);
         FrameCompositor compositor;
         compositor.setProject(snapshot.get());
         *frame = compositor.compositeAt(timeUs, options);
+        drift::MotionHost::setExactForCurrentThread(false);
         QMetaObject::invokeMethod(&loop, &QEventLoop::quit, Qt::QueuedConnection);
     });
     loop.exec();

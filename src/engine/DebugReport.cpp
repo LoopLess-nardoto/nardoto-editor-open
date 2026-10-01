@@ -18,6 +18,7 @@
 #include <QOpenGLFunctions>
 #include <QRegularExpression>
 #include <QSet>
+#include <QStandardPaths>
 #include <QSurfaceFormat>
 #include <QSysInfo>
 #include <QThread>
@@ -803,6 +804,22 @@ QString DebugReport::formatPlainText(const QVariantMap &info)
             if (!command.isEmpty())
                 text += QStringLiteral("  `%1`\n").arg(command);
         }
+    }
+
+    // Motion ao vivo: o motor auxiliar escreve o que acontece em %TEMP%/nardoto-motion.log. As
+    // ultimas linhas sao o que a IA do Studio precisa para entender um motion preto ou lento.
+    QFile motionLog(QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                        .filePath(QStringLiteral("nardoto-motion.log")));
+    if (motionLog.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const qint64 size = motionLog.size();
+        if (size > 8000)
+            motionLog.seek(size - 8000);
+        QStringList lines = QString::fromUtf8(motionLog.readAll()).split(QLatin1Char('\n'));
+        if (size > 8000 && !lines.isEmpty())
+            lines.removeFirst(); // linha cortada pelo seek
+        text += QStringLiteral("\n## Motion ao vivo (%1)\n```\n%2\n```\n")
+                    .arg(QDir::toNativeSeparators(motionLog.fileName()),
+                         lines.join(QLatin1Char('\n')).trimmed());
     }
     return text;
 }
