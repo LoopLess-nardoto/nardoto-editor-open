@@ -67,7 +67,9 @@ option(DRIFT_AUTO_UPDATE_TRANSLATIONS "Run lupdate as part of the default build"
 # The token is NOT a secret. It ships inside every binary and is trivially extractable; it exists
 # so the bucket cannot be crawled or hotlinked, which would cost operations for someone else's
 # benefit. That is also why it is fine in CMakeCache.txt.
-set(DRIFT_ADDON_INDEX_URL ""
+# Nardoto: loja propria no GitHub (repositorio nardoto-editor-extras). O indice e um JSON estatico
+# e os pacotes ficam nas releases; ver scripts/loja/. O token nao e usado pelo GitHub.
+set(DRIFT_ADDON_INDEX_URL "https://raw.githubusercontent.com/LoopLess-nardoto/nardoto-editor-extras/main/index.json"
     CACHE STRING "Addon index endpoint; empty disables the addon service")
 set(DRIFT_ADDON_CLIENT_TOKEN ""
     CACHE STRING "Client token sent to the addon service as X-Drift-Client")
@@ -652,6 +654,8 @@ add_library(driftengine STATIC
     src/engine/FrameCompositor.cpp
     src/engine/MotionHost.h
     src/engine/MotionHost.cpp
+    src/engine/StudioChat.h
+    src/engine/StudioChat.cpp
     src/engine/MaskApplier.h
     src/engine/MaskApplier.cpp
     src/engine/AudioEffectCatalog.h
@@ -1092,6 +1096,7 @@ qt_add_qml_module(drift
         src/qml/components/properties/FacePropPicker.qml
         src/qml/components/assets/TextAssetsTab.qml
         src/qml/components/assets/ScenesTab.qml
+        src/qml/components/assets/CenasTab.qml
         src/qml/components/assets/MotionTab.qml
         src/qml/components/assets/SubtitlesTab.qml
         src/qml/components/assets/StickersTab.qml
@@ -1187,6 +1192,7 @@ qt_add_qml_module(drift
         src/qml/components/PackageProgressDialog.qml
         src/qml/components/ExportDialog.qml
         src/qml/components/ExportProgressDialog.qml
+        src/qml/components/TrocarMidiaDialog.qml
         src/qml/components/CollectMediaDialog.qml
         src/qml/components/ReverseProgressDialog.qml
         src/qml/components/SubtitleProgressDialog.qml

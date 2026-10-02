@@ -717,6 +717,22 @@ public:
     QString mcpAgentGuide() const;
     Q_INVOKABLE void copyStudioChatPrompt();
     Q_INVOKABLE void copyMotionChatPrompt(const QString &path, const QString &request);
+    // Pedido de mudanca no clipe selecionado (qualquer tipo): vai para a CAIXA do chat do Studio,
+    // com o clipe, o tempo e o print do momento; a pessoa revisa e envia. Sem o Studio aberto,
+    // copia para a area de transferencia. Devolve vazio se entrou no chat, senao o motivo.
+    Q_INVOKABLE QString askStudioChatForClip(const QString &request);
+    // Aba "Falas e mídias": cada clipe de vídeo/imagem das trilhas de vídeo, em ordem, com a fala
+    // da legenda que toca durante ele: {clipId, track, start, end, name, path, kind, thumbnail, fala}.
+    Q_INVOKABLE QVariantList scenesWithSpeech() const;
+    // Troca o arquivo de UM clipe (não do asset inteiro), mantendo início e duração na timeline.
+    // Desfaz com Ctrl+Z. Devolve vazio se deu certo, senão o motivo.
+    Q_INVOKABLE QString replaceClipMedia(const QString &clipId, const QString &path);
+    // Pede uma ação ao servidor local do Studio sem travar a interface; a resposta chega em
+    // studioReply(reqId, ok, data, erro).
+    Q_INVOKABLE void studioRequest(const QString &reqId, const QString &acao, const QVariantMap &params,
+                                   int prazoMs = 60000);
+    // Pasta do projeto aberto (vazio se nunca foi salvo).
+    Q_INVOKABLE QString projectFolder() const;
     Q_INVOKABLE QVariantMap debugInfo() const;
     Q_INVOKABLE QString debugInfoText() const;
     Q_INVOKABLE void copyDebugInfo();
@@ -2004,6 +2020,20 @@ public:
     Q_INVOKABLE void clearRecentProjects();
     // Removes one path from the recents list without deleting the file on disk.
     Q_INVOKABLE void removeRecentProject(const QString &path);
+    // Tela inicial: resumo do projeto para o card, lido so do manifesto (sem abrir o projeto):
+    // formato, duracao, trilhas em escala, capa, data e se veio do chat do Studio.
+    Q_INVOKABLE QVariantMap projectSummary(const QString &path) const;
+    // Copia o arquivo do projeto para "<nome> (cópia)" ao lado e poe nos recentes. Devolve o
+    // caminho novo, ou vazio se nao deu.
+    Q_INVOKABLE QString duplicateProject(const QString &path);
+    // Ao sair do projeto (X ou "Fechar projeto"): grava a capa do card com o quadro atual.
+    Q_INVOKABLE void saveCurrentProjectThumbnail();
+    // Quando o export em andamento comecou (ms desde 1970), para o dialogo mostrar o tempo
+    // decorrido mesmo se for aberto no meio do export. 0 se nunca exportou.
+    Q_INVOKABLE double exportStartedAt() const { return double(m_exportStartedAt); }
+    // O chat do Studio (MCP) criou, abriu ou salvou um projeto: a tela inicial sai da frente e o
+    // card ganha o selo "Do Studio".
+    void noteAgentProject(const QString &savedPath = {});
     Q_INVOKABLE void restoreAutosave();
     Q_INVOKABLE void discardAutosave();
     // Clears dirty + recovery without mutating the timeline. Used when the user
@@ -2257,6 +2287,8 @@ signals:
     void currentProjectPathChanged();
     void recoveryChanged();
     void recentProjectsChanged();
+    void agentProjectStarted();
+    void studioReply(const QString &reqId, bool ok, const QVariantMap &data, const QString &erro);
     void projectLayoutChosenChanged();
     // The document has been swapped wholesale (New Project, or opening another one). The
     // auxiliary windows edit one clip each, so they have nothing left to act on and close.
@@ -2642,6 +2674,8 @@ protected:
     void setDirty(bool dirty);
     void setCurrentProjectPath(const QString &path);
     void addRecentProject(const QString &path);
+    // Capa do card da tela inicial: grava o quadro do cursor ao salvar.
+    void saveProjectThumbnail(const QString &path);
     // Off the GUI thread unless `synchronous` (quitting), which waits out any write in flight.
     void writeRecoveryFile(bool synchronous = false);
     QJsonObject sessionJson() const;
@@ -2749,6 +2783,7 @@ protected:
     QUrl m_lastExportUrl;
     QString m_lastExportName;
     QString m_lastExportFile; // caminho local do ultimo export que deu certo (desktop)
+    qint64 m_exportStartedAt = 0;
     // Android: the publish-to-gallery copy behind Share is on a worker, so canShareExport reports
     // false while it runs — that both hides the button (the dialog binds its visibility to it) and
     // stops a second tap from starting the copy again. Unused on desktop.

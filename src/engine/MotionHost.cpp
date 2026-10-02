@@ -1,4 +1,5 @@
 #include "MotionHost.h"
+#include "AddonRegistry.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>
@@ -63,12 +64,25 @@ QString findUp(const QString &start, const QString &rel)
     return {};
 }
 
+// No app instalado o motor nao vem no instalador: e um extra da loja (tipo "motion-engine") com
+// main.js, o Electron em electron/ e o ffmpeg. Vale o primeiro extra instalado que tiver o arquivo.
+QString fromMotionAddon(const QString &rel)
+{
+    for (const QString &root : drift::addon::addonRootsForKind(QStringLiteral("motion-engine"))) {
+        const QString candidate = QDir(root).filePath(rel);
+        if (QFileInfo::exists(candidate))
+            return QDir::cleanPath(candidate);
+    }
+    return {};
+}
+
 QString motionHostScript()
 {
     const QString fromEnv = qEnvironmentVariable("NARDOTO_MOTION_HOST");
     if (!fromEnv.isEmpty() && QFileInfo::exists(fromEnv))
         return fromEnv;
-    return findUp(QCoreApplication::applicationDirPath(), QStringLiteral("motion-host/main.js"));
+    const QString dev = findUp(QCoreApplication::applicationDirPath(), QStringLiteral("motion-host/main.js"));
+    return dev.isEmpty() ? fromMotionAddon(QStringLiteral("main.js")) : dev;
 }
 
 QString electronBinary()
@@ -92,7 +106,13 @@ QString electronBinary()
         if (!found.isEmpty())
             return found;
     }
-    return {};
+#ifdef Q_OS_WIN
+    return fromMotionAddon(QStringLiteral("electron/electron.exe"));
+#elif defined(Q_OS_MACOS)
+    return fromMotionAddon(QStringLiteral("Electron.app/Contents/MacOS/Electron"));
+#else
+    return fromMotionAddon(QStringLiteral("electron/electron"));
+#endif
 }
 
 } // namespace
@@ -407,8 +427,8 @@ void MotionHost::ensureStarted()
     const QString electron = electronBinary();
     motionLog(QStringLiteral("iniciando: script=%1 electron=%2").arg(script, electron));
     if (script.isEmpty() || electron.isEmpty()) {
-        failAll(script.isEmpty() ? tr("motion-host/main.js não encontrado")
-                                 : tr("Electron não encontrado para o motor de motion"));
+        // Sem o motor instalado: o caminho e baixar o extra, entao a mensagem diz isso.
+        failAll(tr("O motor de motion não está instalado. Baixe o \"Motor de motion\" em Extras."));
         QMutexLocker lock(&m_mutex);
         m_restarts = kMaxRestarts + 1;
         return;

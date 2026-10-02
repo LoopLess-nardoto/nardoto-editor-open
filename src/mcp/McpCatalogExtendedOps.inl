@@ -12,6 +12,13 @@
           objectSchema({{QStringLiteral("asset"), assetRefProp()},
                         {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path or file:// URL; must exist"))}},
                        {QStringLiteral("asset"), QStringLiteral("path")}) },
+        { "replace_clip_media", "timeline", "Swap the media of ONE clip",
+          "Point a single timeline clip (video or image) at a different file, keeping its start and "
+          "duration on the timeline. Unlike replace_asset, other clips that use the same asset are "
+          "untouched. Video shorter than the clip is used to its end. Undoable.",
+          objectSchema({{QStringLiteral("clip"), stringProp(QStringLiteral("Clip uuid from inspect({clips:true})"))},
+                        {QStringLiteral("path"), stringProp(QStringLiteral("Absolute path or file:// URL; must exist"))}},
+                       {QStringLiteral("clip"), QStringLiteral("path")}) },
         { "export_asset_image", "media", "Export a still from an asset",
           "Write an image file from a bin asset (its poster frame for video). Creates parent folders. "
           "The format follows the path's extension.",

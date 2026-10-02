@@ -36,6 +36,7 @@
 #include "engine/DebugReport.h"
 #include "engine/HwAccel.h"
 #include "engine/MotionHost.h"
+#include "engine/StudioChat.h"
 #include "engine/ProjectDependencies.h"
 #include "engine/AudioEffectCatalog.h"
 #include "engine/EffectCatalog.h"
@@ -24575,6 +24576,7 @@ void AppController::writeProjectBundle(const QUrl &url, const std::optional<Proj
     const QString location = projectLocation(url);
     setCurrentProjectPath(location);
     addRecentProject(location);
+    saveProjectThumbnail(location);
     setDirty(false);
     deleteRecoveryFile();
     emit projectMetadataChanged();
@@ -25533,6 +25535,210 @@ void AppController::addRecentProject(const QString &path)
     emit recentProjectsChanged();
 }
 
+namespace {
+
+// Capa do card da tela inicial: um JPEG por projeto no cache do app, pelo hash do caminho.
+QString projectThumbnailFile(const QString &path)
+{
+    const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+                            .filePath(QStringLiteral("project-thumbs"));
+    const QByteArray hash = QCryptographicHash::hash(QDir::cleanPath(path).toUtf8(), QCryptographicHash::Sha1);
+    return QDir(dir).filePath(QString::fromLatin1(hash.toHex().left(20)) + QStringLiteral(".jpg"));
+}
+
+QStringList agentProjectPaths()
+{
+    return QSettings().value(QStringLiteral("agentProjects")).toStringList();
+}
+
+} // namespace
+
+QVariantMap AppController::projectSummary(const QString &path) const
+{
+    QVariantMap out;
+    if (path.isEmpty() || path.startsWith(QLatin1String("content://"), Qt::CaseInsensitive))
+        return out;
+
+    QJsonObject doc;
+    QDateTime modified = QFileInfo(path).lastModified();
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return out;
+    if (file.peek(1) == "{") {
+        doc = QJsonDocument::fromJson(file.readAll()).object();
+    } else {
+        file.close();
+        QString error;
+        const auto info = drift::bundle::readManifest(path, &error);
+        if (!info)
+            return out;
+        doc = info->document;
+        if (info->modifiedAt.isValid())
+            modified = info->modifiedAt;
+    }
+
+    // Trilhas em escala: so o que da para desenhar num card (ate 4, na ordem do projeto).
+    qint64 fim = 0;
+    for (const QJsonValue &t : doc.value(QStringLiteral("tracks")).toArray()) {
+        for (const QJsonValue &c : t.toObject().value(QStringLiteral("clips")).toArray()) {
+            const QJsonObject clip = c.toObject();
+            fim = qMax(fim, qint64(clip.value(QStringLiteral("timelineStartUs")).toDouble()
+                                   + clip.value(QStringLiteral("timelineDurationUs")).toDouble()));
+        }
+    }
+    QVariantList trilhas;
+    int videos = 0, legendas = 0;
+    for (const QJsonValue &t : doc.value(QStringLiteral("tracks")).toArray()) {
+        const QJsonObject track = t.toObject();
+        const QJsonArray clips = track.value(QStringLiteral("clips")).toArray();
+        if (clips.isEmpty())
+            continue;
+        const QString tipo = track.value(QStringLiteral("type")).toString();
+        if (tipo == QLatin1String("video"))
+            videos += clips.size();
+        if (tipo == QLatin1String("subtitle"))
+            legendas += clips.size();
+        if (trilhas.size() >= 4 || fim <= 0)
+            continue;
+        QVariantList blocos;
+        for (const QJsonValue &c : clips) {
+            const QJsonObject clip = c.toObject();
+            const double ini = clip.value(QStringLiteral("timelineStartUs")).toDouble() / double(fim);
+            const double dur = clip.value(QStringLiteral("timelineDurationUs")).toDouble() / double(fim);
+            // Legenda tem dezenas de blocos colados: um bloco so, do primeiro ao ultimo.
+            if (tipo == QLatin1String("subtitle") && !blocos.isEmpty()) {
+                QVariantMap ultimo = blocos.last().toMap();
+                ultimo[QStringLiteral("w")] = qMin(1.0, ini + dur) - ultimo.value(QStringLiteral("x")).toDouble();
+                blocos.last() = ultimo;
+                continue;
+            }
+            blocos.append(QVariantMap{{QStringLiteral("x"), ini}, {QStringLiteral("w"), dur}});
+            if (blocos.size() >= 40)
+                break;
+        }
+        trilhas.append(QVariantMap{{QStringLiteral("type"), tipo}, {QStringLiteral("clips"), blocos}});
+    }
+
+    const int w = doc.value(QStringLiteral("width")).toInt();
+    const int h = doc.value(QStringLiteral("height")).toInt();
+    QString formato;
+    if (w > 0 && h > 0) {
+        const double r = double(w) / double(h);
+        formato = r > 1.6 ? QStringLiteral("16:9") : r < 0.65 ? QStringLiteral("9:16")
+                  : r < 0.9 ? QStringLiteral("4:5") : r < 1.1 ? QStringLiteral("1:1") : QStringLiteral("4:3");
+    }
+    // Capa: a gravada ao salvar; sem ela, a miniatura que o projeto ja guarda do clipe de video
+    // (ou imagem) mais perto de 1/3 do filme -- o comeco costuma ser vinheta escura.
+    QString capa = projectThumbnailFile(path);
+    if (!QFileInfo::exists(capa)) {
+        capa.clear();
+        double melhor = -1, melhorVideo = -1;
+        QString video; // sem miniatura guardada: tira um quadro do arquivo (fica em cache)
+        for (const QJsonValue &t : doc.value(QStringLiteral("tracks")).toArray()) {
+            if (t.toObject().value(QStringLiteral("type")).toString() != QLatin1String("video"))
+                continue;
+            for (const QJsonValue &c : t.toObject().value(QStringLiteral("clips")).toArray()) {
+                const QJsonObject clip = c.toObject();
+                const QString tipo = clip.value(QStringLiteral("type")).toString();
+                const QString arquivo = clip.value(QStringLiteral("path")).toString();
+                const double distancia = qAbs(clip.value(QStringLiteral("timelineStartUs")).toDouble() - fim / 3.0);
+                QString imagem = clip.value(QStringLiteral("thumbnailPath")).toString();
+                if (imagem.isEmpty() && tipo == QLatin1String("image"))
+                    imagem = arquivo;
+                if (!imagem.isEmpty() && QFileInfo::exists(imagem)) {
+                    if (melhor < 0 || distancia < melhor) {
+                        melhor = distancia;
+                        capa = imagem;
+                    }
+                } else if (tipo == QLatin1String("video") && !drift::MotionHost::isMotionPath(arquivo)
+                           && QFileInfo::exists(arquivo) && (melhorVideo < 0 || distancia < melhorVideo)) {
+                    melhorVideo = distancia;
+                    video = arquivo;
+                }
+            }
+        }
+        if (capa.isEmpty() && !video.isEmpty())
+            capa = MediaThumbnail::generate(video, QStringLiteral("video"));
+    }
+    out = {
+        {QStringLiteral("width"), w},
+        {QStringLiteral("height"), h},
+        {QStringLiteral("fps"), doc.value(QStringLiteral("fps")).toDouble()},
+        {QStringLiteral("aspect"), formato},
+        {QStringLiteral("duration"), double(fim) / 1e6},
+        {QStringLiteral("tracks"), trilhas},
+        {QStringLiteral("videoClips"), videos},
+        {QStringLiteral("subtitles"), legendas},
+        {QStringLiteral("modified"), modified},
+        {QStringLiteral("thumbnail"), !capa.isEmpty() && QFileInfo::exists(capa) ? QUrl::fromLocalFile(capa).toString() : QString()},
+        {QStringLiteral("fromStudio"), agentProjectPaths().contains(QDir::cleanPath(path))},
+    };
+    return out;
+}
+
+QString AppController::duplicateProject(const QString &path)
+{
+    const QFileInfo info(path);
+    if (path.startsWith(QLatin1String("content://")) || !info.exists())
+        return {};
+    QString destino;
+    for (int n = 1; n < 100; ++n) {
+        const QString sufixo = n == 1 ? tr(" (cópia)") : tr(" (cópia %1)").arg(n);
+        destino = info.dir().filePath(info.completeBaseName() + sufixo + QLatin1Char('.') + info.suffix());
+        if (!QFileInfo::exists(destino))
+            break;
+    }
+    if (!QFile::copy(path, destino))
+        return {};
+    QFile::copy(projectThumbnailFile(path), projectThumbnailFile(destino));
+    addRecentProject(destino);
+    return destino;
+}
+
+void AppController::noteAgentProject(const QString &savedPath)
+{
+    if (!savedPath.isEmpty()) {
+        QSettings settings;
+        QStringList paths = settings.value(QStringLiteral("agentProjects")).toStringList();
+        const QString limpo = QDir::cleanPath(savedPath);
+        if (!paths.contains(limpo)) {
+            paths.prepend(limpo);
+            while (paths.size() > 200)
+                paths.removeLast();
+            settings.setValue(QStringLiteral("agentProjects"), paths);
+            emit recentProjectsChanged();
+        }
+    }
+    emit agentProjectStarted();
+}
+
+void AppController::saveCurrentProjectThumbnail()
+{
+    saveProjectThumbnail(currentProjectPath());
+}
+
+void AppController::saveProjectThumbnail(const QString &path)
+{
+    if (path.isEmpty() || path.startsWith(QLatin1String("content://")) || m_project.tracks().isEmpty())
+        return;
+    // Sem clipe nenhum a capa seria um quadro preto: melhor o card sem capa.
+    bool temClipe = false;
+    for (const drift::Track &t : m_project.tracks())
+        temClipe = temClipe || !t.clips.isEmpty();
+    if (!temClipe)
+        return;
+    const QJsonObject wrapped = mcpCaptureFrame(-1.0, false);
+    const QJsonArray content = wrapped.value(QStringLiteral("content")).toArray();
+    if (content.size() < 2)
+        return;
+    const QByteArray jpeg = QByteArray::fromBase64(content.at(1).toObject().value(QStringLiteral("data")).toString().toLatin1());
+    const QString destino = projectThumbnailFile(path);
+    QDir().mkpath(QFileInfo(destino).absolutePath());
+    QSaveFile out(destino);
+    if (out.open(QIODevice::WriteOnly) && out.write(jpeg) == jpeg.size())
+        out.commit();
+}
+
 void AppController::clearRecentProjects()
 {
     QSettings settings;
@@ -26043,6 +26249,7 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
 
     m_exportCancel.storeRelaxed(0);
     m_exportProgress = 0.0;
+    m_exportStartedAt = QDateTime::currentMSecsSinceEpoch();
     emit exportProgressChanged();
     m_exportInProgress = true;
     emit exportInProgressChanged();
@@ -26423,6 +26630,196 @@ void AppController::copyMotionChatPrompt(const QString &path, const QString &req
         mime->setImageData(image);
     if (QClipboard *clip = QGuiApplication::clipboard())
         clip->setMimeData(mime);
+}
+
+QString AppController::askStudioChatForClip(const QString &request)
+{
+    if (!isValidClipIndex(m_selectedTrack, m_selectedClip))
+        return tr("Selecione um clipe na timeline.");
+    const drift::Clip &clip = m_project.tracks().at(m_selectedTrack).clips.at(m_selectedClip);
+
+    // Print do quadro sob o cursor (o mesmo do "Print do momento" do motion).
+    const QJsonObject wrapped = mcpCaptureFrame(-1.0, true);
+    const QJsonObject shot = QJsonDocument::fromJson(wrapped.value(QStringLiteral("content"))
+                                                         .toArray().at(0).toObject()
+                                                         .value(QStringLiteral("text")).toString().toUtf8())
+                                 .object();
+    const QString shotPath = shot.value(QStringLiteral("path")).toString();
+    const double at = shot.value(QStringLiteral("at")).toDouble(drift::usToSeconds(m_playheadUs));
+    const double local = drift::usToSeconds(clip.timelineToSourceUs(drift::secondsToUs(at)));
+    const bool motion = drift::MotionHost::isMotionPath(clip.path);
+
+    const QString pedido = request.trimmed().isEmpty() ? tr("[descreva a mudança]") : request.trimmed();
+    QString text = tr("No Nardoto Editor, mude o clipe selecionado: %1").arg(pedido);
+    text += QLatin1Char('\n') + tr("Clipe: %1 (%2), trilha %3, de %4 s a %5 s da timeline.")
+                                    .arg(clip.name.isEmpty() ? QFileInfo(clip.path).fileName() : clip.name,
+                                         motion ? QStringLiteral("motion") : drift::clipTypeToString(clip.type))
+                                    .arg(m_selectedTrack)
+                                    .arg(drift::usToSeconds(clip.timelineStart), 0, 'f', 2)
+                                    .arg(drift::usToSeconds(clip.timelineEnd()), 0, 'f', 2);
+    if (!clip.path.isEmpty())
+        text += QLatin1Char('\n') + tr("Arquivo: %1").arg(QDir::toNativeSeparators(clip.path));
+    text += QLatin1Char('\n') + tr("Momento: %1 s da timeline (%2 s dentro do arquivo).")
+                                    .arg(at, 0, 'f', 2).arg(local, 0, 'f', 2);
+    if (!shotPath.isEmpty())
+        text += QLatin1Char('\n') + tr("Print desse momento: %1").arg(QDir::toNativeSeparators(shotPath));
+    text += QLatin1Char('\n')
+            + (motion ? tr("É uma composição de motion: edite o index.html dela e salve; a prévia do editor recarrega sozinha.")
+                      : tr("Aplique a mudança pelo MCP do Nardoto Editor (nardoto-video-editor)."));
+
+    const QString erro = drift::inserirNoChatDoStudio(text, shotPath);
+    if (erro.isEmpty())
+        return {};
+    // Studio fechado: o pedido nao se perde, vai para a area de transferencia. A imagem vai
+    // DENTRO do HTML (data:) e nao como imagem solta: ao colar, o chat do Studio reanexa o print
+    // e mantem o texto -- com a imagem solta ele ficava so com a imagem.
+    auto *mime = new QMimeData;
+    mime->setText(text);
+    QString html = text.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>"));
+    QFile png(shotPath);
+    if (!shotPath.isEmpty() && png.open(QIODevice::ReadOnly))
+        html += QStringLiteral("<br><img src=\"data:image/png;base64,%1\">")
+                    .arg(QString::fromLatin1(png.readAll().toBase64()));
+    mime->setHtml(html);
+    if (QClipboard *board = QGuiApplication::clipboard())
+        board->setMimeData(mime);
+    return erro;
+}
+
+QVariantList AppController::scenesWithSpeech() const
+{
+    // Falas em tempo absoluto: os tempos das cues sao relativos ao inicio do clipe de legenda.
+    struct Fala { drift::TimeUs ini, fim; QString texto; };
+    QList<Fala> falas;
+    for (const drift::Track &track : m_project.tracks()) {
+        if (track.type != drift::TrackType::Subtitle || track.hidden)
+            continue;
+        for (const drift::Clip &clip : track.clips)
+            for (const drift::SubtitleCue &cue : clip.subtitleCues)
+                falas.append({clip.timelineStart + cue.startUs, clip.timelineStart + cue.endUs, cue.text});
+    }
+
+    QVariantList out;
+    for (int t = 0; t < m_project.tracks().size(); ++t) {
+        const drift::Track &track = m_project.tracks().at(t);
+        if (track.type != drift::TrackType::Video || track.hidden)
+            continue;
+        for (int c = 0; c < track.clips.size(); ++c) {
+            const drift::Clip &clip = track.clips.at(c);
+            if (clip.type != drift::ClipType::Video && clip.type != drift::ClipType::Image)
+                continue;
+            if (drift::MotionHost::isMotionPath(clip.path))
+                continue; // motion tem painel proprio (Tema do video)
+            QStringList texto;
+            for (const Fala &f : falas)
+                if (f.fim > clip.timelineStart && f.ini < clip.timelineEnd())
+                    texto.append(f.texto.simplified());
+            // Mídia recém-trocada: a miniatura do arquivo fica pronta depois da troca; usa a do item.
+            QString miniatura = clip.thumbnailPath;
+            if ((miniatura.isEmpty() || !QFileInfo::exists(miniatura)) && m_assetLibrary) {
+                const int a = m_assetLibrary->indexOfId(clip.assetId);
+                if (a >= 0)
+                    miniatura = m_assetLibrary->thumbnailAt(a);
+            }
+            out.append(QVariantMap{
+                {QStringLiteral("clipId"), clip.id},
+                {QStringLiteral("track"), t},
+                {QStringLiteral("index"), c},
+                {QStringLiteral("start"), drift::usToSeconds(clip.timelineStart)},
+                {QStringLiteral("end"), drift::usToSeconds(clip.timelineEnd())},
+                {QStringLiteral("name"), clip.name.isEmpty() ? QFileInfo(clip.path).fileName() : clip.name},
+                {QStringLiteral("path"), clip.path},
+                {QStringLiteral("kind"), drift::clipTypeToString(clip.type)},
+                {QStringLiteral("thumbnail"), miniatura.isEmpty() ? QString()
+                                                  : QUrl::fromLocalFile(miniatura).toString()},
+                {QStringLiteral("fala"), texto.join(QLatin1Char(' '))},
+            });
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const QVariant &a, const QVariant &b) {
+        return a.toMap().value(QStringLiteral("start")).toDouble() < b.toMap().value(QStringLiteral("start")).toDouble();
+    });
+    return out;
+}
+
+QString AppController::replaceClipMedia(const QString &clipId, const QString &path)
+{
+    if (!m_assetLibrary)
+        return tr("Biblioteca de mídia indisponível.");
+    if (!QFileInfo::exists(path))
+        return tr("Arquivo não encontrado: %1").arg(QDir::toNativeSeparators(path));
+
+    int ti = -1, ci = -1;
+    for (int t = 0; t < m_project.tracks().size() && ti < 0; ++t) {
+        const auto &clips = m_project.tracks().at(t).clips;
+        for (int c = 0; c < clips.size(); ++c)
+            if (clips.at(c).id == clipId) {
+                ti = t;
+                ci = c;
+                break;
+            }
+    }
+    if (ti < 0)
+        return tr("Esse clipe não está mais na timeline.");
+
+    int idx = m_assetLibrary->indexOfPath(path);
+    if (idx < 0) {
+        m_assetLibrary->importUrls({QUrl::fromLocalFile(path)});
+        idx = m_assetLibrary->indexOfPath(path);
+    }
+    if (idx < 0)
+        return tr("Não foi possível importar %1.").arg(QFileInfo(path).fileName());
+
+    const QVariantMap asset = m_assetLibrary->assetAt(idx);
+    const drift::ClipType tipo = drift::clipTypeFromString(asset.value(QStringLiteral("kind")).toString());
+    if (tipo != drift::ClipType::Video && tipo != drift::ClipType::Image)
+        return tr("Use um vídeo ou uma imagem.");
+    if (!m_project.tracks().at(ti).allowsClipType(tipo))
+        return tr("Essa trilha não aceita esse tipo de mídia.");
+    m_assetLibrary->ensureMedia(idx);
+
+    // Snapshot antes de pegar a referencia nao-const (mesmo cuidado do addClipFromAssetAt).
+    const drift::Project before = m_project;
+    drift::Clip &clip = m_project.tracks()[ti].clips[ci];
+    const drift::TimeUs fonteDur = clipDurationForAssetIndex(idx);
+    // A cena continua com o mesmo lugar e a mesma duracao; so a fonte muda.
+    const drift::TimeUs precisa = drift::TimeUs(double(clip.timelineDuration) * qMax(0.01, clip.speed));
+    clip.assetId = m_assetLibrary->assetIdAt(idx);
+    clip.type = tipo;
+    clip.name = asset.value(QStringLiteral("name")).toString();
+    clip.path = asset.value(QStringLiteral("path")).toString();
+    attachAssetSource(clip);
+    clip.sequenceId = asset.value(QStringLiteral("sequenceId")).toString();
+    clip.thumbnailPath = m_assetLibrary->thumbnailAt(idx);
+    clip.filmstripPath = m_assetLibrary->filmstripAt(idx);
+    clip.srcIn = 0;
+    clip.srcOut = (tipo == drift::ClipType::Video && fonteDur > 0) ? qMin(fonteDur, precisa) : precisa;
+    applyAssetLayout(clip, asset, m_project.width(), m_project.height());
+
+    pushProjectEdit(before, tr("Mídia trocada"));
+    finishEdit(tr("Mídia trocada"));
+    selectClip(ti, ci);
+    return {};
+}
+
+void AppController::studioRequest(const QString &reqId, const QString &acao, const QVariantMap &params, int prazoMs)
+{
+    const QJsonObject p = QJsonObject::fromVariantMap(params);
+    (void)QtConcurrent::run([this, reqId, acao, p, prazoMs]() {
+        QString erro;
+        const QJsonObject data = drift::chamarStudio(acao, p, qMax(2000, prazoMs), &erro);
+        QMetaObject::invokeMethod(this, [this, reqId, erro, data]() {
+            emit studioReply(reqId, erro.isEmpty(), data.toVariantMap(), erro);
+        }, Qt::QueuedConnection);
+    });
+}
+
+QString AppController::projectFolder() const
+{
+    const QString caminho = currentProjectPath();
+    if (caminho.isEmpty() || caminho.startsWith(QLatin1String("content://")))
+        return {};
+    return QFileInfo(caminho).absolutePath();
 }
 
 QVariantMap AppController::debugInfo() const

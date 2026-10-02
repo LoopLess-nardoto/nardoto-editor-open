@@ -582,7 +582,7 @@ PanelFrame {
                 || tabId === "effects" || tabId === "templates" || tabId === "adjustment"
                 || tabId === "sounds" || tabId === "transitions" || tabId === "masks"
                 || tabId === "shortcuts" || tabId === "scenes" || tabId === "market"
-                || tabId === "motion")
+                || tabId === "motion" || tabId === "cenas")
             return false
         const kinds = kindsForTab(tabId)
         return kinds.length === 0 || kinds.indexOf(kind) >= 0
@@ -592,6 +592,7 @@ PanelFrame {
     // evaluated. Labels are translated via tabLabels below.
     property var tabLabels: ({
         "media": qsTr("Media"),
+        "cenas": qsTr("Falas e mídias"),
         "market": qsTr("Market"),
         "text": qsTr("Text"),
         "subtitles": qsTr("Subtitles"),
@@ -612,6 +613,8 @@ PanelFrame {
     // tabId "sounds" is kept for favorites persistence (settings key).
     ListModel {
         id: tabsModel
+        // "Falas e mídias" primeiro: é a aba que abre com o editor (destaque pedido pelo dono).
+        ListElement { tabId: "cenas"; icon: 14; separatorAfter: false }
         ListElement { tabId: "media"; icon: 0; separatorAfter: false }
         ListElement { tabId: "market"; icon: 12; separatorAfter: true }
         ListElement { tabId: "text"; icon: 1; separatorAfter: false }
@@ -641,7 +644,8 @@ PanelFrame {
         Theme.icons.listVideo,
         Theme.icons.mask,
         Theme.icons.store,
-        Theme.icons.sparkles
+        Theme.icons.sparkles,
+        Theme.icons.messageSquare
     ]
     property int activeTab: 0
     readonly property string currentTabId: tabsModel.get(activeTab).tabId
@@ -764,9 +768,10 @@ PanelFrame {
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             interactive: contentHeight > height
+            // Fininha e só enquanto rola: a coluna é estreita e a barra fixa tirava espaço dos ícones.
             ScrollBar.vertical: AppScrollBar {
-                policy: tabRail.contentHeight > tabRail.height
-                        ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+                policy: ScrollBar.AsNeeded
+                implicitWidth: 3
             }
 
             Accessible.role: Accessible.PageTabList
@@ -1090,6 +1095,16 @@ PanelFrame {
                 sourceComponent: Component {
                     MotionTab { }
                 }
+            }
+
+            // Falas e mídias: cada cena com a fala dela, para trocar a mídia que não combina.
+            Loader {
+                active: root.currentTabId === "cenas"
+                visible: active
+                width: parent.width
+                height: parent.height - assetsHeader.height
+                opacity: root.tabOpacity
+                sourceComponent: Component { CenasTab { } }
             }
 
             Loader {

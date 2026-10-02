@@ -163,7 +163,8 @@ ThemedDialog {
                               "object-model", "vad-model", "align-model", "diarize-model",
                               "depth-model"] },
                     { id: "onnxruntime", label: qsTr("AI engine"),
-                      kinds: ["onnxruntime", "onnxruntime-ep"] }
+                      kinds: ["onnxruntime", "onnxruntime-ep"] },
+                    { id: "motion-engine", label: qsTr("Motion engine"), kinds: ["motion-engine"] }
                 ]
 
                 ThemedChip {

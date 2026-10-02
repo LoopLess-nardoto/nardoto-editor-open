@@ -1752,6 +1752,7 @@ QJsonObject McpDispatcher::opSaveProject(const QJsonObject &args)
         m_controller->saveProjectAs(QUrl::fromLocalFile(path));
     else
         m_controller->saveProject(QUrl::fromLocalFile(path));
+    m_controller->noteAgentProject(info.absoluteFilePath());
     return ok({{QStringLiteral("path"), path}});
 }
 

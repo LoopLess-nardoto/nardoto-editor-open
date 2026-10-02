@@ -332,6 +332,17 @@ Item {
                 }
             }
             ThemedMenuItem {
+                text: qsTr("Trocar mídia...   Ctrl+Shift+R")
+                icon.name: Theme.icons.refresh
+                visible: (clipItem.clipData.kind === "video" || clipItem.clipData.kind === "image")
+                         && !/\.html?$/i.test(clipItem.clipData.path || "")
+                onTriggered: {
+                    EditorState.selectClip(clipItem.trackIndex, clipItem.clipIndex)
+                    if (Window.window && typeof Window.window.abrirTrocaDoClipe === "function")
+                        Window.window.abrirTrocaDoClipe(clipItem.trackIndex, clipItem.clipIndex)
+                }
+            }
+            ThemedMenuItem {
                 // Touch route into multi-clip selection; the panel owns the mode and
                 // the desktop panel does not declare the property at all.
                 text: qsTr("Select multiple")

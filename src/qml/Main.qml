@@ -63,6 +63,15 @@ ApplicationWindow {
         // Before any of the branches below, so a quit that is cancelled at the
         // unsaved prompt still records where the window was.
         window.persistLayout()
+        // Igual ao CapCut: com um projeto aberto, o X fecha o projeto e volta para a tela
+        // inicial (pedindo para salvar se precisar). Na tela inicial, o X fecha o editor.
+        if (!window.forceClose && !window.showStartScreen) {
+            close.accepted = false
+            if (window.previewFullscreen)
+                window.togglePreviewFullscreen()
+            window.requestCloseProject()
+            return
+        }
         if (window.forceClose || !EditorState.hasUnsavedChanges)
             return
         close.accepted = false
@@ -642,6 +651,42 @@ ApplicationWindow {
         })
     }
 
+    // Tela inicial: novo projeto ja no formato escolhido no card (YouTube, Short, Quadrado), sem
+    // passar pela janela "Escolha o layout".
+    function requestNewProjectWithFormat(templateId) {
+        if (window.rejectIfProjectOpenPending())
+            return
+        editorHeader.confirmIfDirty(function () {
+            EditorState.newProject()
+            const tamanho = LayoutPresets.sizeFor(templateId, "1080p", 0, 0)
+            EditorState.setProjectSetup(tamanho.width, tamanho.height, EditorState.projectFps())
+            EditorState.markProjectLayoutChosen()
+            window.showStartScreen = false
+        })
+    }
+
+    // Tela inicial: arrastar midia cria um projeto 16:9 ja com os arquivos importados.
+    function requestNewProjectWithMedia(urls) {
+        if (window.rejectIfProjectOpenPending())
+            return
+        editorHeader.confirmIfDirty(function () {
+            EditorState.newProject()
+            const tamanho = LayoutPresets.sizeFor("yt_video", "1080p", 0, 0)
+            EditorState.setProjectSetup(tamanho.width, tamanho.height, EditorState.projectFps())
+            EditorState.markProjectLayoutChosen()
+            window.showStartScreen = false
+            MediaImport.importUrls(urls, true)
+        })
+    }
+
+    // Tela inicial, "Exportar direto": abre o projeto e, quando ele termina de carregar, a
+    // janela de exportar.
+    property bool exportarAoAbrir: false
+    function requestOpenAndExport(path) {
+        window.exportarAoAbrir = true
+        window.requestOpenRecentProject(path)
+    }
+
     function requestOpenProjectDialog() {
         if (window.rejectIfProjectOpenPending())
             return
@@ -670,6 +715,9 @@ ApplicationWindow {
     function requestCloseProject() {
         if (window.rejectIfProjectOpenPending())
             return
+        // Capa do card na tela inicial: o quadro de onde a pessoa parou (vale tambem para
+        // projeto so de motion, que nao tem video de onde tirar miniatura).
+        EditorState.saveCurrentProjectThumbnail()
         editorHeader.confirmIfDirty(function () {
             // Set before newProject(): it resets projectLayoutChosen, which a
             // Connections handler below reacts to by reopening the layout chooser —
@@ -782,13 +830,10 @@ ApplicationWindow {
             recoveryOpenTimer.start()
             return
         }
-        // Reopen is off (or the last project could not be restored): rather than land in a
-        // fresh empty project, ask which project to work on.
-        if (!EditorState.reopenLastProject) {
-            window.showStartScreen = true
-            return
-        }
-        layoutChooserOpenTimer.start()
+        // Nada reaberto (opcao desligada ou o ultimo projeto nao voltou): a tela inicial, que ja
+        // pergunta o formato do projeto novo. Antes, com "reabrir" ligado e nada para reabrir,
+        // caia direto na janela "Escolha o layout".
+        window.showStartScreen = true
     }
 
     onVisibilityChanged: {
@@ -851,6 +896,14 @@ ApplicationWindow {
         function onProjectLoadFinished(ok) {
             if (ok)
                 window.showStartScreen = false
+            if (ok && window.exportarAoAbrir)
+                Qt.callLater(editorHeader.exportVideo)
+            window.exportarAoAbrir = false
+        }
+
+        // O chat do Studio criou ou abriu um projeto pela ponte: a tela inicial sai da frente.
+        function onAgentProjectStarted() {
+            window.showStartScreen = false
         }
 
         function onProjectLayoutChosenChanged() {
@@ -1048,6 +1101,29 @@ ApplicationWindow {
     // list was an unlabelled icon in a vertical rail that can itself be scrolled out
     // of view on a short window. F1 is the conventional way in and reuses the tab
     // that already exists.
+    // Trocar a mídia de uma cena: uma janela só, aberta pela aba "Falas e mídias", pelo botão
+    // direito no clipe e pelo atalho Ctrl+Shift+R (clipe selecionado).
+    TrocarMidiaDialog { id: trocarMidiaGlobal }
+
+    function abrirTrocaDoClipe(track, index) {
+        const cenas = EditorState.scenesWithSpeech()
+        for (let i = 0; i < cenas.length; ++i) {
+            if (cenas[i].track === track && cenas[i].index === index) {
+                trocarMidiaGlobal.abrir(cenas[i], i + 1)
+                return true
+            }
+        }
+        Toasts.info(qsTr("Selecione um clipe de vídeo ou imagem para trocar a mídia."))
+        return false
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+R"
+        context: Qt.ApplicationShortcut
+        enabled: !window.showStartScreen
+        onActivated: window.abrirTrocaDoClipe(EditorState.selectedTrack, EditorState.selectedClip)
+    }
+
     Shortcut {
         sequence: "F1"
         context: Qt.ApplicationShortcut
@@ -1288,8 +1364,11 @@ ApplicationWindow {
                 // use, so there is exactly one place that gates on unsaved changes and decides
                 // when the screen is allowed to disappear.
                 onNewProjectRequested: window.requestNewProject()
+                onNewProjectWithFormatRequested: (templateId) => window.requestNewProjectWithFormat(templateId)
+                onNewProjectWithMediaRequested: (urls) => window.requestNewProjectWithMedia(urls)
                 onOpenProjectRequested: window.requestOpenProjectDialog()
                 onOpenRecentRequested: (path) => window.requestOpenRecentProject(path)
+                onExportRecentRequested: (path) => window.requestOpenAndExport(path)
             }
         }
     }

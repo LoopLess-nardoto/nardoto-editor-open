@@ -600,6 +600,17 @@ QJsonObject McpDispatcher::applyOneExtended(const QString &tool, const QJsonObje
         return ok({{QStringLiteral("index"), index}, {QStringLiteral("path"), path}});
     }
 
+    if (tool == QLatin1String("replace_clip_media")) {
+        const QString clip = argString(args, QStringLiteral("clip"));
+        const QString path = localPath(argString(args, QStringLiteral("path")));
+        if (clip.isEmpty() || path.isEmpty())
+            return err("bad_args", QStringLiteral("clip and path required"));
+        const QString erro = m_controller->replaceClipMedia(clip, path);
+        if (!erro.isEmpty())
+            return err("bad_args", erro);
+        return ok({{QStringLiteral("clip"), clip}, {QStringLiteral("path"), path}});
+    }
+
     if (tool == QLatin1String("export_asset_image")) {
         const int index = resolveAsset(args.value(QStringLiteral("asset")));
         const QString path = localPath(argString(args, QStringLiteral("path")));
@@ -655,11 +666,13 @@ QJsonObject McpDispatcher::applyOneExtended(const QString &tool, const QJsonObje
         if (path.isEmpty())
             return err("bad_args", QStringLiteral("path required"));
         m_controller->loadProject(QUrl::fromLocalFile(path));
+        m_controller->noteAgentProject();
         return ok({{QStringLiteral("path"), path}});
     }
 
     if (tool == QLatin1String("new_project")) {
         m_controller->newProject();
+        m_controller->noteAgentProject();
         return ok({});
     }
 

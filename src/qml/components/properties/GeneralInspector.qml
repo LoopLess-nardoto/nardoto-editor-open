@@ -291,36 +291,46 @@ Item {
                 elide: Text.ElideMiddle
             }
 
+            ThemedButton {
+                width: parent.width
+                variant: "secondary"
+                glyph: Theme.icons.folder
+                text: qsTr("Open folder")
+                onClicked: Qt.openUrlExternally("file:///" + root.motionFolder.replace(/\\/g, "/"))
+            }
+        }
+
+        // Pedido de mudanca para o chat do Studio, em qualquer clipe: entra na caixa do chat com o
+        // clipe, o tempo e o print do momento; a pessoa revisa e envia.
+        Column {
+            width: root.width
+            spacing: 8
+
             ThemedTextField {
-                id: motionRequestField
+                id: clipRequestField
                 width: parent.width
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeSm
-                placeholderText: qsTr("Ask for a change in this motion...")
+                placeholderText: root.isMotion ? qsTr("Peça uma mudança neste motion...")
+                                               : qsTr("Peça uma mudança neste clipe...")
+                onAccepted: pedirAoChat.clicked()
             }
 
-            Row {
+            ThemedButton {
+                id: pedirAoChat
                 width: parent.width
-                spacing: 8
-
-                ThemedButton {
-                    width: (parent.width - parent.spacing) / 2
-                    variant: "primary"
-                    glyph: Theme.icons.image
-                    text: qsTr("Moment print")
-                    tooltip: qsTr("Takes a print of this moment and copies it, with the exact time and the composition path, to paste into the Studio chat")
-                    onClicked: {
-                        EditorState.copyMotionChatPrompt(root.clipPath, motionRequestField.text)
-                        Toasts.success(qsTr("Print copied. Paste it into the Studio chat"))
+                variant: "primary"
+                glyph: Theme.icons.image
+                text: qsTr("Pedir ao chat do Studio")
+                tooltip: qsTr("Coloca o pedido na caixa do chat do Studio, com este clipe, o tempo e um print do momento. Você revisa e envia.")
+                onClicked: {
+                    const erro = EditorState.askStudioChatForClip(clipRequestField.text)
+                    if (erro.length === 0) {
+                        clipRequestField.text = ""
+                        Toasts.success(qsTr("Pedido na caixa do chat do Studio. Revise e envie."))
+                    } else {
+                        Toasts.info(qsTr("%1 O pedido foi copiado: cole no chat do Studio.").arg(erro))
                     }
-                }
-
-                ThemedButton {
-                    width: (parent.width - parent.spacing) / 2
-                    variant: "secondary"
-                    glyph: Theme.icons.folder
-                    text: qsTr("Open folder")
-                    onClicked: Qt.openUrlExternally("file:///" + root.motionFolder.replace(/\\/g, "/"))
                 }
             }
         }

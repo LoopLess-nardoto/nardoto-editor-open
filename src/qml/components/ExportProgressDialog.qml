@@ -26,7 +26,28 @@ ThemedDialog {
     property string exportError: ""
 
     function openDialog() {
+        // Aberto no meio do export: o relogio comeca de quando o export comecou, nao de agora.
+        if (EditorState.exportInProgress && EditorState.exportStartedAt() > 0) {
+            root.startedAt = EditorState.exportStartedAt()
+            root.elapsedMs = Date.now() - root.startedAt
+        }
         open()
+    }
+
+    // Andamento: o que da para saber so com a fracao, a duracao do video e o relogio.
+    readonly property real fracao: EditorState.exportProgress
+    readonly property real duracaoVideo: EditorState.durationSeconds
+    readonly property int totalQuadros: Math.max(1, Math.round(duracaoVideo * EditorState.projectFps()))
+    readonly property real restanteMs: fracao > 0.03 ? elapsedMs * (1 - fracao) / fracao : -1
+    readonly property real velocidade: elapsedMs > 1500 ? (fracao * duracaoVideo) / (elapsedMs / 1000) : 0
+    readonly property string etapa: fracao <= 0 ? qsTr("Preparando o projeto e abrindo o codificador…")
+                                    : fracao >= 0.995 ? qsTr("Finalizando o arquivo de vídeo…")
+                                    : qsTr("Renderizando e codificando os quadros")
+
+    function relogio(ms) {
+        const total = Math.max(0, Math.round(ms / 1000))
+        const m = Math.floor(total / 60), s = total % 60
+        return m + ":" + (s < 10 ? "0" + s : s)
     }
 
     function formatElapsed(ms) {
@@ -56,7 +77,7 @@ ThemedDialog {
         target: EditorState
         function onExportInProgressChanged() {
             if (EditorState.exportInProgress) {
-                root.startedAt = Date.now()
+                root.startedAt = EditorState.exportStartedAt() > 0 ? EditorState.exportStartedAt() : Date.now()
                 root.elapsedMs = 0
                 root.exportError = ""
             } else if (root.startedAt > 0) {
@@ -93,26 +114,104 @@ ThemedDialog {
             indeterminate: EditorState.exportInProgress && EditorState.exportProgress <= 0
         }
 
+        // Etapa e quadro atual
+        Column {
+            width: parent.width
+            spacing: 3
+            visible: EditorState.exportInProgress
+
+            ThemedLabel {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                size: "sm"
+                text: root.etapa
+            }
+            ThemedLabel {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                size: "xs"
+                color: Theme.mutedForeground
+                visible: root.fracao > 0 && root.fracao < 0.995
+                text: qsTr("Quadro %1 de %2  ·  %3 de %4 do vídeo")
+                      .arg(Math.min(root.totalQuadros, Math.round(root.fracao * root.totalQuadros)).toLocaleString(Qt.locale(), "f", 0))
+                      .arg(root.totalQuadros.toLocaleString(Qt.locale(), "f", 0))
+                      .arg(root.relogio(root.fracao * root.duracaoVideo * 1000))
+                      .arg(root.relogio(root.duracaoVideo * 1000))
+            }
+        }
+
+        // Decorrido, falta e velocidade
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: 6
+            visible: EditorState.exportInProgress && root.startedAt > 0
+
+            Repeater {
+                model: [
+                    { rotulo: qsTr("Decorrido"), valor: root.relogio(root.elapsedMs) },
+                    { rotulo: qsTr("Falta"), valor: root.restanteMs >= 0 ? "~" + root.relogio(root.restanteMs) : "…" },
+                    { rotulo: qsTr("Velocidade"), valor: root.velocidade > 0 ? root.velocidade.toFixed(1).replace(".", ",") + "x" : "…" }
+                ]
+                delegate: Rectangle {
+                    required property var modelData
+                    width: 92
+                    height: 46
+                    radius: Theme.radiusMd
+                    color: Theme.panelBackground
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 1
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: modelData.valor
+                            color: Theme.foreground
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 15
+                            font.weight: Font.Bold
+                        }
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: modelData.rotulo
+                            color: Theme.mutedForeground
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 11
+                        }
+                    }
+                }
+            }
+        }
+
+        ThemedLabel {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            size: "xs"
+            color: Theme.mutedForeground
+            wrapMode: Text.WordWrap
+            visible: EditorState.exportInProgress
+            text: qsTr("Feche para continuar editando, ou cancele para interromper.")
+        }
+
+        // Terminou
         ThemedLabel {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             size: "sm"
             wrapMode: Text.WordWrap
-            text: EditorState.exportInProgress
-                  ? qsTr("Rendering your video. Close to keep editing, or cancel to stop.")
-                  : root.exportError.length > 0
-                    ? qsTr("The export failed: %1").arg(root.exportError)
-                    : qsTr("Export finished.")
+            visible: !EditorState.exportInProgress
+            text: root.exportError.length > 0
+                  ? qsTr("The export failed: %1").arg(root.exportError)
+                  : qsTr("Export finished.")
         }
 
         ThemedLabel {
             width: parent.width
-            visible: root.startedAt > 0
+            visible: !EditorState.exportInProgress && root.startedAt > 0
             horizontalAlignment: Text.AlignHCenter
             size: "xs"
             color: Theme.mutedForeground
-            text: EditorState.exportInProgress
-                  ? qsTr("Elapsed: %1").arg(root.formatElapsed(root.elapsedMs))
+            text: root.duracaoVideo > 0 && root.elapsedMs > 0 && root.exportError.length === 0
+                  ? qsTr("Levou %1  ·  velocidade %2x").arg(root.formatElapsed(root.elapsedMs))
+                        .arg((root.duracaoVideo / (root.elapsedMs / 1000)).toFixed(1).replace(".", ","))
                   : qsTr("Took %1").arg(root.formatElapsed(root.elapsedMs))
         }
 

@@ -23,6 +23,10 @@
 <context>
     <name>AddonManagerDialog</name>
     <message>
+        <source>Motion engine</source>
+        <translation>Motor de motion</translation>
+    </message>
+    <message>
         <source>Extras</source>
         <translation>Extras</translation>
     </message>
