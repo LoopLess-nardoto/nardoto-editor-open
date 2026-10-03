@@ -338,8 +338,9 @@ Item {
                          && !/\.html?$/i.test(clipItem.clipData.path || "")
                 onTriggered: {
                     EditorState.selectClip(clipItem.trackIndex, clipItem.clipIndex)
-                    if (Window.window && typeof Window.window.abrirTrocaDoClipe === "function")
-                        Window.window.abrirTrocaDoClipe(clipItem.trackIndex, clipItem.clipIndex)
+                    const janela = clipItem.Window.window
+                    if (janela && typeof janela.abrirTrocaDoClipe === "function")
+                        janela.abrirTrocaDoClipe(clipItem.trackIndex, clipItem.clipIndex)
                 }
             }
             ThemedMenuItem {

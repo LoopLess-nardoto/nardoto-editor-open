@@ -5721,6 +5721,9 @@ QVariantMap AppController::mediaExtentSeconds() const
 
 QString AppController::projectName() const
 {
+    // Projeto salvo pelo agente sem nome proprio: mostra o nome do arquivo, nao "Untitled Project".
+    if (m_project.name() == QLatin1String("Untitled Project") && !m_currentProjectPath.isEmpty())
+        return QFileInfo(m_currentProjectPath).completeBaseName();
     return m_project.name();
 }
 
@@ -25774,6 +25777,7 @@ void AppController::setCurrentProjectPath(const QString &path)
     // Cleared by newProject(); set after load/save/package so next launch can reopen.
     QSettings().setValue(QStringLiteral("lastSessionPath"), path);
     emit currentProjectPathChanged();
+    emit projectNameChanged();
 }
 
 QString AppController::recoveryFilePath()
@@ -26329,7 +26333,12 @@ void AppController::revealLastExport()
         return;
     const QString nativo = QDir::toNativeSeparators(m_lastExportFile);
 #if defined(Q_OS_WIN)
-    QProcess::startDetached(QStringLiteral("explorer.exe"), {QStringLiteral("/select,") + nativo});
+    // Caminho com espaço: o Qt poria aspas em "/select,C:\..." inteiro e o Explorer abriria a pasta
+    // padrão. Argumento cru com aspas só no caminho.
+    QProcess explorer;
+    explorer.setProgram(QStringLiteral("explorer.exe"));
+    explorer.setNativeArguments(QStringLiteral("/select,\"%1\"").arg(nativo));
+    explorer.startDetached();
 #elif defined(Q_OS_MACOS)
     QProcess::startDetached(QStringLiteral("open"), {QStringLiteral("-R"), nativo});
 #else
@@ -26708,8 +26717,10 @@ QVariantList AppController::scenesWithSpeech() const
             const drift::Clip &clip = track.clips.at(c);
             if (clip.type != drift::ClipType::Video && clip.type != drift::ClipType::Image)
                 continue;
-            if (drift::MotionHost::isMotionPath(clip.path))
-                continue; // motion tem painel proprio (Tema do video)
+            // Motion (ao vivo ou o .mov renderizado em <projeto>/motion/<id>/) tem painel proprio.
+            if (drift::MotionHost::isMotionPath(clip.path)
+                || QDir::fromNativeSeparators(clip.path).contains(QStringLiteral("/motion/"), Qt::CaseInsensitive))
+                continue;
             QStringList texto;
             for (const Fala &f : falas)
                 if (f.fim > clip.timelineStart && f.ini < clip.timelineEnd())
@@ -26781,9 +26792,37 @@ QString AppController::replaceClipMedia(const QString &clipId, const QString &pa
     // Snapshot antes de pegar a referencia nao-const (mesmo cuidado do addClipFromAssetAt).
     const drift::Project before = m_project;
     drift::Clip &clip = m_project.tracks()[ti].clips[ci];
-    const drift::TimeUs fonteDur = clipDurationForAssetIndex(idx);
+    // Arquivo recém-importado ainda tem a duração provisória (5 s) até a sondagem em segundo plano.
+    drift::TimeUs fonteDur = clipDurationForAssetIndex(idx);
+    if (tipo == drift::ClipType::Video)
+        if (const int64_t medida = MediaProbe::probe(path).durationUs; medida > 0)
+            fonteDur = medida;
     // A cena continua com o mesmo lugar e a mesma duracao; so a fonte muda.
-    const drift::TimeUs precisa = drift::TimeUs(double(clip.timelineDuration) * qMax(0.01, clip.speed));
+    drift::TimeUs precisa = drift::TimeUs(double(clip.timelineDuration) * qMax(0.01, clip.speed));
+    // Mídia mais curta que a cena (ex.: trecho de 8 s do YouTube numa cena de 14 s): a nova entra
+    // no começo e o resto da cena segue com a mídia antiga, como um corte para outro plano.
+    if (tipo == drift::ClipType::Video && fonteDur > 0 && fonteDur + 40000 < precisa) {
+        drift::Clip resto;
+        const drift::TimeUs corte = drift::TimeUs(double(fonteDur) / qMax(0.01, clip.speed));
+        if (drift::splitClipAtOffset(clip, resto, corte)) {
+            resto.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            resto.linkId.clear();
+            m_project.tracks()[ti].clips.insert(ci + 1, resto);
+            precisa = fonteDur;
+        }
+    }
+    drift::Clip &cena = m_project.tracks()[ti].clips[ci]; // o insert pode ter movido a lista
+    replaceSource(cena, idx, asset, tipo, fonteDur, precisa);
+
+    pushProjectEdit(before, tr("Mídia trocada"));
+    finishEdit(tr("Mídia trocada"));
+    selectClip(ti, ci);
+    return {};
+}
+
+void AppController::replaceSource(drift::Clip &clip, int idx, const QVariantMap &asset, drift::ClipType tipo,
+                                  drift::TimeUs fonteDur, drift::TimeUs precisa)
+{
     clip.assetId = m_assetLibrary->assetIdAt(idx);
     clip.type = tipo;
     clip.name = asset.value(QStringLiteral("name")).toString();
@@ -26794,12 +26833,9 @@ QString AppController::replaceClipMedia(const QString &clipId, const QString &pa
     clip.filmstripPath = m_assetLibrary->filmstripAt(idx);
     clip.srcIn = 0;
     clip.srcOut = (tipo == drift::ClipType::Video && fonteDur > 0) ? qMin(fonteDur, precisa) : precisa;
+    // A cena é imagem de cobertura: o som do trecho novo (ex.: YouTube) não entra por cima da narração.
+    clip.suppressEmbeddedAudio = true;
     applyAssetLayout(clip, asset, m_project.width(), m_project.height());
-
-    pushProjectEdit(before, tr("Mídia trocada"));
-    finishEdit(tr("Mídia trocada"));
-    selectClip(ti, ci);
-    return {};
 }
 
 void AppController::studioRequest(const QString &reqId, const QString &acao, const QVariantMap &params, int prazoMs)
@@ -26807,7 +26843,11 @@ void AppController::studioRequest(const QString &reqId, const QString &acao, con
     const QJsonObject p = QJsonObject::fromVariantMap(params);
     (void)QtConcurrent::run([this, reqId, acao, p, prazoMs]() {
         QString erro;
-        const QJsonObject data = drift::chamarStudio(acao, p, qMax(2000, prazoMs), &erro);
+        bool semConexao = false;
+        QJsonObject data = drift::chamarStudio(acao, p, qMax(2000, prazoMs), &erro, &semConexao);
+        // O QML decide "Studio conectado ou nao" por este campo, nao pelo texto (que e traduzido).
+        if (semConexao)
+            data.insert(QStringLiteral("semStudio"), true);
         QMetaObject::invokeMethod(this, [this, reqId, erro, data]() {
             emit studioReply(reqId, erro.isEmpty(), data.toVariantMap(), erro);
         }, Qt::QueuedConnection);

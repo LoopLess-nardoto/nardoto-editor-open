@@ -2590,6 +2590,8 @@ protected:
     void restoreSelectionByTrackId(const QList<QPair<QString, int>> &captured);
     int assetIndexForClip(const drift::Clip &clip) const;
     drift::TimeUs clipDurationForAssetIndex(int assetIndex) const;
+    void replaceSource(drift::Clip &clip, int idx, const QVariantMap &asset, drift::ClipType tipo,
+                       drift::TimeUs fonteDur, drift::TimeUs precisa);
     // The absolute orientation (0/90/180/270) a video clip's frames come out at: its file's own
     // tag plus its rotationCorrection. setClipOrientationTo stores the correction that lands on
     // `degrees`.

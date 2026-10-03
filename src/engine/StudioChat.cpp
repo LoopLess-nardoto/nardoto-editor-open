@@ -64,8 +64,11 @@ QString inserirNoChatDoStudio(const QString &texto, const QString &imagem)
     return erro;
 }
 
-QJsonObject chamarStudio(const QString &acao, const QJsonObject &params, int prazoMs, QString *erroSaida)
+QJsonObject chamarStudio(const QString &acao, const QJsonObject &params, int prazoMs, QString *erroSaida,
+                         bool *semConexao)
 {
+    if (semConexao)
+        *semConexao = false;
     const auto falha = [erroSaida](const QString &msg) {
         if (erroSaida)
             *erroSaida = msg;
@@ -81,8 +84,11 @@ QJsonObject chamarStudio(const QString &acao, const QJsonObject &params, int pra
 
     QTcpSocket s;
     s.connectToHost(QStringLiteral("127.0.0.1"), quint16(porta));
-    if (!s.waitForConnected(kPrazoMs))
+    if (!s.waitForConnected(kPrazoMs)) {
+        if (semConexao)
+            *semConexao = true;
         return falha(QObject::tr("O Nardoto Studio não está aberto."));
+    }
 
     QByteArray chave(16, Qt::Uninitialized);
     for (char &c : chave)
@@ -93,13 +99,19 @@ QJsonObject chamarStudio(const QString &acao, const QJsonObject &params, int pra
 
     QByteArray sobra;
     while (!sobra.contains("\r\n\r\n")) {
-        if (!s.waitForReadyRead(kPrazoMs))
+        if (!s.waitForReadyRead(kPrazoMs)) {
+            if (semConexao)
+                *semConexao = true;
             return falha(QObject::tr("O Nardoto Studio não respondeu."));
+        }
         sobra += s.readAll();
     }
     const qsizetype fimCab = sobra.indexOf("\r\n\r\n") + 4;
-    if (!sobra.startsWith("HTTP/1.1 101"))
+    if (!sobra.startsWith("HTTP/1.1 101")) {
+        if (semConexao)
+            *semConexao = true;
         return falha(QObject::tr("O Nardoto Studio recusou a conexão."));
+    }
     sobra.remove(0, fimCab);
 
     const QJsonObject pedido{{QStringLiteral("id"), 1},
