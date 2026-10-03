@@ -13,7 +13,10 @@ QString inserirNoChatDoStudio(const QString &texto, const QString &imagem = {});
 
 // Chamada generica a uma acao do servidor local do Studio ({action, params} -> data). Bloqueia
 // ate a resposta ou o prazo: chame fora da thread da interface quando a acao demora (busca,
-// download). Em falha devolve objeto vazio e a mensagem em `erro`.
-QJsonObject chamarStudio(const QString &acao, const QJsonObject &params, int prazoMs, QString *erro);
+// download). Em falha devolve objeto vazio e a mensagem em `erro`. `semConexao` (opcional) vira true
+// quando o Studio nao foi alcancado (fechado, nao respondeu ao aperto de mao ou recusou), para quem
+// precisa distinguir isso de um erro do proprio Studio sem comparar texto traduzido.
+QJsonObject chamarStudio(const QString &acao, const QJsonObject &params, int prazoMs, QString *erro,
+                         bool *semConexao = nullptr);
 
 } // namespace drift

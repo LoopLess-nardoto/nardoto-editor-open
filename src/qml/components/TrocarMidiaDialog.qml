@@ -1,11 +1,14 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtMultimedia
 import Drift
 
 // Janela "Trocar a mídia da cena": mostra a fala da cena e opções buscadas pelo Nardoto Studio
 // (servidor local: midia_consultas, midia_buscar, midia_baixar, midia_youtube_buscar,
-// midia_youtube_trecho). A escolhida vai para a pasta do projeto e entra no lugar da antiga, com a
+// midia_youtube_previa, midia_youtube_trecho). A escolhida vai para a pasta do projeto e entra no lugar da antiga, com a
 // mesma duração (EditorState.replaceClipMedia; Ctrl+Z desfaz).
+// Sem o Studio aberto, a aba "Bancos" busca no Pexels e no Pixabay pela loja de mídia própria do
+// Editor (Market) e baixa por ela. "Sem Studio" vem do retorno do próprio pedido (data.semStudio).
 // Mockup: NardotoStudio/docs/mockup-editor-trocar-midia.html
 Popup {
     id: root
@@ -23,11 +26,29 @@ Popup {
     property var ytOpcoes: []
     property var ytEscolhido: null
     property var ytTrecho: null       // {arquivo, quadros, ini, dur}
+    property bool ytPreviaCarregando: false
+    property bool ytPreviaErro: false
+    property bool ytPreviaIniciando: false
+    property real ytDuracao: 0
     property string estado: ""        // "" | buscando | baixando
     property string aviso: ""
     property var pedidos: ({})        // reqId -> ação, para ignorar respostas antigas
+    property string studio: "?"       // ? (ainda não sei) | sim | nao: decidido pelo retorno do pedido
+    property string consultaAtual: ""
+    // Bancos pelo Market (sem Studio): a busca anda provedor por provedor (marketFila).
+    property var marketOpcoes: []
+    property var marketListas: []
+    property var marketFila: []
+    property string marketFase: ""    // "" | catalogo | buscando
+    property bool marketAguardando: false
+    property bool marketTentouCatalogo: false
+    property string marketErro: ""
+    property string marketBaixando: ""
 
+    readonly property bool semStudio: studio === "nao"
     readonly property real duracaoCena: Math.max(0, (cena.end || 0) - (cena.start || 0))
+    readonly property int ytInicioMs: Math.round(inicioYt.value * 1000)
+    readonly property int ytFimMs: Math.round(Math.min(ytDuracao, inicioYt.value + durYt.value) * 1000)
 
     parent: Overlay.overlay
     anchors.centerIn: parent
@@ -39,6 +60,82 @@ Popup {
 
     background: Rectangle { color: "#121212"; radius: 12 }
     Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.6) }
+
+    onYtEscolhidoChanged: {
+        pararPreviaYoutube()
+        ytDuracao = ytEscolhido ? Number(ytEscolhido.duracao) : 0
+        if (!ytEscolhido)
+            return
+        inicioYt.value = Math.min(30, Math.max(0, ytDuracao - 10))
+        ytPreviaCarregando = true
+        pedir("midia_youtube_previa", { id: ytEscolhido.id }, 65000)
+    }
+    onAboutToHide: pararPreviaYoutube()
+    onAbaChanged: {
+        if (aba !== "youtube")
+            playerYt.pause()
+        else if (visible && playerYt.source.toString().length && !ytPreviaCarregando && !ytPreviaErro)
+            playerYt.play()
+    }
+
+    function pararPreviaYoutube() {
+        root.pedidos = Object.assign({}, root.pedidos, { midia_youtube_previa: "" })
+        root.ytPreviaCarregando = false
+        root.ytPreviaIniciando = false
+        root.ytPreviaErro = false
+        playerYt.stop()
+        playerYt.source = ""
+    }
+
+    function falharPreviaYoutube() {
+        pararPreviaYoutube()
+        root.ytPreviaErro = true
+    }
+
+    function iniciarPreviaYoutube() {
+        if (!root.ytPreviaIniciando || !playerYt.seekable
+                || (playerYt.mediaStatus !== MediaPlayer.LoadedMedia
+                    && playerYt.mediaStatus !== MediaPlayer.BufferedMedia))
+            return
+        root.ytPreviaIniciando = false
+        root.ytPreviaCarregando = false
+        playerYt.position = root.ytInicioMs
+        if (root.visible && root.aba === "youtube")
+            playerYt.play()
+    }
+
+    MediaPlayer {
+        id: playerYt
+        videoOutput: videoYt
+        audioOutput: AudioOutput { id: audioYt }
+        onSeekableChanged: root.iniciarPreviaYoutube()
+        onMediaStatusChanged: {
+            if (mediaStatus === MediaPlayer.InvalidMedia) {
+                root.falharPreviaYoutube()
+            } else if (mediaStatus === MediaPlayer.EndOfMedia && root.visible
+                       && root.aba === "youtube" && !root.ytPreviaErro) {
+                position = root.ytInicioMs
+                play()
+            } else {
+                root.iniciarPreviaYoutube()
+            }
+        }
+        onPositionChanged: function() {
+            if (playbackState === MediaPlayer.PlayingState && seekable && !root.ytPreviaIniciando
+                    && playerYt.position >= root.ytFimMs && root.ytFimMs > root.ytInicioMs)
+                playerYt.position = root.ytInicioMs
+        }
+        onErrorOccurred: {
+            if (source.toString().length)
+                root.falharPreviaYoutube()
+        }
+    }
+
+    Timer {
+        interval: 30000
+        running: root.ytPreviaCarregando && playerYt.source.toString().length > 0
+        onTriggered: root.falharPreviaYoutube()
+    }
 
     function abrir(c, n) {
         root.cena = c
@@ -52,6 +149,13 @@ Popup {
         root.aviso = ""
         root.consultas = []
         root.estado = ""
+        root.studio = "?"
+        root.consultaAtual = ""
+        root.marketOpcoes = []
+        root.marketListas = []
+        root.marketFase = ""
+        root.marketAguardando = false
+        root.marketBaixando = ""
         campoBusca.text = ""
         campoYt.text = ""
         open()
@@ -85,12 +189,163 @@ Popup {
         const q = campoBusca.text.trim()
         if (!q.length)
             return
-        root.estado = "buscando"
+        root.consultaAtual = q
         root.aviso = ""
-        root.opcoes = []
         root.escolhida = null
+        if (root.semStudio) {
+            root.buscarMarket(q)
+            return
+        }
+        root.estado = "buscando"
+        root.opcoes = []
         pedir("midia_buscar", { consulta: q, tipo: root.tipo, orientacao: root.orientacao(),
                                 duracaoMinima: Math.floor(root.duracaoCena) }, 90000)
+    }
+
+    // ---- Bancos sem Studio: Pexels e Pixabay pela loja do Editor (Market) ----
+
+    // Id do tipo do Market que corresponde ao botão Vídeos/Imagens (fora o chroma key).
+    function marketTipoId() {
+        const alvo = root.tipo === "imagem" ? "image" : "video"
+        const tipos = Market.types
+        let achado = ""
+        for (let i = 0; i < tipos.length; ++i) {
+            const t = tipos[i]
+            if ((t.media_kind || t.id) !== alvo || t.id === "greenscreen")
+                continue
+            if (!achado || t.id === "video" || t.id === "photo")
+                achado = t.id
+        }
+        return achado
+    }
+
+    function marketIntercalar(listas) {
+        const saida = []
+        const n = Math.max(0, ...listas.map(l => l.length))
+        for (let i = 0; i < n; ++i)
+            for (const l of listas)
+                if (i < l.length)
+                    saida.push(l[i])
+        return saida
+    }
+
+    function marketFalhar(msg) {
+        root.marketFase = ""
+        root.marketAguardando = false
+        root.estado = ""
+        root.aviso = msg
+    }
+
+    function buscarMarket(q) {
+        root.marketOpcoes = []
+        root.marketListas = []
+        root.marketFila = []
+        root.marketErro = ""
+        root.marketFase = ""
+        root.marketAguardando = false
+        root.estado = ""
+        if (!Market.configured) {
+            root.aviso = qsTr("A loja de mídia não está disponível nesta versão do editor.")
+            return
+        }
+        // Os termos da loja precisam ser aceitos uma vez: o painel logo abaixo pede isso.
+        if (!Market.consented)
+            return
+        root.estado = "buscando"
+        root.marketTentouCatalogo = false
+        root.marketFase = "catalogo"
+        root.marketPasso()
+    }
+
+    function marketPasso() {
+        if (root.marketFase === "catalogo") {
+            const tipoId = root.marketTipoId()
+            if (!tipoId) {
+                if (Market.catalogLoading)
+                    return
+                if (Market.types.length > 0 || root.marketTentouCatalogo) {
+                    root.marketFalhar(Market.catalogError.length ? Market.catalogError
+                                      : qsTr("A loja não tem este tipo de mídia agora."))
+                    return
+                }
+                root.marketTentouCatalogo = true
+                Market.refreshCatalog()
+                return
+            }
+            if (Market.activeTypeId !== tipoId)
+                Market.activeTypeId = tipoId
+            const ids = []
+            for (const p of Market.providers)
+                if (/pexels|pixabay/i.test(String(p.id) + " " + String(p.label)))
+                    ids.push(p.id)
+            if (!ids.length) {
+                root.marketFalhar(qsTr("O Pexels e o Pixabay não estão disponíveis na loja agora."))
+                return
+            }
+            root.marketFila = ids
+            root.marketFase = "buscando"
+        }
+        if (root.marketFase !== "buscando" || Market.searching)
+            return
+        if (!root.marketFila.length) {
+            root.marketFase = ""
+            root.estado = ""
+            if (!root.marketOpcoes.length)
+                root.aviso = root.marketErro.length ? root.marketErro : qsTr("Nada encontrado. Tente outra sugestão.")
+            return
+        }
+        Market.activeProviderId = root.marketFila[0]
+        root.marketFila = root.marketFila.slice(1)
+        root.marketAguardando = true
+        Market.search(root.consultaAtual, {})
+        if (!Market.searching)
+            Qt.callLater(root.marketColher)
+    }
+
+    function marketColher() {
+        if (!root.marketAguardando || Market.searching)
+            return
+        root.marketAguardando = false
+        if (root.marketFase !== "buscando")
+            return
+        if (Market.searchError.length) {
+            root.marketErro = Market.searchError
+        } else {
+            let rotulo = Market.activeProviderId
+            for (const p of Market.providers)
+                if (p.id === Market.activeProviderId)
+                    rotulo = p.label
+            const lista = []
+            for (const it of Market.items) {
+                const imagem = (it.media_kind || it.type) === "image"
+                lista.push({
+                    id: it.id,
+                    miniatura: it.thumb_url || "",
+                    fonte: rotulo,
+                    duracao: Number(it.duration_ms || 0) / 1000,
+                    tipo: imagem ? "imagem" : "video",
+                    licenca: it.license ? (it.license.name || it.license.attribution || "") : "",
+                    titulo: it.title || "",
+                    baixavel: it.downloadable !== false,
+                    market: true
+                })
+            }
+            root.marketListas = root.marketListas.concat([lista])
+            root.marketOpcoes = root.marketIntercalar(root.marketListas)
+        }
+        root.marketPasso()
+    }
+
+    function baixarMarket() {
+        const item = root.escolhida
+        if (!item.baixavel) {
+            root.aviso = qsTr("O limite diário de downloads desta fonte acabou. Tente outra mídia ou volte amanhã.")
+            return
+        }
+        root.estado = "baixando"
+        root.marketBaixando = item.id
+        Market.download(item.id, "", EditorState.fileUrl(root.pastaTrocas()), item.titulo,
+                        root.tipo === "imagem" ? "image" : "video")
     }
 
     function buscarYoutube(termo) {
@@ -125,8 +380,12 @@ Popup {
         }
         if (!root.escolhida)
             return
-        root.estado = "baixando"
         root.aviso = ""
+        if (root.escolhida.market) {
+            root.baixarMarket()
+            return
+        }
+        root.estado = "baixando"
         pedir("midia_baixar", {
             item: root.escolhida,
             pasta: root.pastaTrocas(),
@@ -163,16 +422,41 @@ Popup {
             const acao = reqId.split(":")[0]
             if (root.pedidos[acao] !== reqId)
                 return
+            if (acao === "midia_youtube_previa") {
+                if (!root.visible || !root.ytEscolhido)
+                    return
+                if (!ok || !data.url) {
+                    root.falharPreviaYoutube()
+                    return
+                }
+                root.ytDuracao = Number(data.duracao) || root.ytDuracao
+                root.ytPreviaIniciando = true
+                playerYt.source = data.url
+                return
+            }
             if (acao === "midia_consultas") {
                 root.sugerindo = false
-                if (!ok)
+                if (!ok) {
+                    if (data.semStudio)
+                        root.studio = "nao"
                     return
+                }
+                root.studio = "sim"
                 root.consultas = (data.consultas || []).map(c => c.termo)
                 if (root.consultas.length && campoBusca.text.length === 0)
                     root.buscar(root.consultas[0])
                 if (root.consultas.length && campoYt.text.length === 0)
                     campoYt.text = root.consultas[0]
                 return
+            }
+            if (acao === "midia_buscar") {
+                if (!ok && data.semStudio) {
+                    root.studio = "nao"
+                    root.buscarMarket(root.consultaAtual)
+                    return
+                }
+                if (ok)
+                    root.studio = "sim"
             }
             root.estado = ""
             if (!ok) {
@@ -192,6 +476,38 @@ Popup {
             } else if (acao === "midia_youtube_trecho") {
                 root.ytTrecho = data
             }
+        }
+    }
+
+    Connections {
+        target: Market
+        function onSearchingChanged() {
+            if (!Market.searching && root.marketAguardando)
+                Qt.callLater(root.marketColher)
+        }
+        // Depois que o Market termina de aplicar o catálogo (ele escolhe o tipo ativo por conta própria).
+        function onCatalogLoadingChanged() {
+            if (!Market.catalogLoading && root.marketFase === "catalogo")
+                Qt.callLater(root.marketPasso)
+        }
+        function onDownloadImported(itemId, name) {
+            if (itemId !== root.marketBaixando)
+                return
+            root.marketBaixando = ""
+            for (const d of Market.downloads)
+                if (d.itemId === itemId && d.filePath.length) {
+                    root.aplicar(d.filePath)
+                    return
+                }
+            root.estado = ""
+            root.aviso = qsTr("O arquivo baixado não foi encontrado.")
+        }
+        function onDownloadFailed(itemId, code, message) {
+            if (itemId !== root.marketBaixando)
+                return
+            root.marketBaixando = ""
+            root.estado = ""
+            root.aviso = message
         }
     }
 
@@ -367,6 +683,53 @@ Popup {
 
             Sugestoes { acao: (t) => root.buscar(t) }
 
+            Text {
+                visible: root.studio !== "?"
+                width: parent.width
+                elide: Text.ElideRight
+                text: root.semStudio
+                      ? qsTr("Sem o Nardoto Studio: Pexels e Pixabay. Abra o Studio para buscar em mais de 30 acervos.")
+                      : qsTr("Buscando em todos os acervos do Nardoto Studio")
+                color: Theme.mutedForeground
+                font.family: Theme.fontFamily
+                font.pixelSize: Math.round(Theme.fontSizeXs)
+            }
+
+            // Termos da loja de mídia do Editor, aceitos uma única vez.
+            Rectangle {
+                visible: root.semStudio && Market.configured && !Market.consented
+                width: parent.width
+                height: termosLinha.implicitHeight + 16
+                radius: 8
+                color: Theme.panelBackground
+                Row {
+                    id: termosLinha
+                    x: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - 20
+                    spacing: 12
+                    Text {
+                        width: parent.width - aceitarBtn.width - parent.spacing
+                        anchors.verticalCenter: parent.verticalCenter
+                        wrapMode: Text.WordWrap
+                        text: qsTr("Os bancos grátis vêm de terceiros, com limite diário de downloads e sem garantia de disponibilidade. Você é responsável por ter o direito de usar o que baixar.")
+                        color: Theme.foreground
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Math.round(Theme.fontSizeXs)
+                    }
+                    ThemedButton {
+                        id: aceitarBtn
+                        anchors.verticalCenter: parent.verticalCenter
+                        variant: "primary"
+                        text: qsTr("Entendi, buscar")
+                        onClicked: {
+                            Market.acceptTerms()
+                            root.buscar()
+                        }
+                    }
+                }
+            }
+
             GridView {
                 id: grade
                 width: parent.width
@@ -374,7 +737,7 @@ Popup {
                 clip: true
                 cellWidth: Math.floor(width / 4)
                 cellHeight: 156
-                model: root.opcoes
+                model: root.semStudio ? root.marketOpcoes : root.opcoes
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
@@ -537,7 +900,6 @@ Popup {
                             onTapped: {
                                 root.ytEscolhido = yt.modelData
                                 root.ytTrecho = null
-                                inicioYt.value = Math.min(30, Math.max(0, yt.modelData.duracao - 10))
                             }
                         }
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
@@ -545,68 +907,165 @@ Popup {
                 }
 
                 // Escolha do pedaço (até 8 s)
-                Column {
+                Flickable {
+                    id: escolhaYt
                     width: parent.width - listaYt.width - parent.spacing
-                    spacing: 8
+                    height: parent.height
+                    contentHeight: controlesYt.height
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
                     visible: root.ytEscolhido !== null
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: qsTr("Escolha o pedaço (máximo 8 s)")
-                        color: Theme.foreground
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeSm
-                        font.weight: Font.Bold
-                    }
-                    Text {
-                        text: qsTr("Começa em %1 do vídeo").arg(root.relogio(inicioYt.value))
-                        color: Theme.mutedForeground
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeXs
-                    }
-                    Slider {
-                        id: inicioYt
-                        width: parent.width
-                        from: 0
-                        to: root.ytEscolhido ? Math.max(1, root.ytEscolhido.duracao - 1) : 1
-                        stepSize: 1
-                    }
-                    Text {
-                        text: qsTr("Duração do pedaço: %1 s").arg(durYt.value)
-                        color: Theme.mutedForeground
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeXs
-                    }
-                    Slider {
-                        id: durYt
-                        width: parent.width
-                        from: 1
-                        to: 8
-                        stepSize: 1
-                        value: Math.max(1, Math.min(8, Math.round(root.duracaoCena)))
-                    }
-                    ThemedButton {
-                        text: root.estado === "baixando" ? qsTr("Baixando o pedaço...") : qsTr("Ver o pedaço")
-                        glyph: Theme.icons.image
-                        enabled: root.estado === ""
-                        onClicked: root.verPedaco()
-                    }
-                    Image {
-                        visible: root.ytTrecho !== null && (root.ytTrecho.quadros || "").length > 0
-                        width: parent.width
-                        height: width / 4 * 9 / 16
-                        source: root.ytTrecho && root.ytTrecho.quadros ? EditorState.fileUrl(root.ytTrecho.quadros) : ""
-                        fillMode: Image.PreserveAspectFit
-                        cache: false
-                    }
-                    Text {
-                        visible: root.ytTrecho !== null
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        text: qsTr("Pedaço baixado. Se gostou, clique em \"Usar este pedaço\".")
-                        color: "#9be37d"
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeXs
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    Column {
+                        id: controlesYt
+                        width: escolhaYt.width - 8
+                        spacing: 6
+
+                        Rectangle {
+                            width: parent.width
+                            height: width * 9 / 16
+                            color: Theme.panelBackground
+                            clip: true
+                            Image {
+                                anchors.fill: parent
+                                visible: root.ytPreviaCarregando || root.ytPreviaErro
+                                source: root.ytEscolhido ? root.ytEscolhido.miniatura : ""
+                                fillMode: Image.PreserveAspectFit
+                                asynchronous: true
+                            }
+                            VideoOutput {
+                                id: videoYt
+                                anchors.fill: parent
+                                visible: !root.ytPreviaCarregando && !root.ytPreviaErro
+                                fillMode: VideoOutput.PreserveAspectFit
+                            }
+                            Rectangle {
+                                anchors.fill: parent
+                                visible: root.ytPreviaCarregando || root.ytPreviaErro
+                                color: Theme.scrimStrong
+                                Text {
+                                    anchors.centerIn: parent
+                                    width: parent.width - 24
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.WordWrap
+                                    text: root.ytPreviaErro ? qsTr("Prévia indisponível para este vídeo")
+                                                           : qsTr("Carregando prévia...")
+                                    color: Theme.onMedia
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Math.round(Theme.fontSizeSm)
+                                }
+                            }
+                        }
+                        Row {
+                            width: parent.width
+                            spacing: 6
+                            ThemedButton {
+                                variant: "primary"
+                                flat: true
+                                text: playerYt.playbackState === MediaPlayer.PlayingState ? qsTr("Pausar") : qsTr("Tocar")
+                                glyph: playerYt.playbackState === MediaPlayer.PlayingState ? Theme.icons.pause : Theme.icons.play
+                                topPadding: 5
+                                bottomPadding: 5
+                                font.pixelSize: Math.round(Theme.fontSizeXs)
+                                enabled: !root.ytPreviaCarregando && !root.ytPreviaErro && playerYt.seekable
+                                onClicked: {
+                                    if (playerYt.playbackState === MediaPlayer.PlayingState) {
+                                        playerYt.pause()
+                                    } else {
+                                        if (playerYt.position < root.ytInicioMs || playerYt.position >= root.ytFimMs)
+                                            playerYt.position = root.ytInicioMs
+                                        playerYt.play()
+                                    }
+                                }
+                            }
+                            ThemedButton {
+                                variant: "ghost"
+                                flat: true
+                                text: audioYt.muted ? qsTr("Sem som") : qsTr("Com som")
+                                tooltip: audioYt.muted ? qsTr("Ativar som") : qsTr("Silenciar")
+                                topPadding: 5
+                                bottomPadding: 5
+                                leftPadding: 8
+                                rightPadding: 8
+                                font.pixelSize: Math.round(Theme.fontSizeXs)
+                                onClicked: audioYt.muted = !audioYt.muted
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.relogio(playerYt.position / 1000) + " / " + root.relogio(root.ytDuracao)
+                                color: Theme.mutedForeground
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Math.round(Theme.fontSizeXs)
+                            }
+                        }
+                        Text {
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            text: qsTr("Escolha o pedaço (máximo 8 s)")
+                            color: Theme.foreground
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeSm
+                            font.weight: Font.Bold
+                        }
+                        Text {
+                            text: qsTr("Começa em %1 do vídeo").arg(root.relogio(inicioYt.value))
+                            color: Theme.mutedForeground
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeXs
+                        }
+                        Slider {
+                            id: inicioYt
+                            width: parent.width
+                            from: 0
+                            to: Math.max(1, root.ytDuracao - 1)
+                            stepSize: 1
+                            onMoved: {
+                                if (playerYt.seekable)
+                                    playerYt.position = root.ytInicioMs
+                            }
+                        }
+                        Text {
+                            text: qsTr("Duração do pedaço: %1 s").arg(durYt.value)
+                            color: Theme.mutedForeground
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeXs
+                        }
+                        Slider {
+                            id: durYt
+                            width: parent.width
+                            from: 1
+                            to: 8
+                            stepSize: 1
+                            value: Math.max(1, Math.min(8, Math.round(root.duracaoCena)))
+                            onMoved: {
+                                if (playerYt.seekable && playerYt.position >= root.ytFimMs)
+                                    playerYt.position = root.ytInicioMs
+                            }
+                        }
+                        ThemedButton {
+                            text: root.estado === "baixando" ? qsTr("Baixando o pedaço...") : qsTr("Ver o pedaço")
+                            glyph: Theme.icons.image
+                            enabled: root.estado === ""
+                            onClicked: root.verPedaco()
+                        }
+                        Image {
+                            visible: root.ytTrecho !== null && (root.ytTrecho.quadros || "").length > 0
+                            width: parent.width
+                            height: width / 4 * 9 / 16
+                            source: root.ytTrecho && root.ytTrecho.quadros ? EditorState.fileUrl(root.ytTrecho.quadros) : ""
+                            fillMode: Image.PreserveAspectFit
+                            cache: false
+                        }
+                        Text {
+                            visible: root.ytTrecho !== null
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            text: qsTr("Pedaço baixado. Se gostou, clique em \"Usar este pedaço\".")
+                            color: "#9be37d"
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeXs
+                        }
                     }
                 }
             }

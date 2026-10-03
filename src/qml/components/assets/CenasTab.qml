@@ -106,15 +106,17 @@ Item {
                 radius: Theme.radiusMd
                 color: sel ? "#2a1a12" : (hover.hovered ? Theme.accent : Theme.panelBackground)
 
+                // Window.window lido no próprio item: dentro do TapHandler (que não é Item) ele vem vazio.
+                function trocar() {
+                    root.irPara(linha.modelData)
+                    const janela = linha.Window.window
+                    if (janela && typeof janela.abrirTrocaDoClipe === "function")
+                        janela.abrirTrocaDoClipe(linha.modelData.track, linha.modelData.index)
+                }
+
                 HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
                 // Clicar na cena já leva até ela e abre a troca: é para isso que a lista existe.
-                TapHandler {
-                    onTapped: {
-                        root.irPara(linha.modelData)
-                        if (Window.window && typeof Window.window.abrirTrocaDoClipe === "function")
-                            Window.window.abrirTrocaDoClipe(linha.modelData.track, linha.modelData.index)
-                    }
-                }
+                TapHandler { onTapped: linha.trocar() }
 
                 Row {
                     id: corpo
@@ -190,12 +192,21 @@ Item {
                             maximumLineCount: linha.sel ? 6 : 2
                             elide: Text.ElideRight
                         }
-                        Text {
-                            visible: hover.hovered
-                            text: qsTr("Clique para trocar a mídia desta cena")
-                            color: Theme.primary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 11
+                        Rectangle {
+                            width: tTrocar.implicitWidth + 16
+                            height: 22
+                            radius: 4
+                            color: botaoTrocar.hovered ? Theme.primary : "#3a2418"
+                            HoverHandler { id: botaoTrocar; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: linha.trocar() }
+                            Text {
+                                id: tTrocar
+                                anchors.centerIn: parent
+                                text: qsTr("Trocar mídia")
+                                color: botaoTrocar.hovered ? "white" : Theme.primary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 11
+                            }
                         }
                     }
                 }
