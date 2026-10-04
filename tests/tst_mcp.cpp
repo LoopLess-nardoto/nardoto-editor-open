@@ -143,6 +143,13 @@ private slots:
     void keyframeWritesStayInsideTheClip();
     void normalizeVolumeIsRelativeAndIdempotent();
     void duckUnderIsIdempotentAndKeepsTheEnvelope();
+    void duckUnderMinGapIgnoresShortPauses();
+    void assembleVideoForwardsDuckMinGap();
+    void assembleVideoMediaStartsSetsEachSlice();
+    void assembleVideoMediaStartsRejectsBadLists();
+    void assembleVideoMediaStartsRejectsShortSlices();
+    void assembleVideoMediaStartsRejectsVideoShorterThanSlice();
+    void assembleVideoMediaStartsIgnoresCuesWithoutSubtitles();
     void audioReadOpsAreNotUndoable();
     void armedBeatGridMakesMoveClipSnap();
     void undoExemptOpsMatchCatalogLimitations();
@@ -296,7 +303,9 @@ void McpTest::catalogOpsIncludeWhen()
     QVERIFY(!compact.contains(QStringLiteral("guide")));
     QVERIFY(!compact.contains(QStringLiteral("hint")));
     // Budgets, not targets: ~270 ops with one-line "when" hints. Raise only with new ops.
-    QVERIFY(QJsonDocument(compact).toJson(QJsonDocument::Compact).size() < 19500);
+    const qsizetype tamanhoCompacto = QJsonDocument(compact).toJson(QJsonDocument::Compact).size();
+    // 19500 -> 20000 em 2026-10-03: troca de mídia, Market e pedidos do Studio somaram ops (19514).
+    QVERIFY2(tamanhoCompacto < 20000, qPrintable(QStringLiteral("catálogo compacto: %1 bytes").arg(tamanhoCompacto)));
     QVERIFY(QJsonDocument(drift::mcp::catalogPayload({{QStringLiteral("brief"), true}}))
                 .toJson(QJsonDocument::Compact).size() < 10000);
 
@@ -1364,6 +1373,41 @@ bool writeHalfSilentTone(const QString &path)
                       QStringLiteral("pcm_s16le"), path});
 }
 
+QStringList writeTestImages(const QTemporaryDir &dir, int count)
+{
+    QStringList paths;
+    for (int i = 0; i < count; ++i) {
+        QImage img(320, 180, QImage::Format_RGB32);
+        img.fill(QColor(60 + 50 * i, 40, 120));
+        const QString p = dir.filePath(QStringLiteral("%1.png").arg(i + 1));
+        if (!img.save(p))
+            return {};
+        paths.append(p);
+    }
+    return paths;
+}
+
+// Fala em três blocos separados por duas pausas de silêncio digital: 2 s de tom, pausa de 0,5 s,
+// 1,5 s de tom, pausa de 2 s, 1,5 s de tom (7,5 s no total).
+bool writeSpeechWithTwoPauses(const QString &path)
+{
+    return runFfmpeg({QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                      QStringLiteral("sine=frequency=440:sample_rate=48000:duration=2"),
+                      QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                      QStringLiteral("anullsrc=r=48000:cl=mono:d=0.5"),
+                      QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                      QStringLiteral("sine=frequency=440:sample_rate=48000:duration=1.5"),
+                      QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                      QStringLiteral("anullsrc=r=48000:cl=mono:d=2"),
+                      QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                      QStringLiteral("sine=frequency=440:sample_rate=48000:duration=1.5"),
+                      QStringLiteral("-filter_complex"),
+                      QStringLiteral("[0:a]volume=8[a];[2:a]volume=8[b];[4:a]volume=8[c];"
+                                     "[a][1:a][b][3:a][c]concat=n=5:v=0:a=1[out]"),
+                      QStringLiteral("-map"), QStringLiteral("[out]"), QStringLiteral("-c:a"),
+                      QStringLiteral("pcm_s16le"), path});
+}
+
 // Tone, 1.5 s of silence, tone: a gap in the middle that remove_silence has to cut out.
 bool writeToneGapTone(const QString &path)
 {
@@ -1772,6 +1816,120 @@ void McpTest::duckUnderIsIdempotentAndKeepsTheEnvelope()
                                 .arg(a.value(QStringLiteral("value")).toDouble())
                                 .arg(b.value(QStringLiteral("value")).toDouble())));
     }
+}
+
+// Sem min_gap toda pausa de 0,12 s abre a música (comportamento antigo); com min_gap 1,2 só a
+// pausa longa abre, e a vírgula de 0,5 s continua sob o duck. A resposta devolve o valor aplicado.
+void McpTest::duckUnderMinGapIgnoresShortPauses()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString voice = dir.filePath(QStringLiteral("voice.wav"));
+    QVERIFY(writeSpeechWithTwoPauses(voice));
+    const QString bed = dir.filePath(QStringLiteral("bed.wav"));
+    QVERIFY(runFfmpeg({QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                       QStringLiteral("sine=frequency=220:sample_rate=48000:duration=14"),
+                       QStringLiteral("-c:a"), QStringLiteral("pcm_s16le"), bed}));
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+
+    const QString music = importAndPlace(dispatcher, bed, 0.0);
+    QVERIFY(!music.isEmpty());
+    const QJsonObject importedVoice = dispatcher.applyOne(
+        QStringLiteral("import_media"), {{QStringLiteral("paths"), QJsonArray{voice}}});
+    QVERIFY2(importedVoice.value(QStringLiteral("ok")).toBool(),
+             qPrintable(QJsonDocument(importedVoice).toJson(QJsonDocument::Compact)));
+    // Fala em 2..4 s, pausa de 0,5 s (4..4,5), fala em 4,5..6 s, pausa de 2 s (6..8), fala em 8..9,5 s.
+    const QJsonObject placedVoice = dispatcher.applyOne(
+        QStringLiteral("place_clip"),
+        {{QStringLiteral("asset"), QStringLiteral("voice.wav")}, {QStringLiteral("at"), 2.0},
+         {QStringLiteral("new_track"), true}});
+    QVERIFY2(placedVoice.value(QStringLiteral("ok")).toBool(),
+             qPrintable(QJsonDocument(placedVoice).toJson(QJsonDocument::Compact)));
+    const QString speech = placedVoice.value(QStringLiteral("id")).toString();
+
+    const auto duck = [&](const QJsonValue &minGap) {
+        QJsonObject args{{QStringLiteral("clip"), music},
+                         {QStringLiteral("over_clips"), QJsonArray{speech}},
+                         {QStringLiteral("amount"), 0.3}};
+        if (!minGap.isUndefined())
+            args.insert(QStringLiteral("min_gap"), minGap);
+        return dispatcher.applyOne(QStringLiteral("duck_under"), args);
+    };
+    // Conta chaves de volume dentro de [from, to] (margem de 10 ms contra arredondamento).
+    const auto keysBetween = [&](double from, double to) {
+        const QJsonObject keys = dispatcher.applyOne(
+            QStringLiteral("list_keyframes"),
+            {{QStringLiteral("clip"), music}, {QStringLiteral("prop"), QStringLiteral("volume")}});
+        int count = 0;
+        for (const QJsonValue &k : keys.value(QStringLiteral("keys")).toArray()) {
+            const double at = k.toObject().value(QStringLiteral("seconds")).toDouble();
+            if (at >= from - 0.01 && at <= to + 0.01)
+                ++count;
+        }
+        return count;
+    };
+
+    // Sem min_gap: três trechos de fala, e a pausa de 0,5 s tem chaves (a música sobe e desce).
+    const QJsonObject legacy = duck(QJsonValue(QJsonValue::Undefined));
+    QVERIFY2(legacy.value(QStringLiteral("ok")).toBool(),
+             qPrintable(QJsonDocument(legacy).toJson(QJsonDocument::Compact)));
+    QCOMPARE(legacy.value(QStringLiteral("speech")).toInt(), 3);
+    QVERIFY(qAbs(legacy.value(QStringLiteral("min_gap")).toDouble() - 0.12) < 1e-9);
+    QVERIFY2(keysBetween(4.05, 4.45) > 0, "sem min_gap a pausa de 0,5 s deveria ter chaves");
+
+    // Com min_gap 1,2: a fala de 2..6 s vira um trecho só, sem chaves na pausa de 0,5 s, e as
+    // chaves da pausa de 2 s continuam lá. A segunda passada limpa as chaves da primeira.
+    const QJsonObject gapped = duck(1.2);
+    QVERIFY2(gapped.value(QStringLiteral("ok")).toBool(),
+             qPrintable(QJsonDocument(gapped).toJson(QJsonDocument::Compact)));
+    QCOMPARE(gapped.value(QStringLiteral("speech")).toInt(), 2);
+    QVERIFY(qAbs(gapped.value(QStringLiteral("min_gap")).toDouble() - 1.2) < 1e-9);
+    QCOMPARE(keysBetween(4.0, 4.5), 0);
+    QVERIFY2(keysBetween(6.0, 8.0) > 0, "a pausa de 2 s deveria ter chaves");
+
+    // Fora da faixa 0,12..5 o valor é limitado, e a resposta mostra o que foi aplicado.
+    QVERIFY(qAbs(duck(99.0).value(QStringLiteral("min_gap")).toDouble() - 5.0) < 1e-9);
+    QVERIFY(qAbs(duck(0.0).value(QStringLiteral("min_gap")).toDouble() - 0.12) < 1e-9);
+}
+
+// duck_min_gap do assemble_video chega ao duck e volta no resultado; sem ele, 0,12.
+void McpTest::assembleVideoForwardsDuckMinGap()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate a narration");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString narracao = dir.filePath(QStringLiteral("narracao.wav"));
+    QVERIFY(writeSpeechWithTwoPauses(narracao));
+    const QString musica = dir.filePath(QStringLiteral("musica.wav"));
+    QVERIFY(writeHalfSilentTone(musica));
+    const QStringList imagens = writeTestImages(dir, 2);
+    QCOMPARE(imagens.size(), 2);
+
+    const auto montar = [&](const QJsonValue &minGap) {
+        AssetLibrary library;
+        AppController state(&library);
+        drift::mcp::McpDispatcher dispatcher(&state);
+        QJsonObject args{{QStringLiteral("media"), QJsonArray::fromStringList(imagens)},
+                         {QStringLiteral("narration"), narracao},
+                         {QStringLiteral("music"), musica}};
+        if (!minGap.isUndefined())
+            args.insert(QStringLiteral("duck_min_gap"), minGap);
+        return dispatcher.applyOne(QStringLiteral("assemble_video"), args);
+    };
+
+    const QJsonObject padrao = montar(QJsonValue(QJsonValue::Undefined));
+    QVERIFY2(padrao.value(QStringLiteral("ok")).toBool(), QJsonDocument(padrao).toJson().constData());
+    QVERIFY(qAbs(padrao.value(QStringLiteral("duck_min_gap")).toDouble() - 0.12) < 1e-9);
+
+    const QJsonObject longo = montar(1.2);
+    QVERIFY2(longo.value(QStringLiteral("ok")).toBool(), QJsonDocument(longo).toJson().constData());
+    QVERIFY(qAbs(longo.value(QStringLiteral("duck_min_gap")).toDouble() - 1.2) < 1e-9);
 }
 
 void McpTest::normalizeVolumeIsRelativeAndIdempotent()
@@ -5991,20 +6149,6 @@ void McpTest::getWaveformImageReportsWords()
 
 namespace {
 
-QStringList writeTestImages(const QTemporaryDir &dir, int count)
-{
-    QStringList paths;
-    for (int i = 0; i < count; ++i) {
-        QImage img(320, 180, QImage::Format_RGB32);
-        img.fill(QColor(60 + 50 * i, 40, 120));
-        const QString p = dir.filePath(QStringLiteral("%1.png").arg(i + 1));
-        if (!img.save(p))
-            return {};
-        paths.append(p);
-    }
-    return paths;
-}
-
 bool writeTestSrt(const QString &path)
 {
     QFile f(path);
@@ -6199,6 +6343,246 @@ void McpTest::assembleVideoKeepsShortVideosNatural()
     QVERIFY(tracks.value(QStringLiteral("videos")).toInt() >= 0);
     QVERIFY(tracks.value(QStringLiteral("images")).toInt() != tracks.value(QStringLiteral("videos")).toInt());
     QVERIFY(tracks.value(QStringLiteral("videos")).toInt() < tracks.value(QStringLiteral("narration")).toInt());
+}
+
+// media_starts: cada mídia começa no instante dado e dura até o início da próxima; sem o
+// campo, as fatias saem iguais como antes. Alvo de 6 s (narração de cliques).
+void McpTest::assembleVideoMediaStartsSetsEachSlice()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate a narration");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString narracao = dir.filePath(QStringLiteral("narracao.wav"));
+    QVERIFY(writeClickTrack(narracao, 6));
+    const QStringList imagens = writeTestImages(dir, 3);
+    QCOMPARE(imagens.size(), 3);
+    const QString srt = dir.filePath(QStringLiteral("narracao.srt"));
+    QVERIFY(writeTestSrt(srt));
+
+    const auto montar = [&](const QJsonValue &inicios, bool comCues) {
+        AssetLibrary library;
+        AppController state(&library);
+        drift::mcp::McpDispatcher dispatcher(&state);
+        QJsonObject args{{QStringLiteral("media"), QJsonArray::fromStringList(imagens)},
+                         {QStringLiteral("narration"), narracao},
+                         {QStringLiteral("motion"), QStringLiteral("none")}};
+        if (comCues) {
+            args.insert(QStringLiteral("subtitles"), srt);
+            args.insert(QStringLiteral("media_mode"), QStringLiteral("cues"));
+        }
+        if (!inicios.isUndefined())
+            args.insert(QStringLiteral("media_starts"), inicios);
+        return dispatcher.applyOne(QStringLiteral("assemble_video"), args);
+    };
+    const auto duracoes = [](const QJsonObject &r) {
+        QList<double> d;
+        for (const QJsonValue &c : r.value(QStringLiteral("clips")).toArray())
+            d.append(c.toObject().value(QStringLiteral("duration")).toDouble());
+        return d;
+    };
+
+    // [0, 1, 4] com alvo de 6 s: durações [1, 3, 2]. O modo cues, que moveria os cortes para
+    // 2,2 e 4,1, é ignorado.
+    const QJsonObject r = montar(QJsonArray{0, 1, 4}, true);
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), QJsonDocument(r).toJson().constData());
+    QVERIFY(r.value(QStringLiteral("media_starts_aplicado")).toBool());
+    const QList<double> d = duracoes(r);
+    QCOMPARE(d.size(), 3);
+    QVERIFY(qAbs(d.at(0) - 1.0) < 0.05);
+    QVERIFY(qAbs(d.at(1) - 3.0) < 0.05);
+    QVERIFY(qAbs(d.at(2) - 2.0) < 0.05);
+    const QJsonArray clips = r.value(QStringLiteral("clips")).toArray();
+    QVERIFY(qAbs(clips.at(1).toObject().value(QStringLiteral("start")).toDouble() - 1.0) < 0.05);
+    QVERIFY(qAbs(clips.at(2).toObject().value(QStringLiteral("start")).toDouble() - 4.0) < 0.05);
+
+    // Sem o campo: fatias iguais de 2 s e nenhuma marca de media_starts.
+    const QJsonObject igual = montar(QJsonValue(QJsonValue::Undefined), false);
+    QVERIFY2(igual.value(QStringLiteral("ok")).toBool(), QJsonDocument(igual).toJson().constData());
+    QVERIFY(!igual.value(QStringLiteral("media_starts_aplicado")).toBool());
+    const QList<double> di = duracoes(igual);
+    QCOMPARE(di.size(), 3);
+    for (const double v : di)
+        QVERIFY(qAbs(v - 2.0) < 0.05);
+
+    // Início da última mídia depois do fim da narração: erro bad_args vindo do passo da montagem.
+    const QJsonObject alem = montar(QJsonArray{0, 1, 7}, false);
+    QCOMPARE(alem.value(QStringLiteral("ok")).toBool(), false);
+    QCOMPARE(alem.value(QStringLiteral("failed")).toObject().value(QStringLiteral("error")).toString(),
+             QStringLiteral("bad_args"));
+}
+
+// Lista fora de ordem, de tamanho errado, sem 0 no começo ou com não-número: bad_args antes de
+// encostar no projeto.
+void McpTest::assembleVideoMediaStartsRejectsBadLists()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QStringList imagens = writeTestImages(dir, 3);
+    QCOMPARE(imagens.size(), 3);
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    const int trilhasAntes = state.tracks().size();
+
+    // Ordem, tamanho e primeiro valor são conferidos pelo dispatcher (bad_args). Tipo errado
+    // (texto no lugar da lista ou de um número) já barra no esquema do catálogo (type_mismatch).
+    const QList<QJsonValue> ruins = {
+        QJsonArray{0, 4, 1},   // fora de ordem
+        QJsonArray{0, 1, 1},   // repetido
+        QJsonArray{0, 1},      // menos valores que mídias
+        QJsonArray{0, 1, 2, 3}, // mais valores que mídias
+        QJsonArray{1, 2, 3}};  // não começa em 0
+    const QList<QJsonValue> tipoErrado = {
+        QJsonArray{0, QStringLiteral("a"), 3}, // valor que não é número
+        QJsonValue(QStringLiteral("0,1,4"))};  // não é lista
+    const auto tentar = [&](const QJsonValue &lista) {
+        return dispatcher.applyOne(
+            QStringLiteral("assemble_video"),
+            {{QStringLiteral("media"), QJsonArray::fromStringList(imagens)},
+             {QStringLiteral("media_starts"), lista}});
+    };
+    for (const QJsonValue &ruim : ruins) {
+        const QJsonObject r = tentar(ruim);
+        QCOMPARE(r.value(QStringLiteral("ok")).toBool(), false);
+        QCOMPARE(r.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+    }
+    for (const QJsonValue &ruim : tipoErrado) {
+        const QJsonObject r = tentar(ruim);
+        QCOMPARE(r.value(QStringLiteral("ok")).toBool(), false);
+        const QString erro = r.value(QStringLiteral("error")).toString();
+        QVERIFY2(erro == QLatin1String("bad_args") || erro == QLatin1String("type_mismatch"), qPrintable(erro));
+    }
+    QCOMPARE(state.tracks().size(), trilhasAntes);
+    QCOMPARE(library.count(), 0);
+    QCOMPARE(undoDepth(dispatcher), 0);
+}
+
+// O Editor não faz clipe de menos de 0,1 s: intervalo menor entre inícios, ou última fatia menor
+// que isso, vira bad_args em vez de uma montagem com cortes deslocados e sucesso falso.
+void McpTest::assembleVideoMediaStartsRejectsShortSlices()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QStringList imagens = writeTestImages(dir, 3);
+    QCOMPARE(imagens.size(), 3);
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    const int trilhasAntes = state.tracks().size();
+
+    // Intervalo do meio de 0,05 s: barrado antes de importar qualquer coisa.
+    const QJsonObject curto = dispatcher.applyOne(
+        QStringLiteral("assemble_video"),
+        {{QStringLiteral("media"), QJsonArray::fromStringList(imagens)},
+         {QStringLiteral("media_starts"), QJsonArray{0, 0.05, 4}},
+         {QStringLiteral("duration"), 6},
+         {QStringLiteral("motion"), QStringLiteral("none")}});
+    QCOMPARE(curto.value(QStringLiteral("ok")).toBool(), false);
+    QCOMPARE(curto.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+    QVERIFY(!curto.contains(QStringLiteral("media_starts_aplicado")));
+    QCOMPARE(state.tracks().size(), trilhasAntes);
+    QCOMPARE(library.count(), 0);
+    QCOMPARE(undoDepth(dispatcher), 0);
+
+    // Última fatia de 0,05 s (início em 5,95 s com alvo de 6 s): barrado antes de criar trilha ou clipe.
+    const QJsonObject fim = dispatcher.applyOne(
+        QStringLiteral("assemble_video"),
+        {{QStringLiteral("media"), QJsonArray::fromStringList(imagens)},
+         {QStringLiteral("media_starts"), QJsonArray{0, 1, 5.95}},
+         {QStringLiteral("duration"), 6},
+         {QStringLiteral("motion"), QStringLiteral("none")}});
+    QCOMPARE(fim.value(QStringLiteral("ok")).toBool(), false);
+    QCOMPARE(fim.value(QStringLiteral("failed")).toObject().value(QStringLiteral("error")).toString(),
+             QStringLiteral("bad_args"));
+    QCOMPARE(state.tracks().size(), trilhasAntes);
+    QCOMPARE(dispatcher.inspect({}).value(QStringLiteral("clips")).toInt(), 0);
+}
+
+// Imagem, vídeo de 1 s, imagem com [0, 1, 4] e alvo de 6 s deixaria 2 s sem mídia entre 2 e 4 s:
+// falha com bad_args em vez de sucesso. Com [0, 1, 2] o vídeo preenche a fatia e não há vão.
+void McpTest::assembleVideoMediaStartsRejectsVideoShorterThanSlice()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate fixtures");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString narracao = dir.filePath(QStringLiteral("narracao.wav"));
+    QVERIFY(writeClickTrack(narracao, 6));
+    const QString video = dir.filePath(QStringLiteral("curto.mp4"));
+    QVERIFY(writeShortVideo(video));
+    const QStringList imagens = writeTestImages(dir, 2);
+    QCOMPARE(imagens.size(), 2);
+
+    const auto montar = [&](AppController &state, const QJsonArray &inicios) {
+        drift::mcp::McpDispatcher dispatcher(&state);
+        return dispatcher.applyOne(
+            QStringLiteral("assemble_video"),
+            {{QStringLiteral("media"), QJsonArray{imagens.at(0), video, imagens.at(1)}},
+             {QStringLiteral("narration"), narracao},
+             {QStringLiteral("media_starts"), inicios},
+             {QStringLiteral("motion"), QStringLiteral("none")}});
+    };
+
+    {
+        AssetLibrary library;
+        AppController state(&library);
+        const QJsonObject r = montar(state, QJsonArray{0, 1, 4});
+        QCOMPARE(r.value(QStringLiteral("ok")).toBool(), false);
+        QCOMPARE(r.value(QStringLiteral("failed")).toObject().value(QStringLiteral("error")).toString(),
+                 QStringLiteral("bad_args"));
+        drift::mcp::McpDispatcher leitor(&state);
+        QCOMPARE(leitor.inspect({}).value(QStringLiteral("clips")).toInt(), 0);
+    }
+    {
+        AssetLibrary library;
+        AppController state(&library);
+        const QJsonObject r = montar(state, QJsonArray{0, 1, 2});
+        QVERIFY2(r.value(QStringLiteral("ok")).toBool(), QJsonDocument(r).toJson().constData());
+        const QJsonArray clips = r.value(QStringLiteral("clips")).toArray();
+        QCOMPARE(clips.size(), 3);
+        // Cada mídia começa onde a anterior termina: nenhum vão e nenhuma sobreposição.
+        double fim = 0;
+        for (const QJsonValue &c : clips) {
+            const QJsonObject o = c.toObject();
+            QVERIFY(qAbs(o.value(QStringLiteral("start")).toDouble() - fim) < 0.05);
+            fim = o.value(QStringLiteral("start")).toDouble() + o.value(QStringLiteral("duration")).toDouble();
+        }
+        QVERIFY(qAbs(fim - 6.0) < 0.1);
+    }
+}
+
+// media_starts torna o modo cues irrelevante: "cues" sem legenda não pode falhar, e a montagem
+// sai pelos inícios. Sem media_starts, "cues" continua exigindo legenda.
+void McpTest::assembleVideoMediaStartsIgnoresCuesWithoutSubtitles()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QStringList imagens = writeTestImages(dir, 3);
+    QCOMPARE(imagens.size(), 3);
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    QJsonObject args{{QStringLiteral("media"), QJsonArray::fromStringList(imagens)},
+                     {QStringLiteral("media_mode"), QStringLiteral("cues")},
+                     {QStringLiteral("duration"), 6},
+                     {QStringLiteral("motion"), QStringLiteral("none")}};
+
+    const QJsonObject sem = dispatcher.applyOne(QStringLiteral("assemble_video"), args);
+    QCOMPARE(sem.value(QStringLiteral("ok")).toBool(), false);
+    QCOMPARE(sem.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+
+    args.insert(QStringLiteral("media_starts"), QJsonArray{0, 1, 4});
+    const QJsonObject r = dispatcher.applyOne(QStringLiteral("assemble_video"), args);
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), QJsonDocument(r).toJson().constData());
+    QVERIFY(r.value(QStringLiteral("media_starts_aplicado")).toBool());
+    const QJsonArray clips = r.value(QStringLiteral("clips")).toArray();
+    QCOMPARE(clips.size(), 3);
+    QVERIFY(qAbs(clips.at(1).toObject().value(QStringLiteral("start")).toDouble() - 1.0) < 0.05);
+    QVERIFY(qAbs(clips.at(2).toObject().value(QStringLiteral("start")).toDouble() - 4.0) < 0.05);
 }
 
 // Opt-in: builds a REAL video from real files without touching a running editor, then saves

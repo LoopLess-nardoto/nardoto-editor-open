@@ -312,7 +312,20 @@ function lerCarimbo(bmp, largura, alturaConteudo) {
   return seq;
 }
 
+// O processo de GPU do Chromium as vezes cai no meio do export (exit_code=34, visto
+// no Honda v3) e volta sozinho, mas a pagina offscreen para de pintar ate alguem
+// pedir repaint. Sem a segunda tentativa o export inteiro morria em um quadro.
 async function capturar(c, t) {
+  try {
+    return await capturarUmaVez(c, t);
+  } catch (e) {
+    log(`quadro ${t} falhou (${e.message}); repintando e tentando de novo`);
+    try { c.wc.invalidate(); } catch { /* pagina fechada */ }
+    return capturarUmaVez(c, t);
+  }
+}
+
+async function capturarUmaVez(c, t) {
   const t0 = Date.now();
   // fase 1 (ver preparo.js): decodifica os quadros de video antes de armar
   await c.wc.executeJavaScript(`Promise.resolve(window.__nf.preparar && window.__nf.preparar(${Number(t) || 0}))`, true);
@@ -388,7 +401,8 @@ async function quadroExato(c, t) {
   c.ultExato = t;
   const k = chave(t);
   let img;
-  if (c.cache.has(k)) img = await c.cache.get(k);
+  // ajudante que falhou nao derruba o export: a pagina principal refaz o quadro
+  if (c.cache.has(k)) img = await c.cache.get(k).catch(() => capturar(c, t));
   else img = await capturar(c, t);
   for (const kk of c.cache.keys()) if (kk <= k) c.cache.delete(kk);
   if (c.passo > 0) adiantar(c, t);
@@ -418,10 +432,12 @@ function adiantar(c, t) {
     const livre = c.ajudantes.find((a) => !a.ocupado);
     if (!livre) break;
     livre.ocupado = true;
-    c.cache.set(kj, capturar(livre, tj).finally(() => {
+    const adiantado = capturar(livre, tj).finally(() => {
       livre.ocupado = false;
       adiantar(c, c.ultExato);
-    }));
+    });
+    adiantado.catch(() => {}); // quem usa trata; quadro descartado nao vira rejeicao solta
+    c.cache.set(kj, adiantado);
   }
 }
 

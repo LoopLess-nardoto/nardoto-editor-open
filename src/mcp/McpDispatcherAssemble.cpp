@@ -15,6 +15,7 @@
 #include "core/SrtIO.h"
 #include "core/SubtitleCue.h"
 #include "core/Time.h"
+#include "core/TimelineOps.h"
 #include "models/AppController.h"
 
 #include <QFileInfo>
@@ -31,6 +32,9 @@
 
 namespace drift::mcp {
 namespace {
+
+// Menor clipe que o Editor aceita, em segundos.
+constexpr double kFatiaMinima = static_cast<double>(kMinClipDurationUs) / static_cast<double>(kUsPerSecond);
 
 // Este arquivo é uma continuação do McpDispatcher.cpp; os auxiliares do namespace anônimo de
 // lá não são visíveis aqui, pela mesma razão do McpDispatcherExtended.cpp.
@@ -143,7 +147,42 @@ QJsonObject McpDispatcher::opAssembleVideo(const QJsonObject &args)
         modo = QStringLiteral("sequence");
     if (modo != QLatin1String("sequence") && modo != QLatin1String("cues"))
         return err("bad_args", QStringLiteral("media_mode must be sequence or cues"));
-    if (modo == QLatin1String("cues") && legenda.isEmpty())
+
+    // media_starts: início de cada mídia, em segundos. Com ele, a fatia vai do início da mídia
+    // até o da seguinte e o modo cues não entra (nem exige legenda).
+    QVector<double> inicios;
+    const QJsonValue valorInicios = args.value(QStringLiteral("media_starts"));
+    if (!valorInicios.isUndefined() && !valorInicios.isNull()) {
+        if (!valorInicios.isArray())
+            return err("bad_args", QStringLiteral("media_starts must be an array of seconds"));
+        for (const QJsonValue &v : valorInicios.toArray()) {
+            if (!v.isDouble())
+                return err("bad_args", QStringLiteral("media_starts must contain only numbers"));
+            inicios.append(v.toDouble());
+        }
+        if (inicios.size() != midias.size()) {
+            return err("bad_args", QStringLiteral("media_starts has %1 values but media has %2")
+                                       .arg(inicios.size())
+                                       .arg(midias.size()));
+        }
+        if (std::abs(inicios.first()) > 1e-9)
+            return err("bad_args", QStringLiteral("media_starts must start at 0"));
+        for (int i = 1; i < inicios.size(); ++i) {
+            if (!(inicios[i] > inicios[i - 1])) {
+                return err("bad_args", QStringLiteral("media_starts must be strictly increasing (index %1)").arg(i));
+            }
+            // O Editor não faz clipe de menos de 0,1 s: um intervalo menor deslocaria os cortes
+            // seguintes em vez de respeitá-los.
+            if (inicios[i] - inicios[i - 1] < kFatiaMinima - 1e-6) {
+                return err("bad_args", QStringLiteral("media_starts gap before index %1 is %2 s; the minimum is %3 s")
+                                           .arg(i)
+                                           .arg(inicios[i] - inicios[i - 1], 0, 'f', 3)
+                                           .arg(kFatiaMinima, 0, 'f', 1));
+            }
+        }
+    }
+    const bool porInicios = !inicios.isEmpty();
+    if (modo == QLatin1String("cues") && legenda.isEmpty() && !porInicios)
         return err("bad_args", QStringLiteral("media_mode cues needs subtitles"));
 
     const double duracaoImagem = numero(args.value(QStringLiteral("image_duration")), 5.0);
@@ -168,6 +207,8 @@ QJsonObject McpDispatcher::opAssembleVideo(const QJsonObject &args)
     const bool abaixar = booleano(args.value(QStringLiteral("duck")), !narracao.isEmpty());
     const double quantoAbaixar =
         std::clamp(numero(args.value(QStringLiteral("duck_amount")), 0.3), 0.0, 1.0);
+    const double intervaloDuck =
+        std::clamp(numero(args.value(QStringLiteral("duck_min_gap")), 0.12), 0.12, 5.0);
     const double fadeMusica = std::max(0.0, numero(args.value(QStringLiteral("music_fade_out")), 1.5));
 
     const QJsonObject titulo = args.value(QStringLiteral("title")).toObject();
@@ -278,6 +319,39 @@ QJsonObject McpDispatcher::opAssembleVideo(const QJsonObject &args)
     if (!narracao.isEmpty() && itemNarracao.dur <= 0)
         return falhar(err("import_failed", QStringLiteral("Narration %1 has no duration").arg(itemNarracao.nome)));
 
+    // media_starts: com a duração total já conhecida, confere cada fatia antes de criar trilha ou
+    // clipe. Fatia menor que 0,1 s deslocaria os cortes; vídeo mais curto que a fatia deixaria um
+    // vão sem mídia (o Editor não estica vídeo além da fonte).
+    if (porInicios) {
+        const double alvoPrevio = narracao.isEmpty() ? duracaoExplicita : itemNarracao.dur;
+        for (int i = 0; i < n; ++i) {
+            double fatiaPrevia = 0;
+            if (i + 1 < n)
+                fatiaPrevia = inicios[i + 1] - inicios[i];
+            else if (alvoPrevio > 0)
+                fatiaPrevia = alvoPrevio - inicios[i];
+            else
+                continue;
+            if (fatiaPrevia < kFatiaMinima - 1e-6) {
+                return falhar(err("bad_args", QStringLiteral("media_starts gives %1 a %2 s slice; the minimum is %3 s "
+                                                             "(last start must be at least %3 s before the %4 s target)")
+                                                  .arg(visuais[i].nome)
+                                                  .arg(fatiaPrevia, 0, 'f', 3)
+                                                  .arg(kFatiaMinima, 0, 'f', 1)
+                                                  .arg(alvoPrevio, 0, 'f', 2)));
+            }
+            const Item &v = visuais[i];
+            if (v.tipo == QLatin1String("video") && v.dur > 0 && v.dur + 0.01 < fatiaPrevia) {
+                return falhar(err("bad_args", QStringLiteral("media_starts: video %1 lasts %2 s but its slice is %3 s; "
+                                                             "it would leave a gap. Move the next start up to %4 s or use a longer video")
+                                                  .arg(v.nome)
+                                                  .arg(v.dur, 0, 'f', 2)
+                                                  .arg(fatiaPrevia, 0, 'f', 2)
+                                                  .arg(inicios[i] + v.dur, 0, 'f', 2)));
+            }
+        }
+    }
+
     // Trilhas: add_track insere no topo, então a ordem de criação decide a pilha final
     // (imagens acima dos vídeos, vídeos acima da narração, narração acima da música). O editor
     // guarda imagem em trilha "shape" e vídeo em trilha "video", nunca juntos; como as mídias
@@ -345,7 +419,22 @@ QJsonObject McpDispatcher::opAssembleVideo(const QJsonObject &args)
     // duração natural e devolve o resto para os outros, repetindo até nenhum vídeo ficar aquém.
     QVector<double> fatia(n, 0.0);
     QVector<bool> fixo(n, false);
-    if (alvo > 0) {
+    if (porInicios) {
+        if (alvo > 0 && inicios.last() > alvo - 0.1) {
+            return falhar(err("bad_args", QStringLiteral("media_starts last value %1 s is not before the %2 s target")
+                                              .arg(inicios.last(), 0, 'f', 2)
+                                              .arg(alvo, 0, 'f', 2)));
+        }
+        for (int i = 0; i + 1 < n; ++i)
+            fatia[i] = inicios[i + 1] - inicios[i];
+        if (alvo > 0) {
+            fatia[n - 1] = alvo - inicios[n - 1];
+        } else {
+            const Item &u = visuais[n - 1];
+            fatia[n - 1] = (u.tipo == QLatin1String("video") && u.dur > 0) ? u.dur : duracaoImagem;
+            alvo = inicios[n - 1] + fatia[n - 1];
+        }
+    } else if (alvo > 0) {
         bool mudou = true;
         while (mudou) {
             mudou = false;
@@ -387,7 +476,7 @@ QJsonObject McpDispatcher::opAssembleVideo(const QJsonObject &args)
     // Modo cues: cada corte vai para o início de fala mais próximo, para a troca de mídia cair
     // junto com a frase. Só fronteiras entre mídias livres se movem; vídeo com duração natural
     // fica onde está.
-    if (modo == QLatin1String("cues") && !cues.isEmpty() && n > 1) {
+    if (!porInicios && modo == QLatin1String("cues") && !cues.isEmpty() && n > 1) {
         QVector<double> borda(n + 1, 0.0);
         for (int i = 0; i < n; ++i)
             borda[i + 1] = borda[i] + fatia[i];
@@ -421,6 +510,9 @@ QJsonObject McpDispatcher::opAssembleVideo(const QJsonObject &args)
     QStringList idsVisuais;
     for (int i = 0; i < n; ++i) {
         const Item &v = visuais[i];
+        // Com media_starts cada mídia nasce no instante pedido (fatias já conferidas acima).
+        if (porInicios)
+            cursor = inicios[i];
         // A última imagem estica até o alvo quando os vídeos curtos deixaram buraco no fim.
         if (i == n - 1 && alvo > 0 && v.tipo == QLatin1String("image") && cursor + fatia[i] < alvo)
             fatia[i] = alvo - cursor;
@@ -587,7 +679,8 @@ QJsonObject McpDispatcher::opAssembleVideo(const QJsonObject &args)
                 const QJsonObject r = applyOne(QStringLiteral("duck_under"),
                                                {{QStringLiteral("clip"), id.toString()},
                                                 {QStringLiteral("over_clips"), QJsonArray{clipeNarracao}},
-                                                {QStringLiteral("amount"), quantoAbaixar}});
+                                                {QStringLiteral("amount"), quantoAbaixar},
+                                                {QStringLiteral("min_gap"), intervaloDuck}});
                 if (!sucesso(r))
                     return falhar(r);
             }
@@ -669,6 +762,8 @@ QJsonObject McpDispatcher::opAssembleVideo(const QJsonObject &args)
                {QStringLiteral("transitions"), transicoes},
                {QStringLiteral("narration_clip"), clipeNarracao},
                {QStringLiteral("music_clips"), clipesMusica},
+               {QStringLiteral("duck_min_gap"), intervaloDuck},
+               {QStringLiteral("media_starts_aplicado"), porInicios},
                {QStringLiteral("subtitle_clip"), clipeLegenda},
                {QStringLiteral("cues"), static_cast<int>(cues.size())},
                {QStringLiteral("title_clip"), clipeTitulo},
