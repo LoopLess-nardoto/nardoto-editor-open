@@ -62,7 +62,10 @@ bool renderReversed(const QString &sourcePath, TimeUs coverInUs, TimeUs coverOut
     ProxyEncoder encoder;
     // Source resolution, not preview resolution: export goes through the same FrameCompositor, so
     // preview and export have to read identical pixels out of the proxy.
-    if (!encoder.open(outPath, source.dec, timeBase, frameRate, displayRotationOf(stream), {},
+    ProxyEncoder::Options options;
+    // O export lê este proxy no lugar do original, então a transparência tem que sobreviver.
+    options.alpha = videoStreamHasAlpha(stream);
+    if (!encoder.open(outPath, source.dec, timeBase, frameRate, displayRotationOf(stream), options,
                       errorOut))
         return false;
 

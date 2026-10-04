@@ -138,6 +138,9 @@ public:
     // after this split the machine's cores between them instead of each taking all of them.
     static void setActiveVideoStreams(int count);
     static bool zeroCopyProven();
+    // Export liga (true) e desliga (false) em par: enquanto um export roda, a redução de quadros
+    // volta a usar Lanczos. O preview fica no bilinear, bem mais barato.
+    static void setExportScaling(bool exporting);
     // Why the most recent of those happened: backend, codec, the failing call's error and the
     // last error FFmpeg logged. Empty while nothing has fallen back.
     static QString lastHardwareFailure();

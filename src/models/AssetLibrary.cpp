@@ -484,10 +484,11 @@ bool wantsPreviewProxy(const MediaInfo &info)
     for (const StreamInfo &stream : info.streams) {
         if (stream.type != StreamInfo::Type::Video || stream.attachedPicture)
             continue;
-        // A proxy is plain yuv420p, so it would preview the clip opaque.
-        if (stream.hasAlpha)
-            return false;
         const int shortSide = std::min(stream.width, stream.height);
+        // Clipe com transparência (ProRes 4444, QTRLE) pesa na decodificação já em 1080p; o proxy
+        // dele sai em ProRes 4444 reduzido e mantém o alfa.
+        if (stream.hasAlpha)
+            return shortSide > 720;
         if (shortSide > 1080)
             return true;
 #ifdef Q_OS_ANDROID

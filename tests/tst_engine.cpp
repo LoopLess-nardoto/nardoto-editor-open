@@ -125,6 +125,8 @@ private slots:
     void matteWriterPreservesSoftAlpha();
     void matteWriterRoundTripsColourForeground();
     void reverseRendererPlaysSourceBackwards();
+    void reverseProxyPreservesAlphaForExport();
+    void reverseProxyInvalidatesLegacyEntries();
     void previewProxyKeepsSourceTiming();
     void variableFrameRateIsDetected();
     void mediaEditorCropsAnImage();
@@ -3753,6 +3755,92 @@ void EngineTest::reverseRendererPlaysSourceBackwards()
 
 // A preview proxy is swapped in by path alone, so every frame has to sit at the same source time
 // as in the original — and only the preview may see it.
+void EngineTest::reverseProxyPreservesAlphaForExport()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    const QString ffprobe = QStandardPaths::findExecutable(QStringLiteral("ffprobe"));
+    QVERIFY2(!ffmpeg.isEmpty() && !ffprobe.isEmpty(), "FFmpeg e ffprobe são necessários para testar o alfa");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString imagePath = dir.filePath(QStringLiteral("alfa.png"));
+    const QString sourcePath = dir.filePath(QStringLiteral("fonte.mov"));
+    const QString proxyPath = dir.filePath(QStringLiteral("reverso.mov"));
+    QImage image(96, 64, QImage::Format_RGBA8888);
+    image.fill(Qt::transparent);
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 32; x < image.width(); ++x)
+            image.setPixelColor(x, y, QColor(220, 40, 60, x < 64 ? 128 : 255));
+    }
+    QVERIFY(image.save(imagePath));
+    QProcess generate;
+    generate.start(ffmpeg, {"-hide_banner", "-loglevel", "error", "-y", "-loop", "1",
+                           "-i", imagePath, "-frames:v", "3", "-r", "30", "-c:v", "prores_ks",
+                           "-profile:v", "4444", "-pix_fmt", "yuva444p10le", sourcePath});
+    QVERIFY(generate.waitForFinished(30000));
+    QCOMPARE(generate.exitCode(), 0);
+    QString error;
+    QVERIFY2(drift::renderReversed(sourcePath, 0, 100000, proxyPath, &error, {}), qPrintable(error));
+    drift::ReverseProxyCache::instance().insert(sourcePath, 0, 100000, proxyPath);
+    drift::Clip clip;
+    clip.type = drift::ClipType::Video;
+    clip.path = sourcePath;
+    clip.srcOut = clip.timelineDuration = 100000;
+    clip.reverse = true;
+    // O export desabilita proxies de preview, mas continua lendo o proxy de reversão.
+    const auto read = drift::resolveVideoRead(clip, 50000, false);
+    QCOMPARE(read.path, proxyPath);
+    const QImage frame = ClipReaderPool::instance().readVideoFrame(read.path, 1, read.sourceUs, 0, 0);
+    QVERIFY(!frame.isNull());
+    QCOMPARE(qAlpha(frame.pixel(16, 32)), 0);
+    QVERIFY(qAbs(qAlpha(frame.pixel(48, 32)) - 128) <= 2);
+    QCOMPARE(qAlpha(frame.pixel(80, 32)), 255);
+    QProcess probe;
+    probe.start(ffprobe, {"-v", "error", "-select_streams", "v:0", "-show_entries",
+                         "stream=codec_name,profile,pix_fmt,width,height", "-of", "json", proxyPath});
+    QVERIFY(probe.waitForFinished(30000));
+    QCOMPARE(probe.exitCode(), 0);
+    const QByteArray metadata = probe.readAllStandardOutput();
+    qInfo().noquote() << "ffprobe do proxy de reversão:" << metadata;
+    QVERIFY(metadata.contains("yuva"));
+    QVERIFY(metadata.contains("4444"));
+    QVERIFY(!QFileInfo::exists(proxyPath + QStringLiteral(".part")));
+    ClipReaderPool::instance().releasePath(proxyPath);
+}
+
+void EngineTest::reverseProxyInvalidatesLegacyEntries()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString sourcePath = dir.filePath(QStringLiteral("fonte.mov"));
+    const QString proxyPath = dir.filePath(QStringLiteral("antigo.mp4"));
+    for (const QString &path : {sourcePath, proxyPath}) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("teste");
+    }
+    auto &cache = drift::ReverseProxyCache::instance();
+    cache.insert(sourcePath, 0, 100000, proxyPath);
+    cache.load();
+    QCOMPARE(cache.lookup(sourcePath, 0, 100000, nullptr), proxyPath);
+    QFile index(QDir(drift::reverseCacheDir()).filePath(QStringLiteral("index.json")));
+    QVERIFY(index.open(QIODevice::ReadOnly));
+    QJsonArray entries = QJsonDocument::fromJson(index.readAll()).array();
+    index.close();
+    for (qsizetype i = 0; i < entries.size(); ++i) {
+        QJsonObject entry = entries[i].toObject();
+        if (entry[QStringLiteral("source")].toString() == sourcePath) {
+            entry.remove(QStringLiteral("encodingVersion"));
+            entries[i] = entry;
+        }
+    }
+    QVERIFY(index.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    index.write(QJsonDocument(entries).toJson());
+    index.close();
+    cache.load();
+    QVERIFY2(cache.lookup(sourcePath, 0, 100000, nullptr).isEmpty(),
+             "O proxy antigo sem versão não pode substituir a fonte no export");
+}
+
 void EngineTest::previewProxyKeepsSourceTiming()
 {
     if (!Exporter::videoCodecById(QStringLiteral("h264")).value(QStringLiteral("available")).toBool())

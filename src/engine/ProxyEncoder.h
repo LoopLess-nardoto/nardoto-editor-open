@@ -37,6 +37,9 @@ public:
         // Short GOP rather than all-intra: a keyframe every twelve frames keeps scrubbing cheap at
         // roughly a third of the size.
         int gopSize = 12;
+        // Fonte com transparência: grava ProRes 4444 yuva444p10le em MOV em vez de H.264, para o
+        // alfa e os 10 bits sobreviverem ao proxy (crf, preset e gopSize não se aplicam).
+        bool alpha = false;
     };
 
     ~ProxyEncoder() { abort(); }
@@ -58,6 +61,7 @@ private:
     AVFrame *m_frame = nullptr;
     AVPacket *m_pkt = nullptr;
     SwsContext *m_sws = nullptr;
+    int m_pixFmt = -1;
     QString m_path;
     QString m_tmpPath;
     int64_t m_lastPts = INT64_MIN;

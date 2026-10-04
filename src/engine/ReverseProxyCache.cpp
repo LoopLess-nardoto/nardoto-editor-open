@@ -16,6 +16,9 @@ namespace drift {
 
 namespace {
 
+// Sobe quando o formato dos proxies muda; entradas de versão anterior são descartadas no load().
+constexpr int kEncodingVersion = 2;
+
 QString indexPath()
 {
     const QString dir = reverseCacheDir();
@@ -222,6 +225,7 @@ void ReverseProxyCache::saveLocked() const
             object[QStringLiteral("coverOutUs")] = double(entry.coverOutUs);
             object[QStringLiteral("sourceMtimeMs")] = double(entry.sourceMtimeMs);
             object[QStringLiteral("sourceSize")] = double(entry.sourceSize);
+            object[QStringLiteral("encodingVersion")] = kEncodingVersion;
             if (entry.preview) {
                 object[QStringLiteral("kind")] = QStringLiteral("preview");
                 object[QStringLiteral("shortSide")] = entry.shortSide;
@@ -265,6 +269,12 @@ void ReverseProxyCache::load()
             continue;
         if (!QFile::exists(entry.proxyPath))
             continue;
+        // Proxy gravado antes da versão 2 é sempre H.264 yuv420p: numa fonte com transparência ele
+        // apagava o alfa no export. Descarta e deixa renderizar de novo no formato certo.
+        if (object[QStringLiteral("encodingVersion")].toInt() < kEncodingVersion) {
+            QFile::remove(entry.proxyPath);
+            continue;
+        }
 
         // The source may have been edited or replaced while the app was closed. Drop the proxy
         // now rather than letting sweep() carry dead bytes until the budget forces them out.

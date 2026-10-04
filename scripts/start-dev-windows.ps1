@@ -11,14 +11,6 @@ $buildDir = Join-Path $repoRoot 'build-dev'
 $releaseDir = Join-Path $buildDir 'Release'
 $editorExe = Join-Path $releaseDir 'nardoto-editor.exe'
 
-$cmake = (Get-Command cmake -ErrorAction SilentlyContinue).Source
-if (-not $cmake) {
-    $cmake = 'C:\Program Files\CMake\bin\cmake.exe'
-}
-if (-not (Test-Path $cmake)) {
-    throw 'CMake não foi encontrado. Instale o CMake e adicione-o ao PATH.'
-}
-
 $qtRoot = $env:QT_ROOT_DIR
 if (-not $qtRoot) {
     $qtCandidates = Get-ChildItem -Path (Join-Path $repoRoot '.tools\qt') -Directory -Recurse -ErrorAction SilentlyContinue |
@@ -36,6 +28,17 @@ if (-not (Test-Path $toolchain)) {
 }
 
 if ($Build -or -not (Test-Path $editorExe)) {
+    # Só a compilação precisa do CMake; abrir o editor já compilado não. Sem CMake no PATH, usa o que
+    # vem com o Visual Studio.
+    $cmake = (Get-Command cmake -ErrorAction SilentlyContinue).Source
+    if (-not $cmake) {
+        $cmake = @('C:\Program Files\CMake\bin\cmake.exe') + @(Get-ChildItem -Path 'C:\Program Files\Microsoft Visual Studio\*\*\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' -ErrorAction SilentlyContinue |
+            ForEach-Object FullName) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if (-not $cmake) {
+        throw 'CMake não foi encontrado. Instale o CMake e adicione-o ao PATH.'
+    }
+
     $ffmpegRoot = $env:FFMPEG_ROOT
     $ffmpegDeps = Join-Path $repoRoot '.tools\deps\ffmpeg'
     if (-not $ffmpegRoot -and (Test-Path (Join-Path $ffmpegDeps 'lib\avformat.lib'))) {
