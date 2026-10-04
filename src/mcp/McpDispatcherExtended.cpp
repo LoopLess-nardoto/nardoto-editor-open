@@ -2770,7 +2770,8 @@ QJsonObject McpDispatcher::applyOneExtended(const QString &tool, const QJsonObje
             music.track, music.clip, overTrack, overClips,
             jsonNumber(args.value(QStringLiteral("amount")), 0.3),
             jsonNumber(args.value(QStringLiteral("attack")), 0.12),
-            jsonNumber(args.value(QStringLiteral("release")), 0.25));
+            jsonNumber(args.value(QStringLiteral("release")), 0.25),
+            jsonNumber(args.value(QStringLiteral("min_gap")), 0.12));
     }
 
     if (tool == QLatin1String("setup_multicam")) {

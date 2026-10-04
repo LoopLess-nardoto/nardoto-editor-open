@@ -26317,10 +26317,14 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
                 m_lastExportFile = ok ? outputUrl.toLocalFile() : QString();
                 emit lastExportFileChanged();
 #endif
+                // A mensagem vai ANTES do exportInProgressChanged: o diálogo de exportar lê o erro
+                // nesse sinal, e com a ordem invertida pegava a mensagem velha e dizia "concluída"
+                // num export que falhou e teve o arquivo apagado.
+                setLastMessage(ok ? tr("Export complete")
+                                  : (error.isEmpty() ? QStringLiteral("o render parou antes do fim") : error),
+                               ok ? QStringLiteral("success") : QStringLiteral("error"));
                 emit exportProgressChanged();
                 emit exportInProgressChanged();
-                setLastMessage(ok ? tr("Export complete") : error,
-                               ok ? QStringLiteral("success") : QStringLiteral("error"));
                 emit exportFinished(ok);
             },
             Qt::QueuedConnection);
@@ -29910,16 +29914,18 @@ QJsonObject AppController::mcpNormalizeVolume(int trackIndex, int clipIndex, dou
 
 QJsonObject AppController::mcpDuckUnder(int musicTrack, int musicClip, int overTrack,
                                         const QStringList &overClips, double amount, double attack,
-                                        double release)
+                                        double release, double minGap)
 {
     using namespace drift::mcp;
     if (!isValidClipIndex(musicTrack, musicClip))
         return err("not_found", QStringLiteral("Unknown music clip"));
     const double amt = qBound(0.0, amount, 1.0);
+    // Pausa mínima que conta como silêncio: abaixo disso a fala é contínua e a música não sobe.
+    const double gap = qBound(0.12, minGap, 5.0);
 
     QList<SilenceRange> speech;
     auto addSpeech = [&](int tr, int cl) {
-        const QJsonObject det = mcpDetectSilence(tr, cl, 0, 0, 0.02, 0.12, 0.0);
+        const QJsonObject det = mcpDetectSilence(tr, cl, 0, 0, 0.02, gap, 0.0);
         if (!det.value(QStringLiteral("ok")).toBool())
             return;
         const drift::Clip &clip = m_project.tracks().at(tr).clips.at(cl);
@@ -30015,7 +30021,8 @@ QJsonObject AppController::mcpDuckUnder(int musicTrack, int musicClip, int overT
     QJsonObject reply{{QStringLiteral("keys"), keys},
                       {QStringLiteral("speech"), speech.size()},
                       {QStringLiteral("rest"), round3(firstRest)},
-                      {QStringLiteral("ducked"), round3(firstRest * amt)}};
+                      {QStringLiteral("ducked"), round3(firstRest * amt)},
+                      {QStringLiteral("min_gap"), gap}};
     if (restVaries)
         reply.insert(QStringLiteral("rest_varies"), true);
     return ok(reply);

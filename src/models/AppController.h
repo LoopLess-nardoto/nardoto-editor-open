@@ -887,7 +887,7 @@ public:
     QJsonObject mcpNormalizeVolume(int trackIndex, int clipIndex, double targetLufs);
     QJsonObject mcpDuckUnder(int musicTrack, int musicClip, int overTrack,
                              const QStringList &overClips, double amount, double attack,
-                             double release);
+                             double release, double minGap);
     QJsonObject mcpListFaceTrack(int trackIndex, int clipIndex) const;
     QJsonObject mcpAutoReframe(int trackIndex, int clipIndex, double aspect, const QString &mode);
     QJsonObject mcpListAddons() const;
