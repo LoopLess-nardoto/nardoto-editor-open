@@ -37,14 +37,10 @@ bool renderPreviewProxy(const QString &sourcePath, int shortSide, const QString 
     if (!source.open(sourcePath, errorOut))
         return false;
     AVStream *stream = source.fmt->streams[source.stream];
-    // The proxy is plain yuv420p; previewing a transparent clip opaque would be wrong, not slow.
-    if (videoStreamHasAlpha(stream)) {
-        if (errorOut)
-            *errorOut = QCoreApplication::translate("ProxyEncoder", "Clips with transparency can't use a proxy");
-        return false;
-    }
-
     ProxyEncoder::Options options;
+    // Clipe transparente ganha proxy ProRes 4444 reduzido: preserva o alfa e decodifica bem mais
+    // leve que o original em resolução cheia.
+    options.alpha = videoStreamHasAlpha(stream);
     options.size = proxySizeFor(source.dec->width, source.dec->height, shortSide);
     options.crf = "23";
     options.preset = "superfast";

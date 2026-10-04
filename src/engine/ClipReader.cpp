@@ -123,9 +123,17 @@ bool isHardwarePixelFormat(AVPixelFormat fmt)
     return desc && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL);
 }
 
+// Contador de exports em andamento (ClipReader::setExportScaling). Enquanto houver um, a redução
+// usa Lanczos para o arquivo final sair com a nitidez de sempre.
+std::atomic<int> g_exportScalingDepth{0};
+
 int swsFlagsForResize(int srcW, int srcH, int dstW, int dstH)
 {
-    return (srcW != dstW || srcH != dstH) ? SWS_LANCZOS : SWS_BICUBIC;
+    if (srcW == dstW && srcH == dstH)
+        return SWS_BICUBIC;
+    // No preview, Lanczos numa thread só custava mais que a própria decodificação; bilinear basta
+    // para o quadro reduzido da tela. O export continua no Lanczos.
+    return g_exportScalingDepth.load(std::memory_order_relaxed) > 0 ? SWS_LANCZOS : SWS_BILINEAR;
 }
 
 // Prefer the hardware surface format when the decoder offers it; otherwise pick the
@@ -1017,8 +1025,9 @@ bool ClipReader::openSoftwareVideoDecoder()
 // light clips on the CPU and send 4K / high-bitrate ones to the GPU.
 constexpr double kHwAccelMinKbitPerFrame = 250.0;
 // Pixels a second above which software decode is sent to the GPU whatever the bitrate.
-// 1080p60 sits just over this; 1080p30 and 720p60 sit under it.
-constexpr double kHwAccelMinPixelsPerSecond = 1920.0 * 1080.0 * 50.0;
+// Era 1080p50: todo vídeo 1080p30 do YouTube ficava no software e engasgava com várias camadas
+// na timeline. Agora 1080p24 em diante (e 720p60) vai para a GPU; 720p30 continua no software.
+constexpr double kHwAccelMinPixelsPerSecond = 1920.0 * 1080.0 * 24.0;
 
 // The heuristic in hardwareDecodeIsWorthIt() weighs decode cost against reading a GPU frame
 // back to the CPU. Once a frame on this machine has gone straight from the decoder into the
@@ -1033,6 +1042,11 @@ bool ClipReader::zeroCopyProven()
     const bool zeroCopy =
         path == Path::CudaInterop || path == Path::VaapiDmaBuf || path == Path::D3d11Interop;
     return zeroCopy && drift::gl::GlRuntime::lastZeroCopyDeclineReason().isEmpty();
+}
+
+void ClipReader::setExportScaling(bool exporting)
+{
+    g_exportScalingDepth.fetch_add(exporting ? 1 : -1, std::memory_order_relaxed);
 }
 
 bool ClipReader::hardwareDecodeIsWorthIt() const

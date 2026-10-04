@@ -441,6 +441,7 @@ namespace drift {
 
 MediaCodecSurfaceDecodeBlock::MediaCodecSurfaceDecodeBlock()
 {
+    ClipReader::setExportScaling(true);
 #ifdef Q_OS_ANDROID
     ClipReader::setSurfaceDecodeAllowed(false);
     ClipReaderPool::instance().resetVideoDecoders();
@@ -449,6 +450,7 @@ MediaCodecSurfaceDecodeBlock::MediaCodecSurfaceDecodeBlock()
 
 MediaCodecSurfaceDecodeBlock::~MediaCodecSurfaceDecodeBlock()
 {
+    ClipReader::setExportScaling(false);
 #ifdef Q_OS_ANDROID
     ClipReader::setSurfaceDecodeAllowed(true);
     ClipReaderPool::instance().resetVideoDecoders();

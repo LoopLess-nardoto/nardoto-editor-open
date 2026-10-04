@@ -20,9 +20,49 @@
 
 #include <atomic>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace drift {
 
 namespace {
+
+// Quando o editor fecha, o QProcess mata só o processo principal do Electron, e as páginas de
+// motion (um renderer por composição) ficavam órfãs, dezenas delas, segurando gigas de RAM. No
+// Windows o Electron entra num Job com KILL_ON_JOB_CLOSE: os filhos que ele abrir herdam o Job, e
+// quando o editor sai (fechado ou derrubado) o sistema fecha o handle e encerra a árvore inteira.
+// Chamado logo depois do start(): o QProcess cria o processo de forma síncrona no Windows, então
+// ele entra no Job antes de ter tempo de abrir qualquer filho.
+void prenderAoEditor(QProcess *process)
+{
+#ifdef Q_OS_WIN
+    if (!process || process->state() == QProcess::NotRunning)
+        return;
+    static HANDLE job = [] {
+        HANDLE h = CreateJobObjectW(nullptr, nullptr);
+        if (h) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(h, JobObjectExtendedLimitInformation, &info, sizeof(info));
+        }
+        return h;
+    }();
+    if (!job)
+        return;
+    HANDLE proc = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE,
+                              DWORD(process->processId()));
+    if (!proc)
+        return;
+    AssignProcessToJobObject(job, proc);
+    CloseHandle(proc);
+#else
+    Q_UNUSED(process);
+#endif
+}
 
 thread_local bool t_exact = false;
 std::atomic<int> g_cacheFps{30};
@@ -480,6 +520,7 @@ void MotionHost::ensureStarted()
     });
     motionLog(QStringLiteral("canal: ") + m_server->fullServerName());
     m_process->start(electron, {script, QStringLiteral("--canal=%1").arg(m_server->fullServerName())});
+    prenderAoEditor(m_process);
 }
 
 void MotionHost::onNewConnection()

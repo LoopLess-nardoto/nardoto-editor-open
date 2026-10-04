@@ -32,13 +32,17 @@ bool ProxyEncoder::open(const QString &path, const AVCodecContext *dec, AVRation
         QFile::remove(m_tmpPath);
 
     const QByteArray tmpUtf8 = m_tmpPath.toUtf8();
-    avformat_alloc_output_context2(&m_fmt, nullptr, "mp4", tmpUtf8.constData());
+    avformat_alloc_output_context2(&m_fmt, nullptr, options.alpha ? "mov" : "mp4", tmpUtf8.constData());
     if (!m_fmt)
         return fail(QCoreApplication::translate("ProxyEncoder", "Could not create the proxy container"));
 
-    const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    const AVCodec *codec = options.alpha ? avcodec_find_encoder_by_name("prores_ks")
+                                         : avcodec_find_encoder(AV_CODEC_ID_H264);
     if (!codec)
-        return fail(QCoreApplication::translate("ProxyEncoder", "H.264 encoder not available"));
+        return fail(options.alpha
+                        ? QCoreApplication::translate("ProxyEncoder", "ProRes encoder not available")
+                        : QCoreApplication::translate("ProxyEncoder", "H.264 encoder not available"));
+    m_pixFmt = options.alpha ? AV_PIX_FMT_YUVA444P10LE : AV_PIX_FMT_YUV420P;
 
     m_stream = avformat_new_stream(m_fmt, nullptr);
     if (!m_stream)
@@ -50,7 +54,7 @@ bool ProxyEncoder::open(const QString &path, const AVCodecContext *dec, AVRation
 
     m_ctx->width = options.size.isEmpty() ? dec->width : options.size.width();
     m_ctx->height = options.size.isEmpty() ? dec->height : options.size.height();
-    m_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+    m_ctx->pix_fmt = static_cast<AVPixelFormat>(m_pixFmt);
     m_ctx->time_base = timeBase;
     m_ctx->framerate = frameRate;
     m_ctx->gop_size = options.gopSize;
@@ -63,9 +67,14 @@ bool ProxyEncoder::open(const QString &path, const AVCodecContext *dec, AVRation
     m_ctx->color_trc = dec->color_trc;
     if (m_fmt->oformat->flags & AVFMT_GLOBALHEADER)
         m_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    av_opt_set(m_ctx->priv_data, "crf", options.crf, 0);
-    av_opt_set(m_ctx->priv_data, "preset", options.preset, 0);
-    av_opt_set(m_ctx->priv_data, "tune", "fastdecode", 0);
+    if (options.alpha) {
+        av_opt_set(m_ctx->priv_data, "profile", "4444", 0);
+        av_opt_set_int(m_ctx->priv_data, "alpha_bits", 16, 0);
+    } else {
+        av_opt_set(m_ctx->priv_data, "crf", options.crf, 0);
+        av_opt_set(m_ctx->priv_data, "preset", options.preset, 0);
+        av_opt_set(m_ctx->priv_data, "tune", "fastdecode", 0);
+    }
 
     if (avcodec_open2(m_ctx, codec, nullptr) < 0)
         return fail(QCoreApplication::translate("ProxyEncoder", "Could not open the proxy encoder"));
@@ -101,7 +110,7 @@ bool ProxyEncoder::open(const QString &path, const AVCodecContext *dec, AVRation
     if (!m_pkt || !m_frame)
         return fail(QCoreApplication::translate("ProxyEncoder", "Could not allocate proxy frame buffers"));
 
-    m_frame->format = AV_PIX_FMT_YUV420P;
+    m_frame->format = m_pixFmt;
     m_frame->width = m_ctx->width;
     m_frame->height = m_ctx->height;
     if (av_frame_get_buffer(m_frame, 0) < 0)
@@ -120,7 +129,7 @@ bool ProxyEncoder::writeFrame(const AVFrame *src, int64_t pts, QString *errorOut
 
     m_sws = sws_getCachedContext(m_sws, src->width, src->height,
                                  swsSourceFormat(static_cast<AVPixelFormat>(src->format)),
-                                 m_ctx->width, m_ctx->height, AV_PIX_FMT_YUV420P, SWS_BILINEAR,
+                                 m_ctx->width, m_ctx->height, static_cast<AVPixelFormat>(m_pixFmt), SWS_BILINEAR,
                                  nullptr, nullptr, nullptr);
     if (!m_sws) {
         if (errorOut)
