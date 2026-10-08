@@ -721,7 +721,7 @@ public:
     // com o clipe, o tempo e o print do momento; a pessoa revisa e envia. Sem o Studio aberto,
     // copia para a area de transferencia. Devolve vazio se entrou no chat, senao o motivo.
     Q_INVOKABLE QString askStudioChatForClip(const QString &request);
-    // Aba "Falas e mídias": cada clipe de vídeo/imagem das trilhas de vídeo, em ordem, com a fala
+    // Aba "Falas e mídias": cada clipe de vídeo/imagem das trilhas Vídeo e Gráfico, em ordem, com a fala
     // da legenda que toca durante ele: {clipId, track, start, end, name, path, kind, thumbnail, fala}.
     Q_INVOKABLE QVariantList scenesWithSpeech() const;
     // Troca o arquivo de UM clipe (não do asset inteiro), mantendo início e duração na timeline.

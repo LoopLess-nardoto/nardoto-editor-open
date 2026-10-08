@@ -26715,7 +26715,9 @@ QVariantList AppController::scenesWithSpeech() const
     QVariantList out;
     for (int t = 0; t < m_project.tracks().size(); ++t) {
         const drift::Track &track = m_project.tracks().at(t);
-        if (track.type != drift::TrackType::Video || track.hidden)
+        // Foto de cena mora em trilha Gráfico (o assemble_video põe imagem lá, vídeo na trilha Vídeo).
+        if ((track.type != drift::TrackType::Video && track.type != drift::TrackType::Shape) || track.hidden
+            || track.isAdjustmentLane())
             continue;
         for (int c = 0; c < track.clips.size(); ++c) {
             const drift::Clip &clip = track.clips.at(c);
@@ -26789,8 +26791,8 @@ QString AppController::replaceClipMedia(const QString &clipId, const QString &pa
     const drift::ClipType tipo = drift::clipTypeFromString(asset.value(QStringLiteral("kind")).toString());
     if (tipo != drift::ClipType::Video && tipo != drift::ClipType::Image)
         return tr("Use um vídeo ou uma imagem.");
-    if (!m_project.tracks().at(ti).allowsClipType(tipo))
-        return tr("Essa trilha não aceita esse tipo de mídia.");
+    // Foto mora em trilha Gráfico e vídeo em trilha Vídeo: trocar uma pela outra muda a cena de trilha.
+    const bool mudaDeTrilha = !m_project.tracks().at(ti).allowsClipType(tipo);
     m_assetLibrary->ensureMedia(idx);
 
     // Snapshot antes de pegar a referencia nao-const (mesmo cuidado do addClipFromAssetAt).
@@ -26814,6 +26816,18 @@ QString AppController::replaceClipMedia(const QString &clipId, const QString &pa
             m_project.tracks()[ti].clips.insert(ci + 1, resto);
             precisa = fonteDur;
         }
+    }
+    if (mudaDeTrilha) {
+        // O resto (mídia antiga) fica onde estava; só o trecho trocado vai para uma trilha livre do
+        // tipo certo, no mesmo instante. Efeitos que vivem na faixa de ajuste da trilha antiga não vão junto.
+        const drift::Clip movido = m_project.tracks().at(ti).clips.at(ci);
+        m_project.tracks()[ti].clips.removeAt(ci);
+        ti = drift::ensureFreeTrackForClipType(m_project, tipo, movido.timelineStart, movido.timelineDuration);
+        QList<drift::Clip> &destino = m_project.tracks()[ti].clips;
+        ci = 0;
+        while (ci < destino.size() && destino.at(ci).timelineStart < movido.timelineStart)
+            ++ci;
+        destino.insert(ci, movido);
     }
     drift::Clip &cena = m_project.tracks()[ti].clips[ci]; // o insert pode ter movido a lista
     replaceSource(cena, idx, asset, tipo, fonteDur, precisa);
