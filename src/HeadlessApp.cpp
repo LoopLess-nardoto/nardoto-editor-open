@@ -130,8 +130,11 @@ int runHeadless(int argc, char *argv[])
     // GUI path sets here: with the attribute on and no QQuickWindow to build a share
     // context from, GlRuntime::initGlObjects() refuses to create one of its own and
     // nothing renders at all.
-    QCoreApplication::setApplicationName("CutWire Drift");
-    QCoreApplication::setOrganizationName("CutWire Drift");
+    // Mesmo nome do editor com janela (main.cpp): QSettings e AppDataLocation saem daqui.
+    // Com o nome antigo do Drift, os projetos montados sem janela iam para outra lista de
+    // recentes e o editor com janela não os mostrava (nem em "Do Studio").
+    QCoreApplication::setApplicationName("Nardoto Editor");
+    QCoreApplication::setOrganizationName("Nardoto");
 
     QApplication app(argc, argv);
     AppController::installUiTranslators();

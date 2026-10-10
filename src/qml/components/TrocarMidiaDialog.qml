@@ -4,7 +4,8 @@ import QtMultimedia
 import Drift
 
 // Janela "Trocar a mídia da cena": mostra a fala da cena e opções buscadas pelo Nardoto Studio
-// (servidor local: midia_consultas, midia_buscar, midia_baixar, midia_youtube_buscar,
+// (servidor local: midia_cena_gravada (o que a produção já achou, sem IA), midia_consultas (só sem nada
+// gravado), midia_buscar, midia_baixar, midia_gerar_imagem, midia_youtube_buscar,
 // midia_youtube_previa, midia_youtube_trecho). A escolhida vai para a pasta do projeto e entra no lugar da antiga, com a
 // mesma duração (EditorState.replaceClipMedia; Ctrl+Z desfaz).
 // Sem o Studio aberto, a aba "Bancos" busca no Pexels e no Pixabay pela loja de mídia própria do
@@ -18,7 +19,9 @@ Popup {
     property var cena: ({})
     property int numero: 0
     property string aba: "bancos"     // bancos | youtube | ia | computador
-    property string tipo: "video"     // video | imagem
+    property string tipo: "todos"     // todos | video | imagem (todos = vídeo, imagem, Commons e acervos)
+    property string pedidoIa: ""      // pedido de imagem montado da ficha da cena (midia_cena_gravada)
+    property bool gerandoIa: false
     property var consultas: []        // sugestões de busca (IA ou vocabulário)
     property bool sugerindo: false
     property var opcoes: []
@@ -158,10 +161,22 @@ Popup {
         root.marketBaixando = ""
         campoBusca.text = ""
         campoYt.text = ""
+        root.tipo = "todos"
+        root.pedidoIa = ""
+        root.gerandoIa = false
         open()
-        if (c.fala && c.fala.length) {
+        // Primeiro o que a produção JÁ gravou da cena (buscas.jsonl + cortes.json, pelo clipId): sem IA.
+        root.sugerindo = true
+        pedir("midia_cena_gravada", { pasta: EditorState.projectFolder(), clipId: c.clipId || "", arquivo: c.path || "" }, 15000)
+    }
+
+    // Sem nada gravado da cena (vídeo antigo ou feito à mão): aí sim pede sugestões à IA pela fala.
+    function sugerirPelaFala() {
+        if (root.cena.fala && root.cena.fala.length) {
             root.sugerindo = true
-            pedir("midia_consultas", { fala: c.fala, contexto: EditorState.projectName }, 60000)
+            pedir("midia_consultas", { fala: root.cena.fala, contexto: EditorState.projectName }, 60000)
+        } else {
+            root.sugerindo = false
         }
     }
 
@@ -434,6 +449,48 @@ Popup {
                 playerYt.source = data.url
                 return
             }
+            if (acao === "midia_cena_gravada") {
+                if (!ok) {
+                    if (data.semStudio) {
+                        root.studio = "nao"
+                        root.sugerindo = false
+                        return
+                    }
+                    root.sugerirPelaFala()
+                    return
+                }
+                root.studio = "sim"
+                root.pedidoIa = data.prompt || ""
+                const consulta = data.consulta || ""
+                if (consulta.length) {
+                    root.consultas = [consulta]
+                    campoYt.text = consulta
+                }
+                const vistas = (data.candidatas || []).map(c => ({ id: c.id, tipo: c.tipo, fonte: c.fonte, titulo: c.titulo,
+                    miniatura: c.miniatura, url: c.download, licenca: c.atual ? qsTr("na cena hoje") : "", duracao: 0 }))
+                root.sugerindo = false
+                if (vistas.length) {
+                    // As que a produção viu e não usou, sem buscar de novo; "Buscar" refaz em todos os bancos.
+                    campoBusca.text = consulta
+                    root.consultaAtual = consulta
+                    root.opcoes = vistas
+                    root.aviso = qsTr("O que a produção encontrou para esta cena. Buscar procura de novo em todos os bancos.")
+                } else if (consulta.length) {
+                    root.buscar(consulta)
+                } else {
+                    root.sugerirPelaFala()
+                }
+                return
+            }
+            if (acao === "midia_gerar_imagem") {
+                root.gerandoIa = false
+                if (!ok || !data.arquivo) {
+                    root.aviso = (data && data.erro) || erro || qsTr("A imagem não foi gerada.")
+                    return
+                }
+                root.aplicar(data.arquivo)
+                return
+            }
             if (acao === "midia_consultas") {
                 root.sugerindo = false
                 if (!ok) {
@@ -657,9 +714,14 @@ Popup {
                 spacing: 8
                 ThemedTextField {
                     id: campoBusca
-                    width: parent.width - buscarBtn.width - videosBtn.width - imagensBtn.width - 3 * parent.spacing
+                    width: parent.width - buscarBtn.width - tudoBtn.width - videosBtn.width - imagensBtn.width - 4 * parent.spacing
                     placeholderText: qsTr("O que buscar (em inglês acha mais coisa)")
                     onAccepted: root.buscar()
+                }
+                ThemedButton {
+                    id: tudoBtn
+                    text: qsTr("Tudo"); variant: root.tipo === "todos" ? "primary" : "secondary"
+                    onClicked: { root.tipo = "todos"; root.buscar() }
                 }
                 ThemedButton {
                     id: videosBtn
@@ -1071,15 +1133,40 @@ Popup {
             }
         }
 
-        // ---------------- Gerar com IA: próxima etapa ----------------
-        Text {
+        // ---------------- Gerar com IA: Codex ou Antigravity conectado no Studio ----------------
+        Column {
             visible: root.aba === "ia"
             width: parent.width
-            wrapMode: Text.WordWrap
-            text: qsTr("Gerar com IA (pedido pronto para o VEO3 ou imagem): chega na próxima etapa.")
-            color: Theme.mutedForeground
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeSm
+            spacing: 8
+            Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: root.semStudio
+                    ? qsTr("Abra o Nardoto Studio para gerar imagens com o Codex ou o Antigravity conectado.")
+                    : qsTr("Pedido montado a partir da ficha da cena. Ajuste se quiser; a imagem sai pelo Codex ou Antigravity conectado no Studio.")
+                color: Theme.mutedForeground
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeSm
+            }
+            ThemedTextArea {
+                id: campoIa
+                width: parent.width
+                height: 120
+                text: root.pedidoIa
+                placeholderText: qsTr("Descreva a imagem da cena (em inglês sai melhor)")
+                onTextChanged: root.pedidoIa = text
+            }
+            ThemedButton {
+                variant: "primary"
+                text: root.gerandoIa ? qsTr("Gerando...") : qsTr("Gerar imagem e usar na cena")
+                enabled: !root.gerandoIa && !root.semStudio && root.pedidoIa.trim().length > 0
+                onClicked: {
+                    root.gerandoIa = true
+                    root.aviso = ""
+                    pedir("midia_gerar_imagem", { prompt: root.pedidoIa, pasta: root.pastaTrocas(),
+                        nome: "cena-" + (root.numero < 10 ? "0" : "") + root.numero + "-ia-" + Date.now() + ".png" }, 300000)
+                }
+            }
         }
 
         // ---------------- Do computador ----------------

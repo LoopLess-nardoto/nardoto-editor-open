@@ -239,9 +239,50 @@ async function abrir({ id, pasta, escala = 1, larguraMax = 0, alturaMax = 0 }) {
   const c = novaPagina({ id, pasta, index, escala, larguraMax, alturaMax, info: null,
     vigia: null, recarga: null, ajudantes: [], cache: new Map(), passo: 0, ultExato: null });
   comps.set(id, c);
+  c.usado = Date.now();
+  limitarVivas(c);
   await carregarComTrava(c);
   vigiar(c);
   return c.info;
+}
+
+// ---- composicoes dormindo ------------------------------------------------
+//
+// O editor abre cada motion da timeline e nunca fecha. Cada uma e uma pagina
+// offscreen de 1080p (mais 3 ajudantes no export): no video 001002 a 19a abriu
+// e o Skia nao conseguiu mais alocar o quadro (FATAL tryAllocPixels, processo
+// caiu e o export parou). So MAX_VIVAS ficam com pagina; as outras dormem (o
+// registro fica, a pagina sai) e acordam sozinhas no proximo pedido de quadro.
+const MAX_VIVAS = Math.max(1, Number(process.env.NMH_MAX_VIVAS || 4));
+
+function dormir(c) {
+  fecharAjudantes(c);
+  if (!c.janela.isDestroyed()) c.janela.destroy();
+  c.dormindo = true;
+  log("dormindo", c.id);
+}
+
+function acordar(c) {
+  c.usado = Date.now();
+  if (c.dormindo) {
+    c.dormindo = false;
+    log("acordando", c.id);
+    novaPagina(c);
+    carregarComTrava(c).catch((e) => log("acordar falhou", e.message));
+  }
+  limitarVivas(c);
+}
+
+// Composicao em uso (pedido em andamento, carregando) ou de cache nao dorme.
+function limitarVivas(atual) {
+  const vivas = [...comps.values()].filter((o) => !o.dormindo).sort((a, b) => a.usado - b.usado);
+  let excesso = vivas.length - MAX_VIVAS;
+  for (const o of vivas) {
+    if (excesso <= 0) break;
+    if (o === atual || o.ocupado || o.id.startsWith("cache:")) continue;
+    dormir(o);
+    excesso--;
+  }
 }
 
 // O editor pede quadro assim que poe o clipe, antes de a composicao terminar de
@@ -359,6 +400,7 @@ function pedirQuadro({ id, t, seq, exato }) {
   log(`pedido seq=${seq} t=${t} exato=${!!exato}`);
   const c = comps.get(id);
   if (!c) { json({ evento: "erro", id, seq, erro: "composição não aberta" }); return; }
+  acordar(c);
   if (exato) (c.filaExata || (c.filaExata = [])).push({ t, seq, exato });
   else c.pendente = { t, seq, exato };
   if (c.ocupado) return;
@@ -411,6 +453,8 @@ async function quadroExato(c, t) {
 
 function garantirAjudantes(c) {
   if (c.ajudantes.length || !AJUDANTES) return;
+  // o export anda pela timeline: ajudantes do motion anterior nao servem mais
+  for (const o of comps.values()) if (o !== c && o.ajudantes.length) fecharAjudantes(o);
   for (let i = 0; i < AJUDANTES; i++) {
     const a = novaPagina({ index: c.index, escala: c.escala, larguraMax: c.larguraMax,
       alturaMax: c.alturaMax, ocupado: true });
@@ -451,11 +495,22 @@ function fecharAjudantes(c) {
 
 // O chat edita o index.html no disco: recarrega sozinho e avisa o editor,
 // que pede o quadro de novo. Agrupa rajadas de gravacao em 300 ms.
+// No Windows o aviso tambem vem quando alguem so LE a pasta (data de acesso): o
+// cache lendo o mesmo motion recarregava a pagina no meio da carga e o export caia
+// com ERR_ABORTED/ERR_FAILED. So recarrega se o carimbo (tamanho + data de gravacao) mudou.
 function vigiar(c) {
+  const dir = path.dirname(c.index);
+  try { c.carimboFonte = carimboDaPasta(dir); } catch { /* pasta sumiu: o proximo aviso decide */ }
   try {
-    c.vigia = fs.watch(path.dirname(c.index), { recursive: true }, () => {
+    c.vigia = fs.watch(dir, { recursive: true }, () => {
       clearTimeout(c.recarga);
-      c.recarga = setTimeout(() => recarregar({ id: c.id }).catch(() => {}), 300);
+      c.recarga = setTimeout(() => {
+        let novo;
+        try { novo = carimboDaPasta(dir); } catch { return; }
+        if (novo === c.carimboFonte) return;
+        c.carimboFonte = novo;
+        recarregar({ id: c.id }).catch(() => {});
+      }, 300);
     });
   } catch { /* pasta sem suporte a vigia: recarregar manual continua valendo */ }
 }
@@ -463,6 +518,8 @@ function vigiar(c) {
 async function recarregar({ id }) {
   const c = comps.get(id);
   if (!c) throw new Error("composição não aberta");
+  // dormindo: acorda ja com o arquivo novo no proximo pedido
+  if (c.dormindo) { json({ evento: "mudou", ...c.info }); return c.info; }
   fecharAjudantes(c);
   await carregarComTrava(c);
   json({ evento: "mudou", ...c.info });
@@ -490,6 +547,7 @@ function fechar({ id }) {
 // algum quadro tem transparencia o cache e refeito em ProRes 4444. O nome do arquivo vem do conteudo da pasta: mudou o
 // HTML (o chat editou), muda o nome e o cache e refeito.
 const caches = new Map(); // arquivo -> Promise
+let filaCache = Promise.resolve(); // nunca rejeita: o job ja trata o erro
 
 function carimboDaPasta(dir) {
   const h = crypto.createHash("sha1");
@@ -519,10 +577,15 @@ async function pedirCache({ pasta, largura, altura, fps }) {
     return { arquivo, pronto: true };
   }
   if (!caches.has(arquivo)) {
-    const job = gravarCache(index, arquivo, largura, altura, fps)
+    // Uma gravacao por vez: o editor pede o cache de todos os motions juntos e
+    // 4 paginas de 1080p gravando ao mesmo tempo derrubaram a GPU (exit_code=34)
+    // e depois o processo inteiro (Skia sem memoria), no video 001002.
+    const vez = filaCache;
+    const job = vez.then(() => gravarCache(index, arquivo, largura, altura, fps))
       .then(() => json({ evento: "cache-pronto", pasta, fps, arquivo }))
       .catch((e) => { log("cache falhou:", e.message); json({ evento: "cache-erro", pasta, fps, erro: e.message }); })
       .finally(() => caches.delete(arquivo));
+    filaCache = job;
     caches.set(arquivo, job);
   }
   return { arquivo, pronto: false };
