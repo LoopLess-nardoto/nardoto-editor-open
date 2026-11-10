@@ -11,6 +11,7 @@
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QPermissions>
 #include <QTemporaryFile>
 #include <QUrl>
 #include <QByteArray>
@@ -5506,6 +5507,31 @@ void EditorStateTest::denoiseAddsCleanedClipOnTrackAbove()
 
 void EditorStateTest::audioRecordingVoiceoverWorkflow()
 {
+#ifdef Q_OS_MACOS
+    // Sem microfone autorizado este teste só pode percorrer o ramo "no samples" (o qWaitFor mais
+    // abaixo) — e é nesse ramo que o runner do macOS morreu com SIGBUS/BUS_ADRALN, com o endereço a
+    // ser lixo de heap e a instrução a exigir alinhamento. Sem permissão não há o que afirmar sobre
+    // gravação, por isso sai por SKIP antes de construir o motor, em vez de arriscar o processo.
+    // Isto já era o desfecho efectivo (o guarda "no samples" mais abaixo também faz QSKIP); a
+    // diferença é que agora não se passa por um caminho que já matou o processo.
+    //
+    // Só no macOS: no Linux o Qt não implementa esta permissão e o job corre em xvfb sem
+    // dispositivo de áudio, onde o startRecording falha cedo — nunca crashou lá, e não vale a pena
+    // arriscar a cobertura desse lado.
+    //
+    // O estado vai para o log porque é ele que diz qual ramo correu. Medido: neste Mac o binário de
+    // teste recebe Denied, portanto os 120 ciclos locais que correram sem falha nunca exercitaram o
+    // ramo do crash — não provam nada sobre ele. Cuidado com a ordem do enum em Qt 6.12:
+    // Undetermined, Granted, Denied (é Denied que vale 2).
+    const Qt::PermissionStatus mic = qApp->checkPermission(QMicrophonePermission{});
+    const char *micName = mic == Qt::PermissionStatus::Granted  ? "Granted"
+                        : mic == Qt::PermissionStatus::Denied   ? "Denied"
+                                                                : "Undetermined";
+    qInfo("microphone permission: %s", micName);
+    if (mic != Qt::PermissionStatus::Granted)
+        QSKIP("microphone access not granted to this process; the recording path cannot be exercised");
+#endif
+
     AssetLibrary library;
     AppController state(&library);
 
