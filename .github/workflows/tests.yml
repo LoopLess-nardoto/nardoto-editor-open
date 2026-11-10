@@ -358,6 +358,15 @@ jobs:
         id: test
         run: ctest --test-dir build --output-on-failure --output-log ctest.log
 
+      # CTest hides a test's stdout when it passes, so a green run said nothing about whether the
+      # recording path actually ran. That decision is the whole difference between "the SIGBUS is
+      # out of the way" and "it simply did not happen this time" — print it instead of guessing.
+      - name: Report microphone decision
+        if: runner.os == 'macOS'
+        run: |
+          ctest --test-dir build -R EditorState -V 2>&1 \
+            | grep -Ei "microphone permission|SKIP " || echo "no microphone line in the output"
+
       - name: Summarize test failures
         if: failure() && steps.test.outcome == 'failure'
         shell: bash
