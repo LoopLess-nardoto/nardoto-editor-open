@@ -5641,6 +5641,12 @@ void EditorStateTest::audioRecordingVoiceoverWorkflow()
         QVERIFY(newClip.timelineDuration > 0);
         QVERIFY(QFile::exists(newClip.path));
 
+        // The references above point INTO clips; undo() below destroys those elements. Keep the
+        // paths by value for the cleanup at the end — reading newClip.path after the undo is what
+        // crashed on the macOS runner (SIGSEGV at 0x5555…, freed memory, inside QFile::remove),
+        // and the bug hid for weeks because it only fires when the allocator does not recycle.
+        const QString newClipPath = newClip.path;
+
         // Test undo
         QVERIFY(state.undoAvailable());
         state.undo();
@@ -5664,6 +5670,7 @@ void EditorStateTest::audioRecordingVoiceoverWorkflow()
         QVERIFY(secondClip.timelineDuration > 0);
         QVERIFY(QFile::exists(secondClip.path));
         QVERIFY(QFileInfo(secondClip.path).size() > 0);
+        const QString secondClipPath = secondClip.path;  // same reason: it outlives the element
 
         // Verify seeking and playback after recording two clips
         state.setPlayheadSeconds(0.0);
@@ -5676,8 +5683,8 @@ void EditorStateTest::audioRecordingVoiceoverWorkflow()
         state.setPlayheadSeconds(1.0);
         QCOMPARE(state.playheadSeconds(), 1.0);
 
-        QFile::remove(newClip.path);
-        QFile::remove(secondClip.path);
+        QFile::remove(newClipPath);
+        QFile::remove(secondClipPath);
 
         // NOW TEST FROM SCRATCH: Empty track with 2 consecutive recordings
         project.tracks()[0].clips.clear();
