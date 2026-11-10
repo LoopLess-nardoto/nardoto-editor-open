@@ -368,33 +368,41 @@ jobs:
             | grep -Ei "microphone permission|SKIP " || echo "no microphone line in the output"
 
       # The recording test was killed by SIGBUS once in three runs here, before the skip existed.
-      # A crash gives no stack and a passing test hides its output, so the defect stayed unattributed
-      # for weeks. Run that one test under lldb with the CI skip overridden: if it dies, the backtrace
-      # lands in this log. continue-on-error keeps the suite's verdict honest — this is an
-      # investigation step, not a gate.
-      - name: Probe the recording crash under lldb
+      # lldb was the wrong tool: on this runner it waits on the process and had to be cancelled
+      # after 19 minutes. macOS writes its own crash report, so run the test directly, keep the
+      # runs, and upload the .ips — that is the stack, symbolicated, with no debugger attached.
+      - name: Probe the recording crash
         if: runner.os == 'macOS'
         continue-on-error: true
-        # The first real attempt sat here for 19 minutes and had to be cancelled: lldb waited on a
-        # process that never returned and nothing bounded it. Five rounds of a test that takes four
-        # seconds do not need more than this.
-        timeout-minutes: 6
+        timeout-minutes: 15
         env:
           DRIFT_MIC_ON_CI: "1"
+          MallocScribble: "1"
+          MallocPreScribble: "1"
         run: |
-          # Do not guess the output path: the first version of this step pointed at
-          # tests/tst_editorstate, lldb answered "does not exist", and continue-on-error turned
-          # that into a silent no-op for five rounds.
           BIN="$(find . -type f -name tst_editorstate -perm -u+x | head -n1)"
           echo "binario: $BIN"
           [ -x "$BIN" ] || { echo "tst_editorstate not found — nothing was investigated"; exit 1; }
-          for i in 1 2 3 4 5; do
+          mkdir -p "$RUNNER_TEMP/ips"
+          for i in $(seq 1 15); do
             echo "--- volta $i"
-            # The runner's macOS has coreutils, so timeout is available; without it a wedged lldb
-            # holds the whole job.
-            timeout 60 lldb --batch -o run -o "bt all" -- "$BIN" \
-              audioRecordingVoiceoverWorkflow 2>&1 | tail -45 || echo "volta $i: timeout ou saida nao-zero"
+            "$BIN" audioRecordingVoiceoverWorkflow > "$RUNNER_TEMP/volta-$i.log" 2>&1 \
+              || echo "volta $i saiu com $?"
+            grep -E "SIGBUS|signal|Totals" "$RUNNER_TEMP/volta-$i.log" | head -3 || true
           done
+          cp ~/Library/Logs/DiagnosticReports/*.ips "$RUNNER_TEMP/ips/" 2>/dev/null || true
+          ls -la "$RUNNER_TEMP/ips" | tail -5
+
+      - name: Upload the crash reports
+        if: always() && runner.os == 'macOS'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-crash-reports
+          path: |
+            ${{ runner.temp }}/ips
+            ${{ runner.temp }}/volta-*.log
+          if-no-files-found: warn
 
       - name: Summarize test failures
         if: failure() && steps.test.outcome == 'failure'
