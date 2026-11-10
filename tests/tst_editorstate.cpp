@@ -5613,8 +5613,20 @@ void EditorStateTest::audioRecordingVoiceoverWorkflow()
         // A CI runner can expose an input device that never delivers samples (macOS with
         // microphone access denied), so recording starts but its clock stays at zero.
         if (!QTest::qWaitFor([&] { return state.audioRecordSeconds() >= 0.25; }, 2000)) {
+            // This is the shape a macOS runner gives us — a device that starts and never delivers —
+            // and the exact spot where this test was once killed by SIGBUS (BUS_ADRALN). It used to
+            // QSKIP here, which proved nothing about the teardown: a skipped branch cannot fail.
+            // Assert what cancelling must leave behind, so the path executes and breaks loudly if it
+            // ever regresses.
             state.cancelAudioRecording();
-            QSKIP("Audio input delivers no samples");
+            QCOMPARE(state.isRecordingAudio(), false);
+            QCOMPARE(state.isAudioRecordingPaused(), false);
+            QCOMPARE(state.recordingTrackIndex(), -1);
+            QCOMPARE(state.playing(), false);
+            QCOMPARE(state.playheadSeconds(), 3.0);
+            QCOMPARE(project.tracks().at(0).clips.size(), 1);
+            QVERIFY(state.audioRecordLivePeaks().isEmpty());
+            return;
         }
         state.stopAudioRecording();
         QCOMPARE(state.isRecordingAudio(), false);
