@@ -143,6 +143,11 @@ jobs:
             libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev libxcb-image0-dev libxcb-shm0-dev \
             libxcb-icccm4-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-shape0-dev \
             libxcb-randr0-dev libxcb-render-util0-dev libxcb-xinerama0-dev libxcb-cursor-dev
+            # actions/cache saves as the runner user in the post step, but apt ran under sudo and left
+            # lock/ and partial/ owned by root — tar then failed with "Cannot open: Permission denied"
+            # and the .deb cache was never saved, while the step still reported success (run 42768595639).
+            # The archives themselves were fine: /home/runner/apt-archives/partial/*.deb existed.
+            sudo chown -R "$(id -u):$(id -g)" "$apt_cache"
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
