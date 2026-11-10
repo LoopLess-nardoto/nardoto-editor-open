@@ -37,7 +37,11 @@ jobs:
   linux:
     name: CTest
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    # 90, like package.yml's linux job. The apt step alone has been measured at 11m37s on a good
+    # day and past 20 minutes on a bad one, and the rest of the job needs ~29 min (41 min total on
+    # run 42752926635), so 60 leaves no margin for a slow mirror — it cuts the job exactly when the
+    # tests are about to run.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -80,15 +84,16 @@ jobs:
       # that constructs a QMediaDevices SIGABRTs on a runner without them rather than falling
       # back to software decode.
       #
-      # What it costs when the mirror is slow, measured on run 42746927274 (2026-11-10): 6m44 for
-      # apt-get update, then ~13 min of package downloads from us.archive.ubuntu.com. The 10-minute
-      # ceiling cut it off with 33 of ~130 packages fetched — twice in a row, so it is the mirror
-      # and not one unlucky runner. 25 leaves room for the worst mirror, and the deb cache below
+      # What it costs when the mirror is slow, measured twice on 2026-11-10: 6m44 for apt-get
+      # update plus ~13 min of downloads from us.archive.ubuntu.com, and 11m37s for the whole
+      # step on run 42752926635 — but past 20 minutes on the run right after, with the same
+      # package list. The 10-minute ceiling cut that twice in a row at 33 of the 70 packages, so
+      # it is the mirror and not one unlucky runner. 35 covers the slow tail; the deb cache below
       # makes every run after the first one pay nothing for the downloads.
       #
       # The fast-fail guard is the per-connection Acquire timeout below (10 s, 2 retries), not this
       # ceiling: a dead mirror still gives up in ~30 s per file instead of hanging until the
-      # 60-minute job timeout.
+      # job timeout.
       #
       # The debs go to a runner-owned directory because actions/cache runs as the runner user and
       # the default /var/cache/apt/archives is root-owned. A stale or truncated deb cannot install
@@ -102,7 +107,7 @@ jobs:
             apt-jammy-tests-
 
       - name: Install native build dependencies
-        timeout-minutes: 25
+        timeout-minutes: 35
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |

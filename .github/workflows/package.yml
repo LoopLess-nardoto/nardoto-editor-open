@@ -186,7 +186,7 @@ jobs:
             apt-jammy-package-
 
       - name: Install native build dependencies
-        timeout-minutes: 25
+        timeout-minutes: 35
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
