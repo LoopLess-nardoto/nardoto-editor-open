@@ -375,6 +375,10 @@ jobs:
       - name: Probe the recording crash under lldb
         if: runner.os == 'macOS'
         continue-on-error: true
+        # The first real attempt sat here for 19 minutes and had to be cancelled: lldb waited on a
+        # process that never returned and nothing bounded it. Five rounds of a test that takes four
+        # seconds do not need more than this.
+        timeout-minutes: 6
         env:
           DRIFT_MIC_ON_CI: "1"
         run: |
@@ -386,8 +390,10 @@ jobs:
           [ -x "$BIN" ] || { echo "tst_editorstate not found — nothing was investigated"; exit 1; }
           for i in 1 2 3 4 5; do
             echo "--- volta $i"
-            lldb --batch -o run -o "bt all" -- "$BIN" \
-              audioRecordingVoiceoverWorkflow 2>&1 | tail -45
+            # The runner's macOS has coreutils, so timeout is available; without it a wedged lldb
+            # holds the whole job.
+            timeout 60 lldb --batch -o run -o "bt all" -- "$BIN" \
+              audioRecordingVoiceoverWorkflow 2>&1 | tail -45 || echo "volta $i: timeout ou saida nao-zero"
           done
 
       - name: Summarize test failures
