@@ -5519,17 +5519,24 @@ void EditorStateTest::audioRecordingVoiceoverWorkflow()
     // dispositivo de áudio, onde o startRecording falha cedo — nunca crashou lá, e não vale a pena
     // arriscar a cobertura desse lado.
     //
-    // O estado vai para o log porque é ele que diz qual ramo correu. Medido: neste Mac o binário de
-    // teste recebe Denied, portanto os 120 ciclos locais que correram sem falha nunca exercitaram o
-    // ramo do crash — não provam nada sobre ele. Cuidado com a ordem do enum em Qt 6.12:
-    // Undetermined, Granted, Denied (é Denied que vale 2).
+    // O estado vai para o log porque é ele que diz qual ramo correu. Cuidado com a ordem do enum em
+    // Qt 6.12: Undetermined, Granted, Denied — é Denied que vale 2.
+    //
+    // E cuidado com o valor em si: no macOS o Qt devolveu Denied com esta app **autorizada**. Medido
+    // com a API crua da Apple dentro da mesma app: 3 (Authorized), enquanto o Qt dizia Denied. Isso
+    // desmente a razão que aqui esteve escrita antes — os ciclos locais que "não reproduziam" não
+    // reproduziam por outra via. Por isso o SKIP fica restrito à CI, que é onde o crash existe
+    // (SIGBUS uma vez em três); numa máquina de desenvolvimento o teste corre e mede a gravação.
     const Qt::PermissionStatus mic = qApp->checkPermission(QMicrophonePermission{});
+    const bool emCI = qEnvironmentVariableIsSet("CI")
+                      || qEnvironmentVariableIsSet("GITHUB_ACTIONS");
     const char *micName = mic == Qt::PermissionStatus::Granted  ? "Granted"
                         : mic == Qt::PermissionStatus::Denied   ? "Denied"
                                                                 : "Undetermined";
-    qInfo("microphone permission: %s", micName);
-    if (mic != Qt::PermissionStatus::Granted)
-        QSKIP("microphone access not granted to this process; the recording path cannot be exercised");
+    qInfo("microphone permission: %s (skip only on CI: %s)", micName, emCI ? "yes" : "no");
+    if (mic != Qt::PermissionStatus::Granted && emCI)
+        QSKIP("the runner reports no microphone access for this process; the recording path is "
+              "skipped there because it has already crashed with SIGBUS on such a runner");
 #endif
 
     AssetLibrary library;
