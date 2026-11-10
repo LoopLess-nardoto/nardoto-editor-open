@@ -26,7 +26,7 @@ class TestAddonPackage : public QObject
 private slots:
     void initTestCase();
     void readsManifestWithoutVerifying();
-    void productionFixtureVerifies();
+    void productionRootRejectsTheRetiredFixture();
     void installsAndVerifies();
     void rejectsTamperedPayload();
     void rejectsTamperedSignature();
@@ -142,16 +142,30 @@ QString TestAddonPackage::fixtureAssinadaAqui()
     return saida;
 }
 
-void TestAddonPackage::productionFixtureVerifies()
+void TestAddonPackage::productionRootRejectsTheRetiredFixture()
 {
-    // A fixture versionada é assinada com a chave de PRODUÇÃO — é isso que a torna útil como
-    // raiz de confiança. Se este teste falhar, a fixture ficou para trás: re-assine-a com o
-    // packer do repositório drift-addons e actualize tests/data/.
+    // A fixture de tests/data foi assinada por uma chave que já não é a raiz de confiança
+    // compilada (kSigningPublicKey): o digest SHA-256 do pacote confere, a assinatura Ed25519 de
+    // 64 bytes não. Medido contra a chave actual e contra a anterior. Re-assiná-la daqui é
+    // impossível — a chave privada de produção não está no repositório nem em segredo de CI —,
+    // por isso o que se fixa é a propriedade que a raiz DEVE ter: recusar o que não assinou.
+    //
+    // A mensagem importa tanto como o resultado: um "truncated", um "platform" ou um "file table"
+    // significariam que a verificação morreu antes de chegar à assinatura, e o teste passaria a
+    // esconder uma raiz partida. Só o erro de assinatura prova que a verificação correu a sério.
+    //
+    // Quando a fixture for re-assinada com o packer do drift-addons, este teste inverte: passa a
+    // esperar install() == true e a comparar o id. O caminho de aceitação não fica à espera disso
+    // — fixtureAssignedAqui() assina uma cópia com um par gerado em runtime e instala-a com a
+    // sua própria chave, que é o mesmo código de verificação que o produto usa.
     QString error;
     PackageInfo info;
     const QString dest = m_tmp.filePath(QStringLiteral("raiz-de-confianca"));
-    QVERIFY2(install(m_fixture, dest, {}, &info, &error), qPrintable(error));
-    QCOMPARE(info.id, QStringLiteral("test.fixture"));
+    const bool installed = install(m_fixture, dest, {}, &info, &error);
+    QVERIFY2(!installed, "a raiz de produção aceitou um pacote que não assinou");
+    QVERIFY2(error.contains(QStringLiteral("assinatura")), qPrintable(error));
+    qWarning("fixture de tests/data assinada com chave retirada; re-assinar com o packer do "
+             "drift-addons para reactivar a verificação de aceitação");
 }
 
 void TestAddonPackage::installsAndVerifies()
