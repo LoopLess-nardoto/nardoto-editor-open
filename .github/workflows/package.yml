@@ -85,7 +85,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install flatpak tooling
-        timeout-minutes: 10
+        # Same slow-mirror arithmetic as the linux job's dependencies step below: apt-get update
+        # alone has been measured at 6m44 here, and this step also waits on flatpak-builder and
+        # flathub afterwards. 10 minutes leaves almost nothing; the job's own ceiling is 120.
+        timeout-minutes: 20
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -172,14 +175,31 @@ jobs:
       # whose generated dlopen failure path is assert(0). hwaccel::deviceAvailable() now
       # guards that, so their absence no longer SIGABRTs — they stay so the tests probe VAAPI
       # for real instead of taking the guard's early-out on every run.
+      #
+      # 25 minutes, not 10: a slow Ubuntu mirror needs 6-7 min just for apt-get update and then
+      # ~13 min of downloads — measured on tests.yml's run 42746927274 (2026-11-10), which the
+      # 10-minute ceiling cut off at 33 of ~130 packages. The deb cache below means only the first
+      # run pays the downloads; releasing must not hang on a mirror either way.
+      - name: Restore apt package cache
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-jammy-package-${{ hashFiles('.github/workflows/package.yml') }}
+          restore-keys: |
+            apt-jammy-package-
+
       - name: Install native build dependencies
-        timeout-minutes: 10
+        timeout-minutes: 50
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           # Runner image adds packages.microsoft.com; azure-cli.list is the one *microsoft* misses.
           # GitHub's apt-mirrors.txt tries azure.archive then archive.ubuntu.com; both stall.
           sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure-cli*
+          apt_cache="$HOME/apt-archives"
+          sudo mkdir -p "$apt_cache/partial"
+          sudo chown -R "$(id -u):$(id -g)" "$apt_cache"
+          apt_opts=(-o "Dir::Cache::archives=$apt_cache" -o "APT::Keep-Downloaded-Packages=true")
           printf '%s\n' 'Acquire::http::Timeout "10";' 'Acquire::https::Timeout "10";' \
             'Acquire::Retries "2";' 'APT::Acquire::Retries "2";' \
             | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
@@ -194,7 +214,7 @@ jobs:
             | awk '{ printf "%s\tpriority:%d\n", $0, NR }' \
             | sudo tee /etc/apt/apt-mirrors.txt
           sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y -o Acquire::Retries=3 \
+          sudo apt-get install -y "${apt_opts[@]}" -o Acquire::Retries=3 \
             build-essential ninja-build pkg-config git xvfb zsync \
             libgl1-mesa-dev libegl1-mesa-dev libglib2.0-dev libdbus-1-dev \
             libzstd-dev libssl-dev libsoundtouch-dev zlib1g-dev \
@@ -207,6 +227,9 @@ jobs:
             libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev libxcb-image0-dev libxcb-shm0-dev \
             libxcb-icccm4-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-shape0-dev \
             libxcb-randr0-dev libxcb-render-util0-dev libxcb-xinerama0-dev libxcb-cursor-dev
+            # Same ownership trap as tests.yml: apt runs under sudo, the cache action saves as the
+            # runner, and root-owned lock//partial/ makes the save fail while reporting success.
+            sudo chown -R "$(id -u):$(id -g)" "$apt_cache"
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4

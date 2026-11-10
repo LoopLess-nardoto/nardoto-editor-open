@@ -37,7 +37,11 @@ jobs:
   linux:
     name: CTest
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    # 90, like package.yml's linux job. The apt step alone has been measured at 11m37s on a good
+    # day and past 20 minutes on a bad one, and the rest of the job needs ~29 min (41 min total on
+    # run 42752926635), so 60 leaves no margin for a slow mirror — it cuts the job exactly when the
+    # tests are about to run.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -79,12 +83,40 @@ jobs:
       # through implib-gen stubs whose generated dlopen failure path is assert(0), so any test
       # that constructs a QMediaDevices SIGABRTs on a runner without them rather than falling
       # back to software decode.
+      #
+      # What it costs when the mirror is slow, measured four times on 2026-11-10 with the same
+      # 70-package list: 11m37s (run 42752926635), past 20 minutes, past 25m16s, and 35m13s
+      # (run 42764573336 — it died on the 35-minute ceiling). The mirror degrades through the
+      # day, so the ceiling was never the real limit: 50 is what it takes today, and the deb
+      # cache below means every run after the first one to complete pays nothing for the
+      # downloads. If this still fails, the answer is not a bigger number — it is dropping this
+      # lane or pinning a mirror that is reachable from the runner.
+      #
+      # The fast-fail guard is the per-connection Acquire timeout below (10 s, 2 retries), not this
+      # ceiling: a dead mirror still gives up in ~30 s per file instead of hanging until the
+      # job timeout.
+      #
+      # The debs go to a runner-owned directory because actions/cache runs as the runner user and
+      # the default /var/cache/apt/archives is root-owned. A stale or truncated deb cannot install
+      # silently: apt checks it against the index's size and hash before unpacking.
+      - name: Restore apt package cache
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-jammy-tests-${{ hashFiles('.github/workflows/tests.yml') }}
+          restore-keys: |
+            apt-jammy-tests-
+
       - name: Install native build dependencies
-        timeout-minutes: 10
+        timeout-minutes: 50
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure-cli*
+          apt_cache="$HOME/apt-archives"
+          sudo mkdir -p "$apt_cache/partial"
+          sudo chown -R "$(id -u):$(id -g)" "$apt_cache"
+          apt_opts=(-o "Dir::Cache::archives=$apt_cache" -o "APT::Keep-Downloaded-Packages=true")
           printf '%s\n' 'Acquire::http::Timeout "10";' 'Acquire::https::Timeout "10";' \
             'Acquire::Retries "2";' 'APT::Acquire::Retries "2";' \
             | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
@@ -99,7 +131,7 @@ jobs:
             | awk '{ printf "%s\tpriority:%d\n", $0, NR }' \
             | sudo tee /etc/apt/apt-mirrors.txt
           sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y -o Acquire::Retries=3 \
+          sudo apt-get install -y "${apt_opts[@]}" -o Acquire::Retries=3 \
             build-essential ninja-build pkg-config git xvfb ccache \
             libgl1-mesa-dev libegl1-mesa-dev libglib2.0-dev libdbus-1-dev \
             libzstd-dev libssl-dev libsoundtouch-dev zlib1g-dev \
@@ -111,6 +143,11 @@ jobs:
             libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev libxcb-image0-dev libxcb-shm0-dev \
             libxcb-icccm4-dev libxcb-sync-dev libxcb-xfixes0-dev libxcb-shape0-dev \
             libxcb-randr0-dev libxcb-render-util0-dev libxcb-xinerama0-dev libxcb-cursor-dev
+            # actions/cache saves as the runner user in the post step, but apt ran under sudo and left
+            # lock/ and partial/ owned by root — tar then failed with "Cannot open: Permission denied"
+            # and the .deb cache was never saved, while the step still reported success (run 42768595639).
+            # The archives themselves were fine: /home/runner/apt-archives/partial/*.deb existed.
+            sudo chown -R "$(id -u):$(id -g)" "$apt_cache"
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4

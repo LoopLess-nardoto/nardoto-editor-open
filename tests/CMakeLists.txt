@@ -95,7 +95,10 @@ set_tests_properties(UiFont PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 qt_add_executable(tst_addonpackage tst_addonpackage.cpp)
 target_include_directories(tst_addonpackage PRIVATE ../src)
-target_link_libraries(tst_addonpackage PRIVATE Qt6::Test driftengine)
+# OpenSSL::Crypto entra aqui porque o teste gera um par Ed25519 e assina a fixture em
+# runtime (a chave de produção não está no repositório). O engine liga-o em PRIVATE, por
+# isso os includes não vinham de lá.
+target_link_libraries(tst_addonpackage PRIVATE Qt6::Test driftengine OpenSSL::Crypto)
 target_compile_definitions(tst_addonpackage PRIVATE
     DRIFT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_test(NAME AddonPackage COMMAND tst_addonpackage)

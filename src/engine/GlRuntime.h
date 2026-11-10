@@ -15,6 +15,8 @@
 #include "core/Time.h"
 
 #include <QVector4D>
+#include <QPointer>
+#include <atomic>
 #include <QByteArray>
 #include <QElapsedTimer>
 #include <QImage>
@@ -359,7 +361,12 @@ private:
     bool m_ok = false;
     bool m_sharesWithGui = false;
     QThread *m_glThread = nullptr;
-    QObject *m_glOwner = nullptr; // lives on m_glThread; the invoke target
+    // QPointer e nao QObject*: quando o fecho destroi o dono, o ponteiro fica nulo
+    // sozinho e exec() devolve false em vez de dereferenciar memoria libertada.
+    QPointer<QObject> m_glOwner; // lives on m_glThread; the invoke target
+    // Marcado no shutdown(). Sem isto, ensureReady() via m_ok a meio do fecho e
+    // voltava a subir um contexto que ja nao existe.
+    std::atomic<bool> m_shuttingDown{false};
 
     std::multimap<uint64_t, std::unique_ptr<QOpenGLFramebufferObject>> m_targetPool;
     size_t m_pooledTargets = 0;
