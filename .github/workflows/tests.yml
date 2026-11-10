@@ -79,12 +79,38 @@ jobs:
       # through implib-gen stubs whose generated dlopen failure path is assert(0), so any test
       # that constructs a QMediaDevices SIGABRTs on a runner without them rather than falling
       # back to software decode.
+      #
+      # What it costs when the mirror is slow, measured on run 42746927274 (2026-11-10): 6m44 for
+      # apt-get update, then ~13 min of package downloads from us.archive.ubuntu.com. The 10-minute
+      # ceiling cut it off with 33 of ~130 packages fetched — twice in a row, so it is the mirror
+      # and not one unlucky runner. 25 leaves room for the worst mirror, and the deb cache below
+      # makes every run after the first one pay nothing for the downloads.
+      #
+      # The fast-fail guard is the per-connection Acquire timeout below (10 s, 2 retries), not this
+      # ceiling: a dead mirror still gives up in ~30 s per file instead of hanging until the
+      # 60-minute job timeout.
+      #
+      # The debs go to a runner-owned directory because actions/cache runs as the runner user and
+      # the default /var/cache/apt/archives is root-owned. A stale or truncated deb cannot install
+      # silently: apt checks it against the index's size and hash before unpacking.
+      - name: Restore apt package cache
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-jammy-tests-${{ hashFiles('.github/workflows/tests.yml') }}
+          restore-keys: |
+            apt-jammy-tests-
+
       - name: Install native build dependencies
-        timeout-minutes: 10
+        timeout-minutes: 25
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure-cli*
+          apt_cache="$HOME/apt-archives"
+          sudo mkdir -p "$apt_cache/partial"
+          sudo chown -R "$(id -u):$(id -g)" "$apt_cache"
+          apt_opts=(-o "Dir::Cache::archives=$apt_cache" -o "APT::Keep-Downloaded-Packages=true")
           printf '%s\n' 'Acquire::http::Timeout "10";' 'Acquire::https::Timeout "10";' \
             'Acquire::Retries "2";' 'APT::Acquire::Retries "2";' \
             | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
@@ -99,7 +125,7 @@ jobs:
             | awk '{ printf "%s\tpriority:%d\n", $0, NR }' \
             | sudo tee /etc/apt/apt-mirrors.txt
           sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y -o Acquire::Retries=3 \
+          sudo apt-get install -y "${apt_opts[@]}" -o Acquire::Retries=3 \
             build-essential ninja-build pkg-config git xvfb ccache \
             libgl1-mesa-dev libegl1-mesa-dev libglib2.0-dev libdbus-1-dev \
             libzstd-dev libssl-dev libsoundtouch-dev zlib1g-dev \
