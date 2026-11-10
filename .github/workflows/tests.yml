@@ -378,9 +378,15 @@ jobs:
         env:
           DRIFT_MIC_ON_CI: "1"
         run: |
+          # Do not guess the output path: the first version of this step pointed at
+          # tests/tst_editorstate, lldb answered "does not exist", and continue-on-error turned
+          # that into a silent no-op for five rounds.
+          BIN="$(find . -type f -name tst_editorstate -perm -u+x | head -n1)"
+          echo "binario: $BIN"
+          [ -x "$BIN" ] || { echo "tst_editorstate not found — nothing was investigated"; exit 1; }
           for i in 1 2 3 4 5; do
             echo "--- volta $i"
-            lldb --batch -o run -o "bt all" -- ./tests/tst_editorstate \
+            lldb --batch -o run -o "bt all" -- "$BIN" \
               audioRecordingVoiceoverWorkflow 2>&1 | tail -45
           done
 
