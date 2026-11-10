@@ -338,8 +338,19 @@ void AudioRecorder::onReadyRead()
     QString error;
     if (!m_writer.writeFrames(stereoPcm.data(), frames, &error)) {
         qWarning("AudioRecorder: writeFrames failed: %s", qPrintable(error));
-        emit recordingError(error);
-        cancelRecording();
+        // Never tear the recorder down from inside readyRead: cancelRecording() drops
+        // m_audioSource, which owns m_inputIo — the very QIODevice emitting this signal. The
+        // caller keeps running on freed memory, and the allocator only sometimes turns that into
+        // a visible crash (SIGBUS/BUS_ADRALN with a heap-garbage address on the macOS runner).
+        // Defer one event-loop turn so the emit finishes on a live object.
+        const QString message = error;
+        QMetaObject::invokeMethod(
+            this,
+            [this, message] {
+                emit recordingError(message);
+                cancelRecording();
+            },
+            Qt::QueuedConnection);
         return;
     }
 
