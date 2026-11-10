@@ -367,6 +367,23 @@ jobs:
           ctest --test-dir build -R EditorState -V 2>&1 \
             | grep -Ei "microphone permission|SKIP " || echo "no microphone line in the output"
 
+      # The recording test was killed by SIGBUS once in three runs here, before the skip existed.
+      # A crash gives no stack and a passing test hides its output, so the defect stayed unattributed
+      # for weeks. Run that one test under lldb with the CI skip overridden: if it dies, the backtrace
+      # lands in this log. continue-on-error keeps the suite's verdict honest — this is an
+      # investigation step, not a gate.
+      - name: Probe the recording crash under lldb
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        env:
+          DRIFT_MIC_ON_CI: "1"
+        run: |
+          for i in 1 2 3 4 5; do
+            echo "--- volta $i"
+            lldb --batch -o run -o "bt all" -- ./tests/tst_editorstate \
+              audioRecordingVoiceoverWorkflow 2>&1 | tail -45
+          done
+
       - name: Summarize test failures
         if: failure() && steps.test.outcome == 'failure'
         shell: bash

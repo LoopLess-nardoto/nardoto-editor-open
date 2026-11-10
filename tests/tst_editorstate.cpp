@@ -5528,8 +5528,11 @@ void EditorStateTest::audioRecordingVoiceoverWorkflow()
     // reproduziam por outra via. Por isso o SKIP fica restrito à CI, que é onde o crash existe
     // (SIGBUS uma vez em três); numa máquina de desenvolvimento o teste corre e mede a gravação.
     const Qt::PermissionStatus mic = qApp->checkPermission(QMicrophonePermission{});
-    const bool emCI = qEnvironmentVariableIsSet("CI")
-                      || qEnvironmentVariableIsSet("GITHUB_ACTIONS");
+    // DRIFT_MIC_ON_CI anula o SKIP da CI: existe para a CI poder levar este teste ao depurador e
+    // apanhar a backtrace do SIGBUS que so acontece la.
+    const bool emCI = (qEnvironmentVariableIsSet("CI")
+                       || qEnvironmentVariableIsSet("GITHUB_ACTIONS"))
+                      && !qEnvironmentVariableIsSet("DRIFT_MIC_ON_CI");
     const char *micName = mic == Qt::PermissionStatus::Granted  ? "Granted"
                         : mic == Qt::PermissionStatus::Denied   ? "Denied"
                                                                 : "Undetermined";
