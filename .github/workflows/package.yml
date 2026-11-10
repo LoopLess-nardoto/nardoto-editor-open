@@ -85,7 +85,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install flatpak tooling
-        timeout-minutes: 10
+        # Same slow-mirror arithmetic as the linux job's dependencies step below: apt-get update
+        # alone has been measured at 6m44 here, and this step also waits on flatpak-builder and
+        # flathub afterwards. 10 minutes leaves almost nothing; the job's own ceiling is 120.
+        timeout-minutes: 20
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
