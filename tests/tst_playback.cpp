@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include <QMediaDevices>
+#include <QElapsedTimer>
 
 #include "playback/AudioOutputChannel.h"
 #include "playback/PlaybackClock.h"
@@ -43,8 +44,17 @@ void PlaybackTest::clockHoldsStartUntilSinkSyncs()
 {
     PlaybackClock clock;
     clock.reset(drift::secondsToUs(2.5), 48000);
+    QElapsedTimer elapsed;
+    elapsed.start();
     clock.start();
     QTest::qWait(50);
+    // The assertion only holds inside PlaybackClock's 500 ms sink-sync grace period. On a loaded
+    // machine — a parallel build, a CI runner with other jobs — a 50 ms wait can easily take longer
+    // than that, and then the clock has legitimately advanced: that is the wall-clock fallback
+    // doing its job, not a defect. Measured here: this test failed once in two runs when six
+    // compilers were running alongside it. Guard on what actually elapsed instead of assuming.
+    if (elapsed.elapsed() >= 500)
+        QSKIP("the 50 ms wait overshot the 500 ms grace period; the fallback advanced by design");
     QCOMPARE(clock.currentTimeUs(), drift::secondsToUs(2.5));
 }
 
