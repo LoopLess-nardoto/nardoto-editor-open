@@ -4261,6 +4261,14 @@
         <translation>Mídia copiada e revinculada</translation>
     </message>
     <message>
+        <source> (cópia)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source> (cópia %1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Exporting…</source>
         <translation>Exportando…</translation>
     </message>
@@ -4301,6 +4309,70 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
     <message>
         <source>Edit its index.html and save; the editor preview reloads by itself, no render needed.</source>
         <translation>Edite o index.html e salve; a prévia do editor recarrega sozinha, sem precisar renderizar.</translation>
+    </message>
+    <message>
+        <source>Selecione um clipe na timeline.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>[descreva a mudança]</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No Nardoto Editor, mude o clipe selecionado: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clipe: %1 (%2), trilha %3, de %4 s a %5 s da timeline.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Arquivo: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Momento: %1 s da timeline (%2 s dentro do arquivo).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Print desse momento: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>É uma composição de motion: edite o index.html dela e salve; a prévia do editor recarrega sozinha.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Aplique a mudança pelo MCP do Nardoto Editor (nardoto-video-editor).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Biblioteca de mídia indisponível.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Arquivo não encontrado: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Esse clipe não está mais na timeline.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Não foi possível importar %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use um vídeo ou uma imagem.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Essa trilha não aceita esse tipo de mídia.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Mídia trocada</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Remove silence</source>
@@ -4706,6 +4778,10 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
     <message>
         <source>Collect Media to Folder</source>
         <translation>Coletar mídia para pasta</translation>
+    </message>
+    <message>
+        <source>Falas e mídias</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Market</source>
@@ -5308,6 +5384,41 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
     <message>
         <source>Reset to Normal</source>
         <translation>Redefinir para Normal</translation>
+    </message>
+</context>
+<context>
+    <name>CenasTab</name>
+    <message>
+        <source>Falas e mídias</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>1 cena</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 cenas</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Buscar na fala ou no nome do arquivo...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Nenhuma cena de vídeo ou imagem na timeline ainda.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cena %1  ·  %2 s</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>(sem fala neste trecho)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clique para trocar a mídia desta cena</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -6852,10 +6963,6 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
         <translation>Levou %1</translation>
     </message>
     <message>
-        <source>Elapsed: %1</source>
-        <translation>Tempo: %1</translation>
-    </message>
-    <message>
         <source>Report a problem</source>
         <translation>Reportar problema</translation>
     </message>
@@ -6866,6 +6973,30 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
     <message>
         <source>Copies a diagnostic report to send to support</source>
         <translation>Copia um relatório de diagnóstico para enviar ao suporte</translation>
+    </message>
+    <message>
+        <source>Quadro %1 de %2  ·  %3 de %4 do vídeo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Decorrido</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Falta</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Velocidade</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Feche para continuar editando, ou cancele para interromper.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Levou %1  ·  velocidade %2x</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Report copied. Send it to support or paste it into the Studio chat</source>
@@ -6896,6 +7027,18 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
         <translation>Fechar</translation>
     </message>
     <message>
+        <source>Preparando o projeto e abrindo o codificador…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Finalizando o arquivo de vídeo…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Renderizando e codificando os quadros</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1 min %2 s</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6910,10 +7053,6 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
     <message>
         <source>The export finished in %1.</source>
         <translation>A exportação terminou em %1.</translation>
-    </message>
-    <message>
-        <source>Rendering your video. Close to keep editing, or cancel to stop.</source>
-        <translation>Renderizando seu vídeo. Feche para continuar editando ou cancele para interromper.</translation>
     </message>
     <message>
         <source>Export finished.</source>
@@ -7277,24 +7416,32 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
         <translation>Toca direto da composição, sem renderizar. Mude pelo chat do Studio: a prévia recarrega quando o index.html é salvo.</translation>
     </message>
     <message>
-        <source>Ask for a change in this motion...</source>
-        <translation>Peça uma mudança neste motion...</translation>
-    </message>
-    <message>
-        <source>Moment print</source>
-        <translation>Print do momento</translation>
-    </message>
-    <message>
-        <source>Takes a print of this moment and copies it, with the exact time and the composition path, to paste into the Studio chat</source>
-        <translation>Tira um print deste momento e copia, com o tempo exato e o caminho da composição, para colar no chat do Studio</translation>
-    </message>
-    <message>
-        <source>Print copied. Paste it into the Studio chat</source>
-        <translation>Print copiado. Cole no chat do Studio</translation>
-    </message>
-    <message>
         <source>Open folder</source>
         <translation>Abrir pasta</translation>
+    </message>
+    <message>
+        <source>Peça uma mudança neste motion...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Peça uma mudança neste clipe...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pedir ao chat do Studio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Coloca o pedido na caixa do chat do Studio, com este clipe, o tempo e um print do momento. Você revisa e envia.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pedido na caixa do chat do Studio. Revise e envie.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 O pedido foi copiado: cole no chat do Studio.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Original dimensions: %1 × %2</source>
@@ -8020,6 +8167,10 @@ Momento: %3 s da composição (%4 s na timeline).</translation>
     <message>
         <source>Imported from the marketplace.</source>
         <translation>Importado do mercado.</translation>
+    </message>
+    <message>
+        <source>Selecione um clipe de vídeo ou imagem para trocar a mídia.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -10357,6 +10508,30 @@ Se a reprodução travar, experimente outro.</translation>
         <source>Not an OpenTimelineIO Timeline or Stack (schema: %1)</source>
         <translation>Não é uma Timeline ou Stack do OpenTimelineIO (esquema: %1)</translation>
     </message>
+    <message>
+        <source>O Nardoto Studio não está aberto.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O Nardoto Studio não respondeu.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O Nardoto Studio recusou a conexão.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O Nardoto Studio não respondeu a tempo.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O Nardoto Studio fechou a conexão.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O Nardoto Studio não aceitou o pedido.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>RecentProjectsPopup</name>
@@ -11797,38 +11972,120 @@ Se a reprodução travar, experimente outro.</translation>
 <context>
     <name>StartScreen</name>
     <message>
-        <source> (missing)</source>
-        <translation> (não encontrado)</translation>
-    </message>
-    <message>
-        <source>This file has been moved or deleted:
-%1</source>
-        <translation>Este arquivo foi movido ou excluído:
-%1</translation>
-    </message>
-    <message>
-        <source>Remove from recents</source>
-        <translation>Remover dos recentes</translation>
-    </message>
-    <message>
-        <source>Crie vídeos bem-acabados em poucos passos</source>
+        <source>Hoje, %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>New Project</source>
-        <translation>Novo projeto</translation>
+        <source>Ontem</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Open Project…</source>
-        <translation>Abrir projeto…</translation>
+        <source>Recentes</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Recent Projects</source>
-        <translation>Projetos recentes</translation>
+        <source>Do Studio</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Nothing here yet — projects you save will show up in this list.</source>
-        <translation>Nada aqui ainda — os projetos que você salvar aparecerão nesta lista.</translation>
+        <source>Buscar projeto</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>1 projeto</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 projetos</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>DO STUDIO</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>CONTINUAR DE ONDE PAROU</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Editado: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>1 clipe de vídeo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 clipes de vídeo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>com legendas</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Abrir</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exportar direto</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Duplicar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Projeto duplicado</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Não foi possível duplicar o projeto</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Novo projeto</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>YouTube</source>
+        <translation type="unfinished">YouTube</translation>
+    </message>
+    <message>
+        <source>Short</source>
+        <translation type="unfinished">Baixa</translation>
+    </message>
+    <message>
+        <source>Quadrado</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Outros formatos...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Abrir projeto do computador...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Arquivo movido ou apagado</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tirar dos recentes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Nenhum projeto do Studio ainda: os projetos que o chat do Studio salvar aparecem aqui.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Os projetos que você salvar aparecem aqui.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Arraste vídeos, áudios ou imagens para cá e comece um projeto com eles</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -13134,6 +13391,10 @@ Se a reprodução travar, experimente outro.</translation>
         <translation>Propriedades</translation>
     </message>
     <message>
+        <source>Trocar mídia...   Ctrl+Shift+R</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Select multiple</source>
         <translation>Selecionar vários</translation>
     </message>
@@ -14353,6 +14614,161 @@ Se a reprodução travar, experimente outro.</translation>
     </message>
 </context>
 <context>
+    <name>TrocarMidiaDialog</name>
+    <message>
+        <source>Mídia da cena %1 trocada. Ctrl+Z desfaz.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Nada encontrado. Tente outra sugestão.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Nada encontrado no YouTube. Tente outra busca.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A IA está lendo a fala e sugerindo buscas...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sugestões para esta fala:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>MÍDIA ATUAL</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Trocar a mídia da cena %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A mídia nova entra no mesmo lugar e com a mesma duração (%1 s). Ctrl+Z desfaz.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>(sem fala neste trecho)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bancos de vídeo e imagem</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>YouTube</source>
+        <translation type="unfinished">YouTube</translation>
+    </message>
+    <message>
+        <source>Gerar com IA</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Do computador</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O que buscar (em inglês acha mais coisa)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Vídeos</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Imagens</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Buscar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>imagem</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>licença não informada</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O que buscar no YouTube (português ou inglês)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Buscar no YouTube</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Escolha o pedaço (máximo 8 s)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Começa em %1 do vídeo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Duração do pedaço: %1 s</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Baixando o pedaço...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ver o pedaço</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pedaço baixado. Se gostou, clique em &quot;Usar este pedaço&quot;.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gerar com IA (pedido pronto para o VEO3 ou imagem): chega na próxima etapa.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Escolha um vídeo ou uma imagem do seu computador para entrar no lugar desta cena.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Escolher arquivo...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Escolher mídia</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Buscando opções...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Baixando para a pasta do projeto...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Escolha um vídeo, o início e a duração, e veja o pedaço antes de usar.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clique numa opção para escolher. O arquivo vai para a pasta do projeto, em midias/trocas.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancelar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Usar este pedaço</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Usar esta mídia</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>UnsavedChangesDialog</name>
     <message>
         <source>Unsaved changes</source>
@@ -14865,11 +15281,7 @@ Se a reprodução travar, experimente outro.</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>motion-host/main.js não encontrado</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Electron não encontrado para o motor de motion</source>
+        <source>O motor de motion não está instalado. Baixe o &quot;Motor de motion&quot; em Extras.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

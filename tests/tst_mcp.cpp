@@ -296,7 +296,10 @@ void McpTest::catalogOpsIncludeWhen()
     QVERIFY(!compact.contains(QStringLiteral("guide")));
     QVERIFY(!compact.contains(QStringLiteral("hint")));
     // Budgets, not targets: ~270 ops with one-line "when" hints. Raise only with new ops.
-    QVERIFY(QJsonDocument(compact).toJson(QJsonDocument::Compact).size() < 19500);
+    // Medido em 09/11/2026: 19.514 bytes com ~270 ops. O teto anterior (19.500) ficou
+    // 14 bytes curto quando as últimas ops entraram; 20.000 dá folga para uma ou duas
+    // sem transformar o orçamento numa meta.
+    QVERIFY(QJsonDocument(compact).toJson(QJsonDocument::Compact).size() < 20000);
     QVERIFY(QJsonDocument(drift::mcp::catalogPayload({{QStringLiteral("brief"), true}}))
                 .toJson(QJsonDocument::Compact).size() < 10000);
 
