@@ -1023,8 +1023,11 @@ void destroyGpuRuntime()
     if (!g_runtime)
         return;
     g_runtime->shutdown();
-    delete g_runtime;
-    g_runtime = nullptr;
+    // NÃO apagar: um export a decorrer pode entrar em exec() durante o fecho e, com o
+    // objecto libertado, `runtime()` devolvia `*nullptr` — um SIGSEGV determinístico
+    // (3 relatórios em 3 fechos a meio de um export, medido em 09/11/2026). O processo
+    // está a terminar; deixar o objecto vivo custa memória que o SO já vai recolher.
+    // g_runtime = nullptr;  // mantido de propósito
 }
 
 } // namespace
@@ -1205,6 +1208,10 @@ bool GlRuntime::initGlObjects()
 bool GlRuntime::ensureReady()
 {
     QMutexLocker lock(&m_initMutex);
+    // A meio do fecho o contexto e a thread GL já podem ter ido; subir outro aqui
+    // só criava um runtime meio-vivo a competir com quem está a terminar.
+    if (m_shuttingDown)
+        return false;
     if (m_ok)
         return true;
     if (m_failedPermanently)
@@ -1285,9 +1292,16 @@ bool GlRuntime::exec(const std::function<void()> &fn)
     if (!ensureReady())
         return false;
 
+    // `m_glOwner` era um QObject* cru: se o fecho o destruía entre o ensureReady() e
+    // esta linha, o invokeMethod lia memoria libertada (EXC_BAD_ACCESS em 0x150 nos
+    // relatórios do macOS). O QPointer copia-se aqui e fica nulo sozinho.
+    QPointer<QObject> owner = m_glOwner;
+    if (!owner || !context || !surface)
+        return false;
+
     bool ran = false;
     QMetaObject::invokeMethod(
-        m_glOwner,
+        owner,
         [this, &fn]() -> bool {
             // The GL thread has one context and nothing else to switch to, so it stays current
             // between calls: a make/done pair per exec() is a driver round trip every composite,
@@ -1339,6 +1353,7 @@ void GlRuntime::shutdown()
 {
     {
         QMutexLocker lock(&m_initMutex);
+        m_shuttingDown = true; // a partir daqui ensureReady() recusa
         if (!m_ok || !m_glOwner)
             return;
     }
