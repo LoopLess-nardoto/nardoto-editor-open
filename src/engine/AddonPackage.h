@@ -85,7 +85,10 @@ using ProgressFn = std::function<bool(qint64 done, qint64 total)>;
 // disk under .partial, which is why nothing outside this function ever looks there.
 //
 // destDir must not exist, or must be replaceable; any existing .partial sibling is discarded.
+// `verifyKey` existe para os testes poderem assinar a fixture com um par de chaves
+// gerado em runtime, sem depender da chave privada de produção. Vazio = chave de
+// produção (kSigningPublicKey), que é o único caminho usado pelo produto.
 bool install(const QString &packagePath, const QString &destDir, const ProgressFn &progress,
-             PackageInfo *installed, QString *error);
+             PackageInfo *installed, QString *error, const QByteArray &verifyKey = {});
 
 } // namespace drift::addon

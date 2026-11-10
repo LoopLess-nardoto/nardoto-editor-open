@@ -245,13 +245,15 @@ private:
     quint64 m_written = 0;
 };
 
-bool verifySignature(const QByteArray &digest, const QByteArray &signature)
+bool verifySignature(const QByteArray &digest, const QByteArray &signature, const QByteArray &publicKey)
 {
-    if (digest.size() != kDigestSize || signature.size() != kSignatureSize)
+    if (digest.size() != kDigestSize || signature.size() != kSignatureSize
+        || publicKey.size() != int(kSigningPublicKey.size()))
         return false;
 
     EVP_PKEY *key = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr,
-                                                kSigningPublicKey.data(), kSigningPublicKey.size());
+                                                reinterpret_cast<const unsigned char *>(publicKey.constData()),
+                                                size_t(publicKey.size()));
     if (!key)
         return false;
 
@@ -316,8 +318,11 @@ std::optional<PackageInfo> readManifest(const QString &packagePath, QString *err
 }
 
 bool install(const QString &packagePath, const QString &destDir, const ProgressFn &progress,
-             PackageInfo *installed, QString *error)
+             PackageInfo *installed, QString *error, const QByteArray &verifyKey)
 {
+    const QByteArray chave = verifyKey.isEmpty()
+        ? QByteArray(reinterpret_cast<const char *>(kSigningPublicKey.data()), int(kSigningPublicKey.size()))
+        : verifyKey;
     QFile file(packagePath);
     if (!file.open(QIODevice::ReadOnly))
         return fail(error, QStringLiteral("cannot open %1: %2").arg(packagePath, file.errorString()));
@@ -415,7 +420,7 @@ bool install(const QString &packagePath, const QString &destDir, const ProgressF
     const QByteArray signature = file.read(kSignatureSize);
     if (actualDigest != expectedDigest)
         return fail(error, QStringLiteral("package contents do not match its digest"));
-    if (!verifySignature(actualDigest, signature))
+    if (!verifySignature(actualDigest, signature, chave))
         return fail(error, QStringLiteral("a assinatura do pacote não é válida para esta versão do Nardoto Editor"));
 
     QDir existing(destDir);
