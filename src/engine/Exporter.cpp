@@ -782,14 +782,30 @@ void applyHwRateControl(AVCodecContext *vctx, const VideoCodecDef &def, const Ex
             av_opt_set_int(priv, "qp", crf, 0);
             ctx->global_quality = crf;
             break;
-        case HwBackend::VideoToolbox:
+        case HwBackend::VideoToolbox: {
+            // VideoToolbox has no CRF. What it has is kVTCompressionPropertyKey_Quality, which
+            // videotoolboxenc fills from global_quality / FF_QP2LAMBDA / 100 — a 1..100 scale
+            // where HIGHER is better. Handing it the CRF as-is read the dial backwards: the
+            // default of 23 became quality 0.23, and a 1080p24 export came out at 0.4 Mbit/s
+            // (SSIM 0.948 against the x264 file), while a "better" CRF of 18 was worse still.
+            // videoToolboxQualityForCrf() turns the number the dialog shows into the quality
+            // that lands where x264 would at that CRF.
+#if defined(Q_PROCESSOR_ARM_64)
             ctx->flags |= AV_CODEC_FLAG_QSCALE;
 #ifndef FF_QP2LAMBDA
-            ctx->global_quality = crf * 118;
+            ctx->global_quality = Exporter::videoToolboxQualityForCrf(crf) * 118;
 #else
-            ctx->global_quality = crf * FF_QP2LAMBDA;
+            ctx->global_quality = Exporter::videoToolboxQualityForCrf(crf) * FF_QP2LAMBDA;
+#endif
+#else
+            // Constant quality exists only on Apple silicon: on an Intel Mac videotoolboxenc
+            // refuses to open with "-q:v qscale not available for encoder. Use -b:v bitrate
+            // instead", so the export never started. The bitrate the settings carry is the
+            // only rate control that encoder accepts there.
+            ctx->bit_rate = static_cast<int64_t>(qMax(100, settings.videoBitrateKbps)) * 1000;
 #endif
             break;
+        }
         // Unreachable: both MediaCodec rows are RateMode::Bitrate, so useCrf is never true.
         case HwBackend::MediaCodec:
         case HwBackend::None:
@@ -1861,6 +1877,16 @@ QVariantList Exporter::frameRateOptions(int projectFps)
 bool Exporter::gifAvailable()
 {
     return avcodec_find_encoder(AV_CODEC_ID_GIF) != nullptr;
+}
+
+int Exporter::videoToolboxQualityForCrf(int crf)
+{
+    // Fitted on a 1920x1080 24 fps documentary cut (2026-11-15, Apple silicon), SSIM against
+    // the same source: x264 CRF 14 / 18 / 23 / 28 scored 0.9787 / 0.9772 / 0.9745 / 0.9709,
+    // and VideoToolbox reached those scores at quality ~86 / ~79 / ~69 / ~60. That is two
+    // quality points per CRF step, anchored so 18 -> 79 and 23 -> 69. The ends are clamped
+    // to what the encoder accepts: CRF 0..7 is "as good as it gets", never above 100.
+    return qBound(1, 115 - 2 * crf, 100);
 }
 
 ExportSettings Exporter::defaultSettings()

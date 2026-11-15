@@ -343,6 +343,7 @@ private slots:
     void exporterHardwareCodecsListedForThisOs();
     void exporterHardwarePreferredContainerIsMp4();
     void exporterSettingsFromMapRoundTripsHardwareCodec();
+    void exporterVideoToolboxQualityRisesAsCrfDrops();
     void exporterHardwareEncodeProducesPlayableFile();
     void exporterSettingsFromMapValidatesFrameRate();
     void exporterDefaultsToProjectFrameRate();
@@ -10159,6 +10160,31 @@ void EngineTest::exporterSettingsFromMapRoundTripsHardwareCodec()
     QCOMPARE(settings.rateControl, QStringLiteral("crf"));
     QCOMPARE(settings.crf, 23);
     QCOMPARE(settings.videoPreset, QStringLiteral("p4"));
+}
+
+// VideoToolbox takes a quality where higher is better; the CRF the dialog shows runs the other
+// way. Passing the CRF straight through made a 1080p export at the default of 23 come out at
+// 0.4 Mbit/s. Pure arithmetic, so it runs on every platform — the mapping must not drift on a
+// machine that has no VideoToolbox to notice.
+void EngineTest::exporterVideoToolboxQualityRisesAsCrfDrops()
+{
+    // The two anchors the mapping was fitted on.
+    QCOMPARE(Exporter::videoToolboxQualityForCrf(18), 79);
+    QCOMPARE(Exporter::videoToolboxQualityForCrf(23), 69);
+
+    // Never the CRF itself, and never outside what the encoder accepts.
+    int previous = 101;
+    for (int crf = 0; crf <= 51; ++crf) {
+        const int quality = Exporter::videoToolboxQualityForCrf(crf);
+        QVERIFY2(quality >= 1 && quality <= 100, qPrintable(QStringLiteral("crf %1").arg(crf)));
+        QVERIFY2(quality <= previous, qPrintable(QStringLiteral("crf %1").arg(crf)));
+        previous = quality;
+    }
+    QCOMPARE(Exporter::videoToolboxQualityForCrf(0), 100);
+    QVERIFY(Exporter::videoToolboxQualityForCrf(51) < Exporter::videoToolboxQualityForCrf(28));
+    // Out-of-range input still lands on the scale.
+    QCOMPARE(Exporter::videoToolboxQualityForCrf(-5), 100);
+    QCOMPARE(Exporter::videoToolboxQualityForCrf(500), 1);
 }
 
 void EngineTest::exporterHardwareEncodeProducesPlayableFile()

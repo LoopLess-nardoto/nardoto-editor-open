@@ -88,6 +88,11 @@ public:
 
     static bool gifAvailable();
 
+    // The VideoToolbox quality (1..100, higher is better) that matches an x264-style CRF
+    // (0..51, lower is better). The hardware rows share the CRF field with the software ones,
+    // and VideoToolbox reads its dial the other way round.
+    static int videoToolboxQualityForCrf(int crf);
+
     static ExportSettings defaultSettings();
     static ExportSettings settingsFromMap(const QVariantMap &map);
 
