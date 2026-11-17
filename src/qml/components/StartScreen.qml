@@ -43,6 +43,44 @@ Rectangle {
         return null
     }
 
+    // Vídeos marcados para renderizar (caminho -> true). Reatribuir o objeto avisa o QML.
+    property var marcados: ({})
+    readonly property int nMarcados: Object.keys(marcados).length
+    function chave(caminho) { return String(caminho || "").replace(/\\/g, "/").toLowerCase() }
+    function alternarMarca(caminho) {
+        const m = Object.assign({}, marcados)
+        if (m[caminho]) delete m[caminho]
+        else m[caminho] = true
+        marcados = m
+    }
+    // Todos os marcados vão para a fila de render sem abrir: o MP4 sai na pasta de cada vídeo.
+    function renderizarMarcados() {
+        const caminhos = Object.keys(marcados)
+        let entraram = 0
+        const recusados = []
+        for (let i = 0; i < caminhos.length; ++i) {
+            const motivo = EditorState.queueProjectExport(caminhos[i])
+            if (motivo.length === 0) entraram++
+            else recusados.push(motivo)
+        }
+        marcados = ({})
+        if (entraram > 0)
+            Toasts.success(entraram === 1 ? qsTr("1 vídeo na fila de render") : qsTr("%1 vídeos na fila de render").arg(entraram))
+        for (let j = 0; j < recusados.length; ++j)
+            Toasts.error(recusados[j])
+    }
+    // "Renderizando 34%", "Na fila · 2º" ou vazio, pelo projeto de cada render.
+    function situacaoNaFila(caminho) {
+        const c = chave(caminho)
+        if (EditorState.exportInProgress && chave(EditorState.exportJobProject) === c)
+            return qsTr("Renderizando %1%").arg(Math.round(EditorState.exportProgress * 100))
+        const fila = EditorState.exportQueue
+        for (let i = 0; i < fila.length; ++i)
+            if (chave(fila[i].project) === c)
+                return qsTr("Na fila · %1º").arg(i + 1)
+        return ""
+    }
+
     readonly property color corVideo: Theme.primary
     readonly property color corAudio: "#8E5BB8"
     readonly property color corLegenda: "#4A9BD6"
@@ -373,6 +411,100 @@ Rectangle {
                 }
             }
 
+            // Marcados: um clique põe todos na fila.
+            Rectangle {
+                visible: root.nMarcados > 0
+                width: parent.width
+                height: 44
+                radius: 10
+                color: Theme.panelBackground
+                Row {
+                    x: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.nMarcados === 1 ? qsTr("1 vídeo marcado") : qsTr("%1 vídeos marcados").arg(root.nMarcados)
+                        color: Theme.primary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeSm
+                        font.weight: Font.Bold
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: qsTr("· o MP4 sai na pasta de cada vídeo, com as escolhas do último export")
+                        color: Theme.mutedForeground
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeXs
+                    }
+                }
+                Row {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+                    ThemedButton {
+                        variant: "secondary"
+                        text: qsTr("Limpar")
+                        onClicked: root.marcados = ({})
+                    }
+                    ThemedButton {
+                        variant: "primary"
+                        glyph: Theme.icons.upload
+                        text: root.nMarcados === 1 ? qsTr("Renderizar") : qsTr("Renderizar os %1").arg(root.nMarcados)
+                        onClicked: root.renderizarMarcados()
+                    }
+                }
+            }
+
+            // Render da vez e quantos esperam.
+            Rectangle {
+                visible: EditorState.exportInProgress
+                width: parent.width
+                height: 36
+                radius: 10
+                color: Theme.panelBackground
+                Text {
+                    id: rotuloRender
+                    x: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, parent.width * 0.4)
+                    text: qsTr("Renderizando %1").arg(EditorState.exportJobName)
+                    color: Theme.foreground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeSm
+                    elide: Text.ElideRight
+                }
+                Rectangle {
+                    anchors.left: rotuloRender.right
+                    anchors.leftMargin: 12
+                    anchors.right: restoRender.left
+                    anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 6
+                    radius: 3
+                    color: "#262626"
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(1, EditorState.exportProgress))
+                        height: parent.height
+                        radius: 3
+                        color: Theme.primary
+                    }
+                }
+                Text {
+                    id: restoRender
+                    anchors.right: parent.right
+                    anchors.rightMargin: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: EditorState.exportQueue.length > 0
+                          ? qsTr("%1% · %2 na fila").arg(Math.round(EditorState.exportProgress * 100)).arg(EditorState.exportQueue.length)
+                          : qsTr("%1%").arg(Math.round(EditorState.exportProgress * 100))
+                    color: Theme.mutedForeground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                }
+            }
+
             // Grade: novo projeto + projetos
             Flow {
                 id: grade
@@ -433,7 +565,11 @@ Rectangle {
                         required property var modelData
                         readonly property var resumo: root.resumos[modelData.path] || {}
                         readonly property bool existe: modelData.exists !== false
+                        readonly property bool marcado: !!root.marcados[modelData.path]
+                        readonly property string naFila: root.situacaoNaFila(modelData.path)
                         width: grade.larguraCard
+                        border.width: marcado ? 2 : 0
+                        border.color: Theme.primary
                         height: 214
                         radius: 11
                         clip: true
@@ -441,7 +577,22 @@ Rectangle {
                         opacity: existe ? 1 : 0.55
 
                         HoverHandler { id: cardHover; cursorShape: card.existe ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                        TapHandler { onTapped: if (card.existe) root.openRecentRequested(card.modelData.path) }
+                        // O quadradinho e o "tirar dos recentes" ficam dentro do card: sem conferir onde foi o
+                        // clique, marcar para renderizar também abria o projeto.
+                        TapHandler {
+                            onTapped: (ponto) => {
+                                if (!card.existe)
+                                    return
+                                for (const alvo of [marca, tirar]) {
+                                    if (!alvo.visible)
+                                        continue
+                                    const p = alvo.mapFromItem(card, ponto.position.x, ponto.position.y)
+                                    if (p.x >= 0 && p.y >= 0 && p.x <= alvo.width && p.y <= alvo.height)
+                                        return
+                                }
+                                root.openRecentRequested(card.modelData.path)
+                            }
+                        }
 
                         Capa {
                             id: capaCard
@@ -450,9 +601,38 @@ Rectangle {
                             fonte: card.resumo.thumbnail || ""
                             Selo { x: 8; y: 8; visible: !!card.resumo.fromStudio; texto: qsTr("DO STUDIO"); laranja: true }
                             Selo {
-                                anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 8
+                                anchors.right: marca.visible ? marca.left : parent.right
+                                anchors.rightMargin: marca.visible ? 6 : 8
+                                anchors.top: parent.top; anchors.topMargin: 8
                                 visible: !!card.resumo.aspect
                                 texto: card.resumo.aspect || ""
+                            }
+                            // Quadradinho de marcar para renderizar: aparece no hover ou quando marcado.
+                            Rectangle {
+                                id: marca
+                                anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 8
+                                width: 18; height: 18; radius: 5
+                                visible: card.existe && (cardHover.hovered || card.marcado)
+                                color: card.marcado ? Theme.primary : Qt.rgba(0, 0, 0, 0.55)
+                                border.width: card.marcado ? 0 : 1.5
+                                border.color: Qt.rgba(1, 1, 1, 0.55)
+                                IconGlyph {
+                                    anchors.centerIn: parent
+                                    visible: card.marcado
+                                    glyph: Theme.icons.check
+                                    iconSize: 12
+                                    iconColor: "white"
+                                }
+                                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                TapHandler { onTapped: root.alternarMarca(card.modelData.path) }
+                                ThemedToolTip { text: qsTr("Marcar para renderizar"); visible: marcaHover.hovered }
+                                HoverHandler { id: marcaHover }
+                            }
+                            Selo {
+                                anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 8
+                                visible: card.naFila.length > 0
+                                texto: card.naFila
+                                laranja: true
                             }
                             Selo {
                                 anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8
@@ -502,6 +682,7 @@ Rectangle {
 
                         // Tirar dos recentes (nao apaga o arquivo)
                         Rectangle {
+                            id: tirar
                             anchors.right: parent.right
                             anchors.bottom: parent.bottom
                             anchors.margins: 8

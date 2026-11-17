@@ -6,7 +6,10 @@
 #include <QMutex>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QWaitCondition>
+
+#include <functional>
 
 class QFile;
 class QLocalServer;
@@ -52,6 +55,14 @@ public:
     QString cachedVideo(const QString &path, bool pedir = true);
     // fps em que o cache e gravado: o do projeto (o compositor atualiza a cada quadro).
     static void setCacheFps(int fps);
+    // Pede o cache de cada motion e espera a resposta. O que ja existe no disco responde na hora.
+    // Com gravarFaltantes, grava os que faltam (um por vez) e espera; sem, o que falta fica
+    // "ausente" e segue ao vivo (o export usa assim: gravar na hora custava mais que desenhar).
+    // `continuar(prontos, total)` e chamado ~10x/s; false cancela a espera. Devolve os prontos.
+    int prepararCaches(const QStringList &paths, const std::function<bool(int, int)> &continuar,
+                       bool gravarFaltantes);
+    // Situacao do cache de cada motion (no fps atual): "pronto", "gravando", "falhou" ou "ausente".
+    QHash<QString, QString> situacaoCaches(const QStringList &paths) const;
 
     // Ultimo erro do motor (processo nao encontrado, composicao com defeito...), para a UI.
     QString lastError() const;
@@ -131,6 +142,9 @@ private:
     QHash<QString, Comp> m_comps;
     QHash<QString, QString> m_cacheFiles; // "caminho|fps" -> arquivo do cache pronto
     QSet<QString> m_cachePedidos;         // "caminho|fps" ja pedidos (falha nao repete)
+    QSet<QString> m_cacheFalhas;          // "caminho|fps" cuja gravacao falhou (prepararCaches nao espera)
+    QSet<QString> m_cacheAusentes;        // "caminho|fps" consultados sem gravar e que nao existem no disco
+    void enviarPedidoCache(const QString &path, int fps, bool soExistente);
     QString m_lastError;
     QString m_exactFailure;
 };

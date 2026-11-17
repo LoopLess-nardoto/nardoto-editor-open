@@ -564,7 +564,29 @@ function carimboDaPasta(dir) {
   return h.digest("hex").slice(0, 16);
 }
 
-async function pedirCache({ pasta, largura, altura, fps }) {
+// Pasta de motion do Studio (motion/<id>/fonte/index.html + motion/<id>/meta.json): a previa.mp4 e a
+// miniatura.jpg do painel saem do proprio cache, sem um segundo render (antes o Studio renderizava a
+// previa a parte e o editor gravava tudo de novo no export). Ficam fora de fonte/, entao nao mudam o
+// carimbo do cache.
+function gerarPreviaDoStudio(index, arquivo) {
+  const fonte = path.dirname(index);
+  const motion = path.dirname(fonte);
+  if (path.basename(fonte) !== "fonte" || !fs.existsSync(path.join(motion, "meta.json"))) return;
+  const previa = path.join(motion, "previa.mp4");
+  const miniatura = path.join(motion, "miniatura.jpg");
+  const novo = (alvo) => fs.existsSync(alvo) && fs.statSync(alvo).mtimeMs >= fs.statSync(arquivo).mtimeMs;
+  if (novo(previa) && novo(miniatura)) return;
+  // Sobre o fundo do painel (#141414): o motion com alfa nao some no player.
+  const filtro = "color=c=0x141414:s=854x480[f];[0:v]scale=854:480:force_original_aspect_ratio=decrease[m];[f][m]overlay=(W-w)/2:(H-h)/2:shortest=1";
+  execFile(ffmpegExe(), ["-v", "error", "-y", "-i", arquivo, "-filter_complex", filtro, "-c:v", "libx264", "-preset", "veryfast",
+    "-crf", "26", "-pix_fmt", "yuv420p", "-an", previa], { windowsHide: true }, (erro) => {
+    if (erro) { log("previa falhou:", erro.message); return; }
+    execFile(ffmpegExe(), ["-v", "error", "-y", "-ss", "1", "-i", previa, "-frames:v", "1", miniatura], { windowsHide: true },
+      (e2) => { if (e2) log("miniatura falhou:", e2.message); });
+  });
+}
+
+async function pedirCache({ pasta, largura, altura, fps, soExistente }) {
   const index = acharIndex(pasta);
   if (!index) throw new Error(`index.html não encontrado em ${pasta}`);
   fps = Number(fps) || 30;
@@ -574,7 +596,14 @@ async function pedirCache({ pasta, largura, altura, fps }) {
   const arquivo = path.join(dir, `${carimbo}-${largura}x${altura}-${fps}.mov`);
   if (fs.existsSync(arquivo)) {
     json({ evento: "cache-pronto", pasta, fps, arquivo });
+    if (!soExistente) gerarPreviaDoStudio(index, arquivo);
     return { arquivo, pronto: true };
+  }
+  // Consulta do export: so diz se existe, nunca grava (gravar na hora custava mais que desenhar
+  // ao vivo). `gravando` avisa que um pedido anterior ainda vai entregar o arquivo.
+  if (soExistente) {
+    json({ evento: "cache-ausente", pasta, fps, gravando: caches.has(arquivo) });
+    return { arquivo, pronto: false };
   }
   if (!caches.has(arquivo)) {
     // Uma gravacao por vez: o editor pede o cache de todos os motions juntos e
@@ -582,7 +611,7 @@ async function pedirCache({ pasta, largura, altura, fps }) {
     // e depois o processo inteiro (Skia sem memoria), no video 001002.
     const vez = filaCache;
     const job = vez.then(() => gravarCache(index, arquivo, largura, altura, fps))
-      .then(() => json({ evento: "cache-pronto", pasta, fps, arquivo }))
+      .then(() => { json({ evento: "cache-pronto", pasta, fps, arquivo }); gerarPreviaDoStudio(index, arquivo); })
       .catch((e) => { log("cache falhou:", e.message); json({ evento: "cache-erro", pasta, fps, erro: e.message }); })
       .finally(() => caches.delete(arquivo));
     filaCache = job;

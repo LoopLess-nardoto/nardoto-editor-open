@@ -215,9 +215,13 @@ Rectangle {
         target: EditorState
         function onProjectNameChanged() { root.projectName = EditorState.projectName }
         function onExportInProgressChanged() {
+            // Fila de renders: fechou a janela de andamento, o próximo da fila não a reabre.
+            // Só volta a abrir sozinha depois que a fila inteira acabou.
             if (EditorState.exportInProgress) {
+                if (!root.exportProgressDismissed)
+                    exportProgressDialogLoader.ensure().openDialog()
+            } else if (EditorState.exportQueue.length === 0) {
                 root.exportProgressDismissed = false
-                exportProgressDialogLoader.ensure().openDialog()
             }
         }
         function onSaveRequested() { root.saveProject() }
@@ -822,7 +826,11 @@ Rectangle {
 
                 ThemedToolTip {
                     visible: badgeMouse.containsMouse
-                    text: qsTr("Export in progress (%1%) — click to view").arg(Math.round(EditorState.exportProgress * 100))
+                    text: EditorState.exportQueue.length > 0
+                          ? qsTr("Renderizando %1 (%2%) e mais %3 na fila. Clique para ver")
+                                .arg(EditorState.exportJobName).arg(Math.round(EditorState.exportProgress * 100))
+                                .arg(EditorState.exportQueue.length)
+                          : qsTr("Export in progress (%1%) — click to view").arg(Math.round(EditorState.exportProgress * 100))
                 }
 
                 MouseArea {
@@ -850,8 +858,7 @@ Rectangle {
                 radius: Theme.radiusMd
                 color: Theme.exportGlow
                 anchors.verticalCenter: parent.verticalCenter
-                opacity: busy ? 0.55 : 1
-                scale: exportMouse.pressed && !busy ? 0.97 : 1
+                scale: exportMouse.pressed ? 0.97 : 1
 
                 Behavior on opacity {
                     NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
@@ -868,8 +875,7 @@ Rectangle {
                     anchors.margins: 2
                     radius: parent.radius - 2
                     // Brightens on hover, darkens on press.
-                    opacity: exportButton.busy ? 1
-                             : (exportMouse.pressed ? 0.85 : (exportMouse.containsMouse ? 1 : 0.94))
+                    opacity: exportMouse.pressed ? 0.85 : (exportMouse.containsMouse ? 1 : 0.94)
 
                     Behavior on opacity {
                         NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
@@ -919,7 +925,8 @@ Rectangle {
 
                 ThemedToolTip {
                     visible: exportMouse.containsMouse
-                    text: exportButton.busy ? qsTr("Export already in progress")
+                    text: exportButton.busy ? qsTr("Exportar entra na fila de renders (%1 esperando)")
+                                                  .arg(EditorState.exportQueue.length)
                                             : qsTr("Export video")
                 }
 
@@ -927,8 +934,8 @@ Rectangle {
                     id: exportMouse
                     anchors.fill: parent
                     hoverEnabled: true
-                    cursorShape: exportButton.busy ? Qt.ArrowCursor : Qt.PointingHandCursor
-                    onClicked: if (!exportButton.busy) root.exportVideo()
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.exportVideo()
                 }
             }
         }

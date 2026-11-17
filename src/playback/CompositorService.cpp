@@ -22,6 +22,13 @@ constexpr int kWarmupFrames = 3;
 // Floor for the caller's budget: at 60 fps two ticks is 33 ms, close enough to
 // normal jitter that the scale would rattle up and down against it.
 constexpr int kMinLateFrameBudgetMs = 40;
+// Mudar a escala troca o tamanho do canvas, e as fotos ficam em cache por (arquivo, tamanho): os
+// quadros seguintes releem e redimensionam toda foto ativa, e saem lentos por isso, não porque a
+// máquina não acompanha. Cobrar esse custo da escala fazia cada mudança provocar a próxima: o
+// preview descia a 25% e ficava subindo e descendo, borrado e lento, numa timeline só de fotos
+// (medido em 17/11/2026: 40 a 490 ms por quadro em "auto" contra menos de 1 ms em "total").
+// Cobre os dois quadros que já estavam em voo na escala antiga mais os que refazem o cache.
+constexpr int kSettleFramesAfterScaleChange = 6;
 }
 
 CompositorWorker::CompositorWorker(QObject *parent)
@@ -175,6 +182,7 @@ void CompositorService::noteFrameLate(bool late)
         if (m_lateStreak >= kLateBeforeScaleDown && m_adaptiveScale > kAdaptiveScaleMin + 1e-6) {
             m_adaptiveScale = qMax(kAdaptiveScaleMin, m_adaptiveScale * kAdaptiveScaleStepDown);
             m_lateStreak = 0;
+            m_warmupFramesLeft = kSettleFramesAfterScaleChange;
         }
         return;
     }
@@ -184,6 +192,7 @@ void CompositorService::noteFrameLate(bool late)
     if (m_onTimeStreak >= kOnTimeBeforeScaleUp && m_adaptiveScale < 1.0 - 1e-6) {
         m_adaptiveScale = qMin(1.0, m_adaptiveScale * kAdaptiveScaleStepUp);
         m_onTimeStreak = 0;
+        m_warmupFramesLeft = kSettleFramesAfterScaleChange;
     }
 }
 

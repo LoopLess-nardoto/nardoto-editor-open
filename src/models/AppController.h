@@ -249,6 +249,13 @@ class AppController : public QObject
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY exportProgressChanged)
     Q_PROPERTY(bool canShareExport READ canShareExport NOTIFY canShareExportChanged)
     Q_PROPERTY(QString lastExportFile READ lastExportFile NOTIFY lastExportFileChanged)
+    // Fila de renders: exportar com um render rodando entra aqui, cada um com a foto do projeto
+    // tirada na hora do pedido. Itens: { name, path, durationSeconds }.
+    Q_PROPERTY(QVariantList exportQueue READ exportQueue NOTIFY exportQueueChanged)
+    Q_PROPERTY(QString exportJobName READ exportJobName NOTIFY exportInProgressChanged)
+    Q_PROPERTY(double exportJobDuration READ exportJobDuration NOTIFY exportInProgressChanged)
+    // Projeto (.drift) do render da vez: a tela inicial marca o card dele.
+    Q_PROPERTY(QString exportJobProject READ exportJobProject NOTIFY exportInProgressChanged)
     Q_PROPERTY(bool subtitleGenerating READ subtitleGenerating NOTIFY subtitleGeneratingChanged)
     // Id of the asset whose replacement is being probed, empty when idle. Only that one bin row
     // goes busy: the rest of the panel stays usable, and the wait belongs to the row the user
@@ -573,6 +580,11 @@ public:
     double exportProgress() const;
     bool canShareExport() const;
     QString lastExportFile() const { return m_lastExportFile; }
+    QVariantList exportQueue() const;
+    int exportQueueSize() const { return int(m_exportQueue.size()); }
+    QString exportJobName() const { return m_exportJobName; }
+    double exportJobDuration() const { return m_exportJobDuration; }
+    QString exportJobProject() const { return m_exportJobProject; }
     bool subtitleGenerating() const { return m_subtitleGenerating; }
     QString replacingAssetId() const { return m_replacingAssetId; }
     bool editingAsset() const { return m_editingAsset; }
@@ -2084,6 +2096,10 @@ public:
     Q_INVOKABLE void exportWithSettings(const QUrl &outputUrl, const QVariantMap &settings,
                                         bool rememberChoice = true);
     Q_INVOKABLE void cancelExport();
+    // Tira da fila um render que ainda não começou (índice de exportQueue).
+    Q_INVOKABLE void removeQueuedExport(int index);
+    // Põe um projeto na fila sem abri-lo (tela inicial). Devolve vazio se entrou, ou o motivo de não entrar.
+    Q_INVOKABLE QString queueProjectExport(const QString &projectPath);
     // Copies the finished export into the shared media collection and hands it to the system share
     // sheet. Deferred to this point rather than done as part of the export because it is a second
     // full copy of the video, and most exports are never shared. Android only; false/no-op elsewhere.
@@ -2175,6 +2191,7 @@ signals:
     void exportProgressChanged();
     void canShareExportChanged();
     void lastExportFileChanged();
+    void exportQueueChanged();
     // `location` is a human-readable folder ("Movies/Drift"), empty when ok is false.
     void savedToGallery(const QString &displayName, bool ok, const QString &location,
                         const QString &error);
@@ -2262,7 +2279,8 @@ signals:
     void lastMessageChanged();
     void draggingAssetIndexChanged();
     void assetPreviewWindowOpenChanged();
-    void exportFinished(bool success);
+    // `path` é o arquivo daquele render: com a fila, quem espera um export específico (MCP) confere.
+    void exportFinished(bool success, const QString &path);
     void projectMutated();
     void waveformReady(const QString &path);
     // A block of the timeline waveform landed. Separate from waveformReady so the dialogs,
@@ -2786,6 +2804,22 @@ protected:
     QString m_lastExportName;
     QString m_lastExportFile; // caminho local do ultimo export que deu certo (desktop)
     qint64 m_exportStartedAt = 0;
+    struct ExportJob {
+        drift::Project snapshot;
+        QVariantMap settings;
+        QUrl outputUrl;
+        QString outputPath;
+        bool disposable = false;
+        QString name;
+        double durationSeconds = 0.0;
+        QString projectPath;
+    };
+    QList<ExportJob> m_exportQueue;
+    QString m_exportJobName;
+    double m_exportJobDuration = 0.0;
+    QString m_exportJobProject;
+    void startExportJob(const ExportJob &job);
+    void enfileirarExport(const ExportJob &job);
     // Android: the publish-to-gallery copy behind Share is on a worker, so canShareExport reports
     // false while it runs — that both hides the button (the dialog binds its visibility to it) and
     // stops a second tap from starting the copy again. Unused on desktop.

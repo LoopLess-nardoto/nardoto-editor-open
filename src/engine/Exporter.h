@@ -95,6 +95,9 @@ public:
 
     static ExportSettings defaultSettings();
     static ExportSettings settingsFromMap(const QVariantMap &map);
+    // Troca um codec de placa de vídeo pelo equivalente em software, com CRF e preset padrão dele.
+    // Devolve false quando o codec já é de software ou não há equivalente nesta máquina.
+    static bool softwareFallbackFor(ExportSettings *settings);
 
     // Holds the process in the foreground for as long as it exists: an Android foreground service
     // with a progress notification, plus FLAG_KEEP_SCREEN_ON. Without one, a backgrounded process

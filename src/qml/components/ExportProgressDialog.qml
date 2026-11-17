@@ -8,7 +8,10 @@ import Drift
 ThemedDialog {
     id: root
 
-    title: EditorState.exportInProgress ? qsTr("Exporting video") : qsTr("Export")
+    title: EditorState.exportInProgress
+           ? (EditorState.exportJobName.length > 0 ? qsTr("Renderizando: %1").arg(EditorState.exportJobName)
+                                                   : qsTr("Exporting video"))
+           : qsTr("Export")
     preferredWidth: Theme.dialogWidthSm
     // Cancel export is the primary destructive action while busy; Close dismisses
     // the dialog without stopping the job (badge in the header reopens it).
@@ -36,11 +39,13 @@ ThemedDialog {
 
     // Andamento: o que da para saber so com a fracao, a duracao do video e o relogio.
     readonly property real fracao: EditorState.exportProgress
-    readonly property real duracaoVideo: EditorState.durationSeconds
+    // Duração do vídeo deste render, não do projeto aberto: com a fila, o aberto pode ser outro.
+    readonly property real duracaoVideo: EditorState.exportJobDuration > 0 ? EditorState.exportJobDuration
+                                                                         : EditorState.durationSeconds
     readonly property int totalQuadros: Math.max(1, Math.round(duracaoVideo * EditorState.projectFps()))
     readonly property real restanteMs: fracao > 0.03 ? elapsedMs * (1 - fracao) / fracao : -1
     readonly property real velocidade: elapsedMs > 1500 ? (fracao * duracaoVideo) / (elapsedMs / 1000) : 0
-    readonly property string etapa: fracao <= 0 ? qsTr("Preparando o projeto e abrindo o codificador…")
+    readonly property string etapa: fracao <= 0 ? qsTr("Preparando os motions e abrindo o codificador…")
                                     : fracao >= 0.995 ? qsTr("Finalizando o arquivo de vídeo…")
                                     : qsTr("Renderizando e codificando os quadros")
 
@@ -189,6 +194,45 @@ ThemedDialog {
             wrapMode: Text.WordWrap
             visible: EditorState.exportInProgress
             text: qsTr("Feche para continuar editando, ou cancele para interromper.")
+        }
+
+        // Fila de renders: o que espera depois deste, na ordem. Cancelar acima para só o atual.
+        Column {
+            width: parent.width
+            spacing: 2
+            visible: EditorState.exportQueue.length > 0
+
+            ThemedLabel {
+                size: "xs"
+                color: Theme.mutedForeground
+                text: qsTr("Na fila (%1)").arg(EditorState.exportQueue.length)
+            }
+
+            Repeater {
+                model: EditorState.exportQueue
+                delegate: Row {
+                    required property var modelData
+                    required property int index
+                    width: parent ? parent.width : 0
+                    spacing: 4
+
+                    ThemedLabel {
+                        width: parent.width - tirar.width - parent.spacing
+                        anchors.verticalCenter: parent.verticalCenter
+                        size: "sm"
+                        elide: Text.ElideRight
+                        text: (index + 1) + ". " + modelData.name + "  ·  " + root.relogio(modelData.durationSeconds * 1000)
+                    }
+                    IconButton {
+                        id: tirar
+                        anchors.verticalCenter: parent.verticalCenter
+                        glyph: Theme.icons.x
+                        variant: "text"
+                        tooltip: qsTr("Tirar da fila")
+                        onClicked: EditorState.removeQueuedExport(index)
+                    }
+                }
+            }
         }
 
         // Terminou

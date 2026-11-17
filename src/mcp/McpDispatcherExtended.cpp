@@ -2595,14 +2595,15 @@ QJsonObject McpDispatcher::applyOneExtended(const QString &tool, const QJsonObje
         return ok({{QStringLiteral("presets"), compactCatalogList(m_controller->exportPresets())}});
 
     if (tool == QLatin1String("export_with_preset")) {
-        if (m_controller->exportInProgress())
-            return err("export_busy", QStringLiteral("Export already in progress"));
         const QString path = localPath(argString(args, QStringLiteral("path")));
         const QString preset = argString(args, QStringLiteral("preset"));
         if (path.isEmpty() || preset.isEmpty())
             return err("bad_args", QStringLiteral("path and preset required"));
+        // Com um render rodando, este entra na fila de renders.
+        const bool queued = m_controller->exportInProgress();
         m_controller->exportWithPreset(QUrl::fromLocalFile(path), preset);
-        return ok({{QStringLiteral("started"), true},
+        return ok({{QStringLiteral("started"), !queued},
+                   {QStringLiteral("queued"), queued},
                    {QStringLiteral("path"), path},
                    {QStringLiteral("preset"), preset}});
     }
