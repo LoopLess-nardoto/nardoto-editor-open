@@ -856,6 +856,16 @@ const QList<Op> &ops()
         { "export_status", "project", "Check an in-flight encode",
           "Returns {busy, progress 0..1, message}. Same data as inspect().export.",
           objectSchema({}), true, false, true },
+        { "prepare_motion_cache", "project", "Render motion graphics ahead of the export",
+          "Records each HTML motion composition (motion folder, its fonte/ folder or index.html) as a video "
+          "cache in the background, one at a time, so the export reads it instead of drawing it live. Returns "
+          "at once; call again to read progress. For a Studio motion folder it also writes previa.mp4 and "
+          "miniatura.jpg from the cache. Returns {total, pronto, gravando, falhou, motions:{path:state}}.",
+          objectSchema({{QStringLiteral("paths"), arrayProp({{QStringLiteral("type"), QStringLiteral("string")}},
+                                                            QStringLiteral("Motion folders or index.html files"))},
+                        {QStringLiteral("fps"), integerProp(QStringLiteral("Cache frame rate (default: project fps)"))}},
+                       {QStringLiteral("paths")}),
+          true, false, true },
 
         { "list_animated_properties", "keyframes", "See what already has keys",
           "Returns {props:[…]} — only the properties that already carry keyframes on this clip. Empty "

@@ -63,6 +63,10 @@ if (-not $PularDeploy) {
   }
 }
 
+# O executável não carrega número de versão: o Studio lê este arquivo, ao lado do
+# nardoto-editor.exe, para saber se a instalação está em dia e indicar a nova.
+[System.IO.File]::WriteAllText((Join-Path $palco 'versao.txt'), $Versao)
+
 $arquivos = Get-ChildItem $palco -Recurse -File
 Write-Host ("  empacotando: {0} arquivos, {1:N0} MB" -f $arquivos.Count, (($arquivos | Measure-Object Length -Sum).Sum / 1MB))
 

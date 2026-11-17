@@ -107,6 +107,7 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QElapsedTimer>
 #include <QCursor>
 #include <QDateTime>
 #include <QDir>
@@ -17675,6 +17676,15 @@ bool AppController::flattenComposite(int trackIndex, int clipIndex)
                 m_exportProgress = ok ? 1.0 : 0.0;
                 emit exportInProgressChanged();
                 emit exportProgressChanged();
+                // Render pedido durante o achatamento ficou na fila: começa agora.
+                if (!m_exportQueue.isEmpty())
+                    QTimer::singleShot(0, this, [this]() {
+                        if (!m_exportInProgress && !m_exportQueue.isEmpty()) {
+                            const ExportJob next = m_exportQueue.takeFirst();
+                            emit exportQueueChanged();
+                            startExportJob(next);
+                        }
+                    });
                 if (!ok) {
                     QFile::remove(outputPath);
                     setLastMessage(error.isEmpty() ? tr("Flattening was cancelled")
@@ -26229,12 +26239,7 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
         writeTargetPath(outputUrl, Exporter::defaultSuffix(container, exportSettings.audioOnly));
     if (outputPath.isEmpty()) {
         setLastMessage(tr("That save location isn’t valid"), QStringLiteral("error"));
-        emit exportFinished(false);
-        return;
-    }
-
-    if (m_exportInProgress) {
-        setLastMessage(tr("Export already in progress"), QStringLiteral("warning"));
+        emit exportFinished(false, QString());
         return;
     }
 
@@ -26248,22 +26253,139 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
 #endif
     }
 
+    // Snapshot the project so edits during export can't race the encoder. Always the main
+    // timeline, even while a composite's tab is open. Tirada agora também quando o render vai
+    // para a fila: a pessoa pode abrir outro projeto e mandar exportar enquanto este espera.
+    ExportJob job;
+    job.snapshot = m_project.sequenceView({});
+    job.settings = settings;
+    job.outputUrl = outputUrl;
+    job.outputPath = outputPath;
+    job.disposable = writeTargetIsDisposable(outputUrl);
+    job.name = projectName().isEmpty() ? QFileInfo(outputPath).completeBaseName() : projectName();
+    const qint64 startUs = settings.value(QStringLiteral("startUs")).toLongLong();
+    const qint64 endUs = settings.value(QStringLiteral("endUs")).toLongLong();
+    job.durationSeconds = endUs > startUs ? (endUs - startUs) / 1e6 : durationSeconds();
+    job.projectPath = m_currentProjectPath;
+    enfileirarExport(job);
+}
+
+void AppController::enfileirarExport(const ExportJob &job)
+{
+    if (m_exportInProgress) {
+        m_exportQueue.append(job);
+        emit exportQueueChanged();
+        setLastMessage(tr("Na fila de renders (posição %1)").arg(m_exportQueue.size()));
+        return;
+    }
+    startExportJob(job);
+}
+
+// Tela inicial, "Renderizar os N": põe um projeto na fila sem abri-lo e sem perguntar onde salvar.
+// O MP4 sai na pasta do projeto, com o nome dele, nas escolhas do último export da pessoa. O projeto
+// que guarda as mídias dentro do arquivo (pacote para compartilhar) precisa ser aberto: só a carga
+// completa desempacota e repõe os caminhos delas.
+QString AppController::queueProjectExport(const QString &projectPath)
+{
+    const QString path = QDir::fromNativeSeparators(projectPath);
+    const QFileInfo info(path);
+    QString erro;
+    drift::Project projeto;
+    if (fileStartsWithJsonObject(path)) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            return tr("Não foi possível ler %1").arg(info.fileName());
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        if (!doc.isObject())
+            return tr("Projeto inválido: %1").arg(info.fileName());
+        projeto = drift::Project::fromJson(doc.object(), &erro);
+    } else {
+        const std::optional<drift::bundle::BundleInfo> manifesto = drift::bundle::readManifest(path, &erro);
+        if (!manifesto)
+            return erro.isEmpty() ? tr("Não foi possível ler %1").arg(info.fileName()) : erro;
+        for (const drift::bundle::MediaEntry &entry : manifesto->media) {
+            if (entry.embedded)
+                return tr("%1 guarda as mídias dentro do arquivo: abra o projeto para exportar.")
+                    .arg(info.completeBaseName());
+        }
+        projeto = drift::Project::fromJson(manifesto->document, &erro);
+    }
+    if (!erro.isEmpty())
+        return erro;
+    // O mesmo projeto já esperando na fila não entra de novo.
+    for (const ExportJob &j : std::as_const(m_exportQueue)) {
+        if (QDir::cleanPath(j.projectPath).compare(QDir::cleanPath(path), Qt::CaseInsensitive) == 0)
+            return tr("%1 já está na fila.").arg(info.completeBaseName());
+    }
+
+    QVariantMap settings = exportDefaultSettings();
+    const QVariantMap ultimo = lastExportSettings();
+    for (auto it = ultimo.begin(); it != ultimo.end(); ++it) {
+        // Modo e trecho são daquele export, não valem para outro projeto.
+        if (it.key() == QLatin1String("audioOnly") || it.key() == QLatin1String("gifExport")
+            || it.key() == QLatin1String("exportWorkAreaOnly") || it.key() == QLatin1String("startUs")
+            || it.key() == QLatin1String("endUs"))
+            continue;
+        settings.insert(it.key(), it.value());
+    }
+    const ExportSettings es = Exporter::settingsFromMap(settings);
+    const QString suffix = Exporter::defaultSuffix(Exporter::preferredContainer(es.videoCodecId, es.audioCodecId), false);
+    QString saida = info.dir().filePath(info.completeBaseName() + QLatin1Char('.') + suffix);
+    for (int n = 2; QFileInfo::exists(saida); ++n)
+        saida = info.dir().filePath(QStringLiteral("%1 (%2).%3").arg(info.completeBaseName()).arg(n).arg(suffix));
+
+    ExportJob job;
+    job.snapshot = projeto.sequenceView({});
+    job.settings = settings;
+    job.outputUrl = QUrl::fromLocalFile(saida);
+    job.outputPath = saida;
+    job.name = info.completeBaseName();
+    job.durationSeconds = job.snapshot.durationUs() / 1e6;
+    job.projectPath = path;
+    enfileirarExport(job);
+    return QString();
+}
+
+QVariantList AppController::exportQueue() const
+{
+    QVariantList out;
+    for (const ExportJob &job : m_exportQueue)
+        out.append(QVariantMap{{QStringLiteral("name"), job.name},
+                               {QStringLiteral("path"), job.outputPath},
+                               {QStringLiteral("project"), job.projectPath},
+                               {QStringLiteral("durationSeconds"), job.durationSeconds}});
+    return out;
+}
+
+void AppController::removeQueuedExport(int index)
+{
+    if (index < 0 || index >= m_exportQueue.size())
+        return;
+    m_exportQueue.removeAt(index);
+    emit exportQueueChanged();
+}
+
+void AppController::startExportJob(const ExportJob &job)
+{
+    const ExportSettings exportSettings = Exporter::settingsFromMap(job.settings);
+    const drift::Project snapshot = job.snapshot;
+    const QString outputPath = job.outputPath;
+    const QUrl outputUrl = job.outputUrl;
+    const bool disposable = job.disposable;
+
     // Stop playback so the decode pool isn't driven from two threads at once.
     setPlaying(false);
 
     m_exportCancel.storeRelaxed(0);
     m_exportProgress = 0.0;
     m_exportStartedAt = QDateTime::currentMSecsSinceEpoch();
+    m_exportJobName = job.name;
+    m_exportJobDuration = job.durationSeconds;
+    m_exportJobProject = job.projectPath;
     emit exportProgressChanged();
     m_exportInProgress = true;
     emit exportInProgressChanged();
     setLastMessage(tr("Exporting…"));
-
-    // Snapshot the project so edits during export can't race the encoder. Always the main
-    // timeline, even while a composite's tab is open.
-    const drift::Project snapshot = m_project.sequenceView({});
-
-    const bool disposable = writeTargetIsDisposable(outputUrl);
 
     (void)QtConcurrent::run([this, snapshot, exportSettings, outputPath, outputUrl, disposable]() {
         // Spans the encode *and* the copy into the user's document. Exporter::run takes its own
@@ -26272,7 +26394,9 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
         // holds are refcounted, so the inner one nests without restarting the service.
         Exporter::BackgroundHold hold(QStringLiteral("Exporting"), /*cancellable=*/true);
         QString error;
-        const auto report = [this](double fraction) {
+        bool anyFrame = false;
+        const auto report = [this, &anyFrame](double fraction) {
+            anyFrame = anyFrame || fraction > 0.0;
             QMetaObject::invokeMethod(
                 this,
                 [this, fraction]() {
@@ -26284,7 +26408,21 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
             // notification's action sets the service flag.
             return m_exportCancel.loadRelaxed() == 0 && !Exporter::BackgroundHold::cancelRequested();
         };
-        bool ok = Exporter::run(snapshot, exportSettings, outputPath, &error, report);
+        QElapsedTimer exportTimer;
+        exportTimer.start();
+        ExportSettings used = exportSettings;
+        bool ok = Exporter::run(snapshot, used, outputPath, &error, report);
+        // O encoder da placa de vídeo recusou antes do primeiro quadro (driver, resolução, sessões
+        // esgotadas): refaz em software em vez de devolver erro. Falha no meio do render não entra
+        // aqui, e cancelamento também não.
+        if (!ok && !anyFrame && m_exportCancel.loadRelaxed() == 0 && Exporter::softwareFallbackFor(&used)) {
+            qWarning("export: %s falhou ao abrir (%s); refazendo com %s", qPrintable(exportSettings.videoCodecId),
+                     qPrintable(error), qPrintable(used.videoCodecId));
+            error.clear();
+            ok = Exporter::run(snapshot, used, outputPath, &error, report);
+        }
+        qInfo("export: codec=%s ok=%d tempo=%.2fs", qPrintable(used.videoCodecId), ok ? 1 : 0,
+              exportTimer.elapsed() / 1000.0);
         // Android: the encoder needs a real file, and the document the user picked is only
         // reachable through the resolver, so the finished encode is streamed into it — the bar
         // runs a second time for that, and cancel still lands.
@@ -26306,7 +26444,7 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
 
         QMetaObject::invokeMethod(
             this,
-            [this, ok, error, outputUrl]() {
+            [this, ok, error, outputUrl, outputPath]() {
                 m_exportInProgress = false;
                 m_exportProgress = ok ? 1.0 : 0.0;
 #ifdef Q_OS_ANDROID
@@ -26325,7 +26463,13 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
                                ok ? QStringLiteral("success") : QStringLiteral("error"));
                 emit exportProgressChanged();
                 emit exportInProgressChanged();
-                emit exportFinished(ok);
+                emit exportFinished(ok, outputPath);
+                // Próximo da fila. Cancelar para só o render atual; os que esperam seguem.
+                if (!m_exportInProgress && !m_exportQueue.isEmpty()) {
+                    const ExportJob next = m_exportQueue.takeFirst();
+                    emit exportQueueChanged();
+                    startExportJob(next);
+                }
             },
             Qt::QueuedConnection);
     });

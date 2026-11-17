@@ -339,8 +339,13 @@ ThemedDialog {
                                        suggestedName, suffix,
                                        EditorState.lastExportFolder())
         if (url != "") {
+            var naFila = EditorState.exportInProgress
             EditorState.exportWithSettings(url, buildSettings())
-            Toasts.info(qsTr("Export started…"))
+            if (naFila)
+                Toasts.info(qsTr("Na fila de renders (posição %1). Pode abrir outro projeto e mandar mais.")
+                            .arg(EditorState.exportQueue.length))
+            else
+                Toasts.info(qsTr("Export started…"))
         } else {
             Toasts.info(qsTr("Export cancelled."))
         }

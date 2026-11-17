@@ -284,6 +284,42 @@ AVFrame *softwareFrameToNv12(const AVFrame *frame, SwsContext *&sws, int targetW
     return nv12;
 }
 
+// Contexto do swscale que divide cada quadro entre threads (opcao "threads" + sws_scale_frame).
+// O motion com transparencia vem em ProRes 4444 (yuva444p10) e a conversao para RGBA numa thread
+// so era o grosso dos 63 s de "cena" no export do 02-pintura. Mesmo papel do sws_getCachedContext:
+// reaproveita o contexto enquanto entrada e saida nao mudam.
+SwsContext *threadedSwsContext(SwsContext *sws, int srcW, int srcH, AVPixelFormat srcFmt, int dstW, int dstH,
+                               AVPixelFormat dstFmt, int flags)
+{
+    if (sws) {
+        const auto igual = [sws](const char *nome, int64_t esperado) {
+            int64_t v = 0;
+            return av_opt_get_int(sws, nome, 0, &v) >= 0 && v == esperado;
+        };
+        if (igual("srcw", srcW) && igual("srch", srcH) && igual("src_format", srcFmt) && igual("dstw", dstW)
+            && igual("dsth", dstH) && igual("dst_format", dstFmt) && igual("sws_flags", flags))
+            return sws;
+        sws_freeContext(sws);
+    }
+    SwsContext *ctx = sws_alloc_context();
+    if (!ctx)
+        return nullptr;
+    av_opt_set_int(ctx, "srcw", srcW, 0);
+    av_opt_set_int(ctx, "srch", srcH, 0);
+    av_opt_set_int(ctx, "src_format", srcFmt, 0);
+    av_opt_set_int(ctx, "dstw", dstW, 0);
+    av_opt_set_int(ctx, "dsth", dstH, 0);
+    av_opt_set_int(ctx, "dst_format", dstFmt, 0);
+    av_opt_set_int(ctx, "sws_flags", flags, 0);
+    // Metade dos nucleos: os decodificadores dos outros clipes rodam ao mesmo tempo.
+    av_opt_set_int(ctx, "threads", qBound(1, QThread::idealThreadCount() / 2, 8), 0);
+    if (sws_init_context(ctx, nullptr, nullptr) < 0) {
+        sws_freeContext(ctx);
+        return nullptr;
+    }
+    return ctx;
+}
+
 // Software preview frames with an alpha plane: RGBA at the decode size, still an AVFrame.
 // The GL importer honours linesize and applies rotation, same as the NV12 path.
 AVFrame *softwareFrameToRgba(const AVFrame *frame, SwsContext *&sws, int targetWidth, int targetHeight)
@@ -298,9 +334,14 @@ AVFrame *softwareFrameToRgba(const AVFrame *frame, SwsContext *&sws, int targetW
         return av_frame_clone(frame);
 
     const int flags = swsFlagsForResize(frame->width, frame->height, targetWidth, targetHeight);
-    sws = sws_getCachedContext(sws, frame->width, frame->height,
-                               drift::swsSourceFormat(static_cast<AVPixelFormat>(frame->format)), targetWidth,
-                               targetHeight, AV_PIX_FMT_RGBA, flags, nullptr, nullptr, nullptr);
+    const AVPixelFormat srcFmt = drift::swsSourceFormat(static_cast<AVPixelFormat>(frame->format));
+    // sws_scale_frame confere o formato do quadro contra o do contexto: formato remapeado
+    // (yuvj*) fica no caminho antigo.
+    const bool comThreads = srcFmt == frame->format && !qEnvironmentVariableIsSet("NARDOTO_SWS_UMA_THREAD");
+    sws = comThreads ? threadedSwsContext(sws, frame->width, frame->height, srcFmt, targetWidth, targetHeight,
+                                          AV_PIX_FMT_RGBA, flags)
+                     : sws_getCachedContext(sws, frame->width, frame->height, srcFmt, targetWidth,
+                                            targetHeight, AV_PIX_FMT_RGBA, flags, nullptr, nullptr, nullptr);
     if (!sws)
         return nullptr;
     drift::configureSwsRange(sws, frame, 1 /* full-range RGB */);
@@ -318,7 +359,14 @@ AVFrame *softwareFrameToRgba(const AVFrame *frame, SwsContext *&sws, int targetW
         av_frame_free(&rgba);
         return nullptr;
     }
-    sws_scale(sws, frame->data, frame->linesize, 0, frame->height, rgba->data, rgba->linesize);
+    if (comThreads) {
+        if (sws_scale_frame(sws, rgba, frame) < 0) {
+            av_frame_free(&rgba);
+            return nullptr;
+        }
+    } else {
+        sws_scale(sws, frame->data, frame->linesize, 0, frame->height, rgba->data, rgba->linesize);
+    }
     return rgba;
 }
 

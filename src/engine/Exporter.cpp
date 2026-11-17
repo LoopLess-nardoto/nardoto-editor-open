@@ -10,8 +10,12 @@
 #include "core/Project.h"
 #include "core/Time.h"
 
+#include <QDateTime>
+#include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QHash>
+#include <QScopeGuard>
 #include <QImage>
 #include <QMutex>
 #include <QtGlobal>
@@ -31,7 +35,11 @@
 #include <atomic>
 #endif
 
+#include <atomic>
 #include <climits>
+#include <deque>
+#include <mutex>
+#include <thread>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -1866,9 +1874,14 @@ bool Exporter::gifAvailable()
 ExportSettings Exporter::defaultSettings()
 {
     ExportSettings s;
-    // Prefer first available CRF codec starting at h264.
-    const QStringList prefer = {QStringLiteral("h264"), QStringLiteral("h265"), QStringLiteral("vp9"),
-                                QStringLiteral("av1_svt")};
+    // H.264 pela placa de vídeo primeiro, quando a máquina tem: medido em 1080p30, NVENC exporta
+    // a 71 qps contra 25 do x264. `available` já inclui a abertura do device, e quem falhar depois
+    // disso cai para software em softwareFallbackFor(). NVENC antes de QSV porque só ele recebe
+    // o quadro sem passar pela CPU.
+    const QStringList prefer = {QStringLiteral("h264_nvenc"), QStringLiteral("h264_qsv"),
+                                QStringLiteral("h264_amf"),   QStringLiteral("h264_videotoolbox"),
+                                QStringLiteral("h264"),       QStringLiteral("h265"),
+                                QStringLiteral("vp9"),        QStringLiteral("av1_svt")};
     for (const QString &id : prefer) {
         const QVariantMap m = videoCodecById(id);
         if (m.value(QStringLiteral("available")).toBool()) {
@@ -1893,6 +1906,25 @@ ExportSettings Exporter::defaultSettings()
     }
     s.rateControl = QStringLiteral("crf");
     return s;
+}
+
+bool Exporter::softwareFallbackFor(ExportSettings *settings)
+{
+    const VideoCodecDef *def = settings ? findVideoDef(settings->videoCodecId) : nullptr;
+    if (!def || def->hw == HwBackend::None)
+        return false;
+    // "h264_nvenc" -> "h264", "h265_qsv" -> "h265", "av1_amf" -> "av1_svt".
+    QString id = settings->videoCodecId.section(QLatin1Char('_'), 0, 0);
+    if (id == QLatin1String("av1"))
+        id = QStringLiteral("av1_svt");
+    const QVariantMap sw = videoCodecById(id);
+    if (!sw.value(QStringLiteral("available")).toBool())
+        return false;
+    settings->videoCodecId = id;
+    // CRF e preset do encoder de GPU não valem no de software ("p4" não existe no x264).
+    settings->crf = sw.value(QStringLiteral("defaultCrf"), 18).toInt();
+    settings->videoPreset = sw.value(QStringLiteral("defaultPreset"), QStringLiteral("medium")).toString();
+    return true;
 }
 
 ExportSettings Exporter::settingsFromMap(const QVariantMap &map)
@@ -1961,6 +1993,45 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
         ExactMotionFrames() { drift::MotionHost::setExactForCurrentThread(true); }
         ~ExactMotionFrames() { drift::MotionHost::setExactForCurrentThread(false); }
     } exactMotionFrames;
+
+    // Pre-render dos motions, como o CapCut faz com os trechos pesados: com o cache em video, o
+    // export le cada motion como video comum em vez de esperar o navegador desenhar quadro a
+    // quadro (02-pintura, 20 motions: 74 s so montando a cena). Aqui so se aproveita o cache que
+    // ja existe no disco: gravar os que faltam na hora custava mais que desenhar ao vivo (vídeo
+    // novo: 5 min 30 s contra 4 min 45 s). Quem grava antes e a producao, ao fim de cada motion.
+    // O andamento fica em 0 ("Preparando") e cancelar funciona aqui.
+    QElapsedTimer preparoMotions;
+    preparoMotions.start();
+    {
+        QStringList motions;
+        project.forEachTrackList([&](const QList<drift::Track> &tracks) {
+            for (const drift::Track &track : tracks) {
+                if (track.hidden)
+                    continue;
+                for (const drift::Clip &clip : track.clips) {
+                    if (drift::MotionHost::isMotionPath(clip.path) && !motions.contains(clip.path))
+                        motions.append(clip.path);
+                }
+            }
+        });
+        if (!motions.isEmpty()) {
+            drift::MotionHost::setCacheFps(project.fps());
+            bool cancelou = false;
+            drift::MotionHost::instance().prepararCaches(
+                motions,
+                [&](int, int) {
+                    cancelou = onProgress && !onProgress(0.0);
+                    return !cancelou;
+                },
+                /*gravarFaltantes=*/false);
+            if (cancelou) {
+                if (errorOut)
+                    *errorOut = QStringLiteral("Export cancelled");
+                return false;
+            }
+        }
+    }
+    const qint64 perfPreparo = preparoMotions.elapsed();
 
     if (settings.gifExport)
         return runGifExport(project, settings, outputPath, errorOut, onProgress);
@@ -2247,44 +2318,148 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
         AudioMixer mixer;
         mixer.setProject(&project);
 
-        std::vector<float> audioBuffer;
-        int64_t audioSamplesGenerated = 0;
-        int64_t audioPts = 0;
+        // Audio em thread propria, como o grafo de audio separado do CapCut: mixar e codificar o
+        // AAC dentro do laco dos quadros custava ~30 s num export de 12:37. A thread produz os
+        // pacotes ja no tempo do stream; o laco so grava, porque o muxer aceita uma thread so.
+        // Mixer, aframe e actx passam a ser so dela. Sair do bloco (fim, erro ou cancelar) para
+        // e espera a thread antes de qualquer coisa ser liberada.
+        struct AudioProdutor
+        {
+            std::mutex mutex;
+            std::deque<AVPacket *> pacotes;
+            std::atomic<bool> parar{false};
+            QString erro;
+            std::thread thread;
+            ~AudioProdutor()
+            {
+                parar = true;
+                if (thread.joinable())
+                    thread.join();
+                for (AVPacket *p : pacotes)
+                    av_packet_free(&p);
+            }
+        } audio;
 
-        auto flushAudioFrames = [&](bool drainAll) -> bool {
-            while (static_cast<int64_t>(audioBuffer.size()) >= static_cast<int64_t>(frameSize) * 2) {
-                if (av_frame_make_writable(aframe) < 0) {
-                    error = QStringLiteral("Audio frame not writable");
+        audio.thread = std::thread([&] {
+            std::vector<float> buffer;
+            int64_t gerados = 0;
+            int64_t ptsAudio = 0;
+            AVPacket *apkt = av_packet_alloc();
+            const auto codificar = [&](AVFrame *quadro) -> bool {
+                if (avcodec_send_frame(actx, quadro) < 0) {
+                    audio.erro = QStringLiteral("Encoder rejected a frame");
                     return false;
                 }
-                aframe->nb_samples = frameSize;
-                fillAudioFrame(aframe, audioFmt, audioBuffer.data(), frameSize);
-                aframe->pts = audioPts;
-                audioPts += frameSize;
-                if (!encodeWriteFrame(fmt, actx, astream, aframe, pkt, &error))
-                    return false;
-                audioBuffer.erase(audioBuffer.begin(), audioBuffer.begin() + frameSize * 2);
-            }
-            if (drainAll && !audioBuffer.empty()) {
-                const int remaining = static_cast<int>(audioBuffer.size() / 2);
+                for (;;) {
+                    const int rc = avcodec_receive_packet(actx, apkt);
+                    if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF)
+                        return true;
+                    if (rc < 0) {
+                        audio.erro = QStringLiteral("Failed to read an encoded packet");
+                        return false;
+                    }
+                    av_packet_rescale_ts(apkt, actx->time_base, astream->time_base);
+                    apkt->stream_index = astream->index;
+                    AVPacket *copia = av_packet_alloc();
+                    av_packet_move_ref(copia, apkt);
+                    std::lock_guard<std::mutex> lock(audio.mutex);
+                    audio.pacotes.push_back(copia);
+                }
+            };
+            const auto enviar = [&](int amostras) -> bool {
                 if (av_frame_make_writable(aframe) < 0) {
-                    error = QStringLiteral("Audio frame not writable");
+                    audio.erro = QStringLiteral("Audio frame not writable");
                     return false;
                 }
-                aframe->nb_samples = remaining;
-                fillAudioFrame(aframe, audioFmt, audioBuffer.data(), remaining);
-                aframe->pts = audioPts;
-                audioPts += remaining;
-                if (!encodeWriteFrame(fmt, actx, astream, aframe, pkt, &error))
+                aframe->nb_samples = amostras;
+                fillAudioFrame(aframe, audioFmt, buffer.data(), amostras);
+                aframe->pts = ptsAudio;
+                ptsAudio += amostras;
+                if (!codificar(aframe))
                     return false;
-                audioBuffer.clear();
+                buffer.erase(buffer.begin(), buffer.begin() + amostras * 2);
+                return true;
+            };
+            bool okAudio = apkt != nullptr;
+            while (okAudio && !audio.parar && gerados < totalAudioSamples) {
+                const int64_t bloco = qMin<int64_t>(frameSize * 8, totalAudioSamples - gerados);
+                const size_t base = buffer.size();
+                buffer.resize(base + static_cast<size_t>(bloco) * 2);
+                const drift::TimeUs inicio = rangeStartUs
+                    + static_cast<drift::TimeUs>((gerados * drift::kUsPerSecond) / sampleRate);
+                mixer.mix(inicio, static_cast<int>(bloco), sampleRate, buffer.data() + base);
+                gerados += bloco;
+                while (okAudio && static_cast<int64_t>(buffer.size()) >= static_cast<int64_t>(frameSize) * 2)
+                    okAudio = enviar(frameSize);
             }
-            return true;
+            if (okAudio && !audio.parar) {
+                if (!buffer.empty())
+                    okAudio = enviar(static_cast<int>(buffer.size() / 2));
+                if (okAudio)
+                    okAudio = codificar(nullptr);
+            }
+            if (apkt)
+                av_packet_free(&apkt);
+        });
+
+        // Grava os pacotes de audio prontos ate `ateSegundos` do video (o resto espera a vez,
+        // para o arquivo sair intercalado). Negativo grava todos.
+        const auto gravarAudio = [&](double ateSegundos) -> bool {
+            for (;;) {
+                AVPacket *p = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(audio.mutex);
+                    if (audio.pacotes.empty())
+                        return true;
+                    p = audio.pacotes.front();
+                    if (ateSegundos >= 0 && p->dts != AV_NOPTS_VALUE
+                        && p->dts * av_q2d(astream->time_base) > ateSegundos)
+                        return true;
+                    audio.pacotes.pop_front();
+                }
+                const int rc = av_interleaved_write_frame(fmt, p);
+                av_packet_free(&p);
+                if (rc < 0) {
+                    error = QStringLiteral("Failed to write a packet");
+                    return false;
+                }
+            }
         };
 
         // `ready` is a hardware frame the caller already filled — the CUDA export path, which
         // writes the encoder's surface straight from the compositor's GL textures. Everyone
         // else hands over nothing and pays for the system-memory round trip below.
+        // Cronômetro por etapa do export (ms acumulados), gravado em <temp>/nardoto-export-perf.log
+        // a cada 10 s e no fim: sem ele não dá para saber se o render lento é a montagem da cena,
+        // a GPU, o codificador ou a mixagem do áudio.
+        QElapsedTimer perfWall;
+        perfWall.start();
+        QElapsedTimer perfStep;
+        qint64 perfScene = 0, perfGpu = 0, perfConsume = 0, perfEncode = 0, perfAudio = 0;
+        qint64 perfLastLog = 0;
+        int64_t perfFrames = 0;
+        const auto perfLog = [&](bool fim) {
+            const qint64 wall = perfWall.elapsed();
+            if (!fim && wall - perfLastLog < 10000)
+                return;
+            perfLastLog = wall;
+            QFile f(QDir::temp().filePath(QStringLiteral("nardoto-export-perf.log")));
+            if (!f.open(QIODevice::Append | QIODevice::Text))
+                return;
+            const double qps = wall > 0 ? perfFrames * 1000.0 / wall : 0.0;
+            // "consumo" mede consumeNv12Head inteiro, que chama codificar e audio por dentro:
+            // a espera da placa (fence + copia CUDA) e o que sobra deles.
+            const qint64 espera = qMax<qint64>(0, perfConsume - perfEncode - perfAudio);
+            const qint64 outros = qMax<qint64>(0, wall - perfScene - perfGpu - qMax(perfConsume, perfEncode + perfAudio));
+            f.write(QStringLiteral("%1 %2 %3 quadros=%4/%5 qps=%6 ms: preparo=%7 cena=%8 gpu=%9 espera=%10 codificar=%11 audio=%12 outros=%13 total=%14\n")
+                        .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")),
+                             fim ? QStringLiteral("FIM") : QStringLiteral("..."), QString::fromUtf8(vdef->id))
+                        .arg(perfFrames).arg(totalFrames).arg(qps, 0, 'f', 1)
+                        .arg(perfPreparo).arg(perfScene).arg(perfGpu).arg(espera).arg(perfEncode).arg(perfAudio)
+                        .arg(outros).arg(wall)
+                        .toUtf8());
+        };
+
         auto sendVideoAndAudio = [&](int64_t pts, AVFrame *ready = nullptr) -> bool {
             AVFrame *encodeFrame = ready;
             if (!encodeFrame) {
@@ -2306,31 +2481,30 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
                     encodeFrame = hwframe;
                 }
             }
+            QElapsedTimer encT;
+            encT.start();
             if (!encodeWriteFrame(fmt, vctx, vstream, encodeFrame, pkt, &error))
                 return false;
+            perfEncode += encT.elapsed();
+            ++perfFrames;
+            perfLog(false);
 
-            const int64_t targetSamples =
-                qMin(totalAudioSamples,
-                     ((pts + 1) * static_cast<int64_t>(sampleRate) * frameRate.den) / frameRate.num);
-            const int need = static_cast<int>(targetSamples - audioSamplesGenerated);
-            if (need > 0) {
-                const size_t base = audioBuffer.size();
-                audioBuffer.resize(base + static_cast<size_t>(need) * 2);
-                const drift::TimeUs audioStartUs = rangeStartUs
-                    + static_cast<drift::TimeUs>(
-                        (static_cast<int64_t>(audioSamplesGenerated) * drift::kUsPerSecond)
-                        / sampleRate);
-                mixer.mix(audioStartUs, need, sampleRate, audioBuffer.data() + base);
-                audioSamplesGenerated = targetSamples;
-            }
-            return flushAudioFrames(false);
+            QElapsedTimer audioT;
+            audioT.start();
+            const auto audioDone = qScopeGuard([&] { perfAudio += audioT.elapsed(); });
+            return gravarAudio(double(pts + 1) * frameRate.den / frameRate.num);
         };
 
         FrameCompositor::RenderOptions composeOptions;
         if (outH < projH)
             composeOptions.previewScale = double(outH) / double(projH);
+        // 10 quadros adiantados (eram 2): a decodificacao e a conversao de cada clipe correm na
+        // thread dele enquanto o export compoe, em vez de o export esperar quadro a quadro.
+        // NARDOTO_EXPORT_ADIANTADOS muda o numero para medir.
+        const int adiantados = qBound(1, qEnvironmentVariableIntValue("NARDOTO_EXPORT_ADIANTADOS") > 0
+                                             ? qEnvironmentVariableIntValue("NARDOTO_EXPORT_ADIANTADOS") : 10, 60);
         composeOptions.readAheadUs = static_cast<drift::TimeUs>(
-            std::llround(2.0 * 1e6 * frameRate.den / frameRate.num));
+            std::llround(adiantados * 1e6 * frameRate.den / frameRate.num));
 
         std::vector<uint8_t> nv12Y;
         std::vector<uint8_t> nv12Uv;
@@ -2432,16 +2606,20 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
 
             if (useGpuNv12) {
                 if (inflightCount == GpuCompositor::kExportNv12Slots) {
+                    perfStep.start();
                     if (!consumeNv12Head())
                         goto cleanup;
+                    perfConsume += perfStep.elapsed();
                 }
 
+                perfStep.start();
                 GpuScene scene;
                 if (!compositor.buildSceneAt(t, composeOptions, &scene)) {
                     scene = GpuScene{};
                     scene.canvasSize = QSize(outW, outH);
                     scene.backgroundColor = Qt::black;
                 }
+                perfScene += perfStep.elapsed();
 
                 // Motion ao vivo: quadro exato que nao chegou para o export com erro. Usar o
                 // anterior (ou nenhum) entregaria um video com quadro trocado sem aviso.
@@ -2452,8 +2630,10 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
                 }
 
                 const int slot = int(i % GpuCompositor::kExportNv12Slots);
+                perfStep.start();
                 const bool packed =
                     GpuCompositor::beginExportNv12(scene, outW, outH, slot, cudaExport);
+                perfGpu += perfStep.elapsed();
                 inflight[inflightCount++] = InflightNv12{slot, i, t, packed};
                 continue;
             }
@@ -2507,11 +2687,16 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
         }
 
         if (!cancelled) {
-            if (!flushAudioFrames(true))
-                goto cleanup;
             if (!encodeWriteFrame(fmt, vctx, vstream, nullptr, pkt, &error))
                 goto cleanup;
-            if (!encodeWriteFrame(fmt, actx, astream, nullptr, pkt, &error))
+            // O video acabou: espera o audio terminar de codificar e grava o que sobrou.
+            if (audio.thread.joinable())
+                audio.thread.join();
+            if (!audio.erro.isEmpty()) {
+                error = audio.erro;
+                goto cleanup;
+            }
+            if (!gravarAudio(-1))
                 goto cleanup;
             if (av_write_trailer(fmt) < 0) {
                 error = QStringLiteral("Could not finalize the file");
@@ -2519,6 +2704,7 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
             }
             ok = true;
         }
+        perfLog(true);
     }
 
 cleanup:

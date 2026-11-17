@@ -235,17 +235,107 @@ QString MotionHost::cachedVideo(const QString &path, bool pedir)
         m_cachePedidos.insert(chave);
     }
     motionLog(QStringLiteral("pedindo cache: ") + chave);
-    QMetaObject::invokeMethod(this, [this, path, fps] {
+    enviarPedidoCache(path, fps, false);
+    return {};
+}
+
+void MotionHost::enviarPedidoCache(const QString &path, int fps, bool soExistente)
+{
+    QMetaObject::invokeMethod(this, [this, path, fps, soExistente] {
         ensureStarted();
         // 3840x2160 e so o teto: o motor nunca grava maior que a resolucao da composicao.
         const QJsonObject cmd{{QStringLiteral("cmd"), QStringLiteral("cache")},
                               {QStringLiteral("pasta"), path},
                               {QStringLiteral("largura"), 3840},
                               {QStringLiteral("altura"), 2160},
-                              {QStringLiteral("fps"), fps}};
+                              {QStringLiteral("fps"), fps},
+                              {QStringLiteral("soExistente"), soExistente}};
         sendLine(QJsonDocument(cmd).toJson(QJsonDocument::Compact));
     }, Qt::QueuedConnection);
-    return {};
+}
+
+int MotionHost::prepararCaches(const QStringList &paths, const std::function<bool(int, int)> &continuar,
+                               bool gravarFaltantes)
+{
+    if (qEnvironmentVariableIsSet("NARDOTO_MOTION_SEM_CACHE"))
+        return 0;
+    const int fps = g_cacheFps.load();
+    QStringList chaves;
+    for (const QString &path : paths) {
+        const QString chave = path + QLatin1Char('|') + QString::number(fps);
+        if (!isMotionPath(path) || chaves.contains(chave))
+            continue;
+        chaves.append(chave);
+        bool enviar = false;
+        {
+            QMutexLocker lock(&m_mutex);
+            if (m_cacheFiles.contains(chave) || m_restarts > kMaxRestarts)
+                continue;
+            // Consulta de novo quem ficou ausente antes: pode ter sido gravado desde entao.
+            m_cacheAusentes.remove(chave);
+            // Pedido de gravacao ja em andamento: so espera. Sem gravar, a consulta e barata e
+            // sempre sai (o motor responde na hora pelo disco).
+            if (!m_cachePedidos.contains(chave) || !gravarFaltantes) {
+                m_cachePedidos.insert(chave);
+                enviar = true;
+            }
+        }
+        if (enviar)
+            enviarPedidoCache(path, fps, !gravarFaltantes);
+    }
+    if (chaves.isEmpty())
+        return 0;
+    motionLog(QStringLiteral("cache de %1 motion(s): %2")
+                  .arg(chaves.size())
+                  .arg(gravarFaltantes ? QStringLiteral("gravando os que faltam") : QStringLiteral("so os do disco")));
+
+    // O motor grava um por vez; sem nenhum ficar pronto em 3 min ele travou, e o export segue
+    // ao vivo para o que faltar.
+    QElapsedTimer semAvanco;
+    semAvanco.start();
+    int prontosAntes = -1;
+    for (;;) {
+        int prontos = 0;
+        int resolvidos = 0;
+        bool motorMorto = false;
+        {
+            QMutexLocker lock(&m_mutex);
+            for (const QString &chave : std::as_const(chaves)) {
+                if (m_cacheFiles.contains(chave))
+                    ++prontos, ++resolvidos;
+                else if (m_cacheFalhas.contains(chave) || m_cacheAusentes.contains(chave)
+                         || !m_cachePedidos.contains(chave))
+                    ++resolvidos;
+            }
+            motorMorto = m_restarts > kMaxRestarts;
+        }
+        if (resolvidos == chaves.size() || motorMorto) {
+            motionLog(QStringLiteral("export com %1 de %2 motion(s) em cache").arg(prontos).arg(chaves.size()));
+            return prontos;
+        }
+        if (prontos != prontosAntes) {
+            prontosAntes = prontos;
+            semAvanco.restart();
+        }
+        if (semAvanco.elapsed() > 180000 || (continuar && !continuar(prontos, chaves.size())))
+            return prontos;
+        QThread::msleep(100);
+    }
+}
+
+QHash<QString, QString> MotionHost::situacaoCaches(const QStringList &paths) const
+{
+    const int fps = g_cacheFps.load();
+    QHash<QString, QString> out;
+    QMutexLocker lock(&m_mutex);
+    for (const QString &path : paths) {
+        const QString chave = path + QLatin1Char('|') + QString::number(fps);
+        out.insert(path, m_cacheFiles.contains(chave)    ? QStringLiteral("pronto")
+                         : m_cacheFalhas.contains(chave) ? QStringLiteral("falhou")
+                         : m_cachePedidos.contains(chave) ? QStringLiteral("gravando")
+                                                          : QStringLiteral("ausente"));
+    }
+    return out;
 }
 
 QString MotionHost::lastError() const
@@ -614,11 +704,26 @@ void MotionHost::handleJson(const QByteArray &body)
         return;
     }
 
-    if (evento == QStringLiteral("cache-pronto") || evento == QStringLiteral("cache-erro")) {
+    if (evento == QStringLiteral("cache-pronto") || evento == QStringLiteral("cache-erro")
+        || evento == QStringLiteral("cache-ausente")) {
         const QString pasta = msg.value(QStringLiteral("pasta")).toString();
         const QString chave = pasta + QLatin1Char('|') + QString::number(msg.value(QStringLiteral("fps")).toInt());
+        if (evento == QStringLiteral("cache-ausente")) {
+            // Consulta sem gravar: nao existe no disco. Sai dos pedidos para a previa poder pedir
+            // a gravacao normal depois.
+            QMutexLocker lock(&m_mutex);
+            // Gravacao em andamento (a producao pediu o cache ao fim do motion): o pedido continua
+            // valendo e o export espera o cache-pronto que vem, mais barato que desenhar ao vivo.
+            if (msg.value(QStringLiteral("gravando")).toBool())
+                return;
+            m_cacheAusentes.insert(chave);
+            m_cachePedidos.remove(chave);
+            return;
+        }
         if (evento == QStringLiteral("cache-erro")) {
             motionLog(QStringLiteral("cache falhou: ") + QString::fromUtf8(body.left(400)));
+            QMutexLocker lock(&m_mutex);
+            m_cacheFalhas.insert(chave);
             return;
         }
         const QString arquivo = msg.value(QStringLiteral("arquivo")).toString();
@@ -629,6 +734,7 @@ void MotionHost::handleJson(const QByteArray &body)
             if (!m_cachePedidos.contains(chave))
                 return;
             m_cacheFiles.insert(chave, arquivo);
+            m_cacheAusentes.remove(chave);
         }
         emit compositionChanged(pasta);
         return;
@@ -648,6 +754,8 @@ void MotionHost::handleJson(const QByteArray &body)
             const QString prefixo = path + QLatin1Char('|');
             m_cacheFiles.removeIf([&](const auto &e) { return e.key().startsWith(prefixo); });
             m_cachePedidos.removeIf([&](const QString &k) { return k.startsWith(prefixo); });
+            m_cacheFalhas.removeIf([&](const QString &k) { return k.startsWith(prefixo); });
+            m_cacheAusentes.removeIf([&](const QString &k) { return k.startsWith(prefixo); });
         }
         emit compositionChanged(path);
         return;

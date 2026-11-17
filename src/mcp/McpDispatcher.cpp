@@ -1,4 +1,5 @@
 #include "mcp/McpDispatcher.h"
+#include "engine/MotionHost.h"
 #include "mcp/McpCatalog.h"
 #include "mcp/McpJson.h"
 #include "mcp/McpValidate.h"
@@ -282,6 +283,12 @@ QVariantMap mergedExportSettings(AppController *c)
         // one build asked for a video export, left audio_only out of the args, inherited the true
         // from an earlier audio-only mix check, and got an audio file back with no warning.
         if (it.key() == QLatin1String("audioOnly") || it.key() == QLatin1String("gifExport"))
+            continue;
+        // O codec também não passa de um export para o outro: um h264_qsv pedido uma vez
+        // prendia todo render do Studio no QSV (9,4 s) com o NVENC livre (6,4 s, 1080p de 20 s).
+        // Sem pedido explícito, vale o padrão, que escolhe o encoder mais rápido da máquina.
+        if (it.key() == QLatin1String("videoCodecId") || it.key() == QLatin1String("crf")
+            || it.key() == QLatin1String("videoPreset") || it.key() == QLatin1String("rateControl"))
             continue;
         merged.insert(it.key(), it.value());
     }
@@ -667,6 +674,30 @@ QJsonObject McpDispatcher::apply(const QJsonObject &args)
         return label;
     };
 
+    // Lote só de leitura não é edição. Abrir o batch copia o projeto e, ao fechar, finishEdit
+    // refaz a timeline e a prévia: consultar export_status por aqui a cada segundo deixava a
+    // exportação 3,6x mais lenta (30 s contra 8 s em 1080p com NVENC), disputando a thread GL.
+    bool readOnlyBatch = true;
+    for (const QJsonValue &v : ops)
+        readOnlyBatch = readOnlyBatch && isReadOnlyOp(v.toObject().value(QStringLiteral("tool")).toString());
+    if (readOnlyBatch) {
+        QJsonArray results;
+        for (int i = 0; i < ops.size(); ++i) {
+            const QJsonObject op = ops.at(i).toObject();
+            const QString tool = op.value(QStringLiteral("tool")).toString();
+            const QJsonObject one = applyOne(tool, op.value(QStringLiteral("args")).toObject());
+            if (!one.value(QStringLiteral("ok")).toBool())
+                return {{QStringLiteral("ok"), false},
+                        {QStringLiteral("error"), QStringLiteral("apply_failed")},
+                        {QStringLiteral("stopped"), i},
+                        {QStringLiteral("tool"), tool},
+                        {QStringLiteral("failed"), one},
+                        {QStringLiteral("done"), results}};
+            results.append(QJsonObject{{QStringLiteral("tool"), tool}, {QStringLiteral("result"), one}});
+        }
+        return ok({{QStringLiteral("n"), ops.size()}, {QStringLiteral("done"), results}});
+    }
+
     m_controller->mcpBeginBatch();
     bool hadUndoable = false;
     QJsonArray results;
@@ -806,6 +837,8 @@ QJsonObject McpDispatcher::applyOneUnchecked(const QString &tool, const QJsonObj
         return opExportVideo(args);
     if (tool == QLatin1String("export_status"))
         return opExportStatus();
+    if (tool == QLatin1String("prepare_motion_cache"))
+        return opPrepareMotionCache(args);
     if (tool == QLatin1String("list_animated_properties"))
         return opListAnimatedProperties(args);
     if (tool == QLatin1String("list_keyframes"))
@@ -1792,9 +1825,7 @@ QJsonObject McpDispatcher::opExportVideo(const QJsonObject &args)
 
 QJsonObject McpDispatcher::opExport(const QJsonObject &args)
 {
-    if (m_controller->exportInProgress())
-        return err("export_busy", QStringLiteral("Export already in progress"));
-
+    // Com um render rodando, este entra na fila de renders do editor (não devolve mais export_busy).
     QString path = localExportPath(args.value(QStringLiteral("path")).toString());
     if (path.isEmpty())
         return err("bad_args", QStringLiteral("path required"));
@@ -1827,9 +1858,13 @@ QJsonObject McpDispatcher::opExport(const QJsonObject &args)
 
     bool finished = false;
     bool success = false;
+    const QString target = QDir::cleanPath(info.absoluteFilePath());
     QEventLoop loop;
     const auto conn = QObject::connect(
-        m_controller, &AppController::exportFinished, &loop, [&](bool ok) {
+        m_controller, &AppController::exportFinished, &loop, [&](bool ok, const QString &donePath) {
+            // Com fila, o primeiro export que termina pode ser outro: só conta o deste arquivo.
+            if (!donePath.isEmpty() && QDir::cleanPath(donePath).compare(target, Qt::CaseInsensitive) != 0)
+                return;
             finished = true;
             success = ok;
             loop.quit();
@@ -1838,6 +1873,7 @@ QJsonObject McpDispatcher::opExport(const QJsonObject &args)
     // Remember what the agent chose in the agent's own store, so the export dialog still
     // offers the user what they last picked themselves.
     m_controller->mcpRememberExportSettings(map);
+    const bool queued = m_controller->exportInProgress();
     m_controller->exportWithSettings(QUrl::fromLocalFile(info.absoluteFilePath()), map,
                                      /*rememberChoice=*/false);
 
@@ -1845,7 +1881,9 @@ QJsonObject McpDispatcher::opExport(const QJsonObject &args)
         QObject::disconnect(conn);
         if (finished && !success)
             return err("export_failed", m_controller->lastMessage());
-        return ok({{QStringLiteral("started"), true},
+        return ok({{QStringLiteral("started"), !queued},
+                   {QStringLiteral("queued"), queued},
+                   {QStringLiteral("queuePosition"), queued ? m_controller->exportQueueSize() : 0},
                    {QStringLiteral("path"), info.absoluteFilePath()},
                    {QStringLiteral("busy"), m_controller->exportInProgress()}});
     }
@@ -1872,12 +1910,57 @@ QJsonObject McpDispatcher::opExport(const QJsonObject &args)
     return ok(extra);
 }
 
+// Pre-render dos motions durante a producao (como o CapCut pre-renderiza os trechos pesados): o Studio
+// chama ao fim de cada motion e segue; o export depois so le os caches. Nao espera: responde a situacao.
+QJsonObject McpDispatcher::opPrepareMotionCache(const QJsonObject &args)
+{
+    QStringList paths;
+    for (const QJsonValue &v : args.value(QStringLiteral("paths")).toArray()) {
+        QString p = QDir::fromNativeSeparators(v.toString().trimmed());
+        if (p.isEmpty())
+            continue;
+        // Pasta do motion do Studio (motion/<id>/fonte/index.html), a pasta fonte/ ou o proprio index.html.
+        if (!drift::MotionHost::isMotionPath(p)) {
+            const QDir dir(p);
+            p = QFileInfo::exists(dir.filePath(QStringLiteral("fonte/index.html"))) ? dir.filePath(QStringLiteral("fonte/index.html"))
+                                                                                      : dir.filePath(QStringLiteral("index.html"));
+        }
+        if (!QFileInfo::exists(p))
+            return err("bad_args", QStringLiteral("index.html não encontrado: ") + p);
+        if (!paths.contains(p))
+            paths.append(p);
+    }
+    if (paths.isEmpty())
+        return err("bad_args", QStringLiteral("paths required"));
+
+    const int fps = jsonInt(args.value(QStringLiteral("fps")), 0);
+    drift::MotionHost::setCacheFps(fps > 0 ? fps : qMax(1, m_controller->projectFps()));
+    auto &host = drift::MotionHost::instance();
+    host.prepararCaches(paths, [](int, int) { return false; }, /*gravarFaltantes=*/true);
+
+    const QHash<QString, QString> situacao = host.situacaoCaches(paths);
+    QJsonObject motions;
+    int pronto = 0, gravando = 0, falhou = 0;
+    for (const QString &p : paths) {
+        const QString s = situacao.value(p);
+        motions.insert(p, s);
+        pronto += s == QLatin1String("pronto");
+        gravando += s == QLatin1String("gravando");
+        falhou += s == QLatin1String("falhou");
+    }
+    return ok({{QStringLiteral("total"), paths.size()}, {QStringLiteral("pronto"), pronto},
+               {QStringLiteral("gravando"), gravando}, {QStringLiteral("falhou"), falhou},
+               {QStringLiteral("motions"), motions}});
+}
+
 QJsonObject McpDispatcher::opExportStatus() const
 {
     return ok({
         {QStringLiteral("busy"), m_controller->exportInProgress()},
         {QStringLiteral("progress"), m_controller->exportProgress()},
         {QStringLiteral("message"), m_controller->lastMessage()},
+        {QStringLiteral("current"), m_controller->exportJobName()},
+        {QStringLiteral("queue"), QJsonArray::fromVariantList(m_controller->exportQueue())},
     });
 }
 
