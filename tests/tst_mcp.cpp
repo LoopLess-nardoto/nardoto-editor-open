@@ -145,6 +145,7 @@ private slots:
     void duckUnderIsIdempotentAndKeepsTheEnvelope();
     void duckUnderMinGapIgnoresShortPauses();
     void assembleVideoForwardsDuckMinGap();
+    void reimportRereadsDurationOfRewrittenFile();
     void assembleVideoMediaStartsSetsEachSlice();
     void assembleVideoMediaStartsRejectsBadLists();
     void assembleVideoMediaStartsRejectsShortSlices();
@@ -1896,6 +1897,38 @@ void McpTest::duckUnderMinGapIgnoresShortPauses()
     // Fora da faixa 0,12..5 o valor é limitado, e a resposta mostra o que foi aplicado.
     QVERIFY(qAbs(duck(99.0).value(QStringLiteral("min_gap")).toDouble() - 5.0) < 1e-9);
     QVERIFY(qAbs(duck(0.0).value(QStringLiteral("min_gap")).toDouble() - 0.12) < 1e-9);
+}
+
+// Nardoto Studio, 2026-11-21: a mix rewritten at the same path (294.17 s -> 298.6 s) was imported
+// again with the old duration, and assemble_video measured the slices against the stale target.
+void McpTest::reimportRereadsDurationOfRewrittenFile()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString mix = dir.filePath(QStringLiteral("mix.wav"));
+    const auto tone = [&](int seconds) {
+        return runFfmpeg({QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                          QStringLiteral("sine=frequency=440:sample_rate=48000:duration=%1").arg(seconds),
+                          QStringLiteral("-c:a"), QStringLiteral("pcm_s16le"), mix});
+    };
+    QVERIFY(tone(2));
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    const auto importedDuration = [&]() {
+        const QJsonObject r = dispatcher.applyOne(QStringLiteral("import_media"),
+                                                  {{QStringLiteral("paths"), QJsonArray{mix}}});
+        const QJsonArray assets = r.value(QStringLiteral("assets")).toArray();
+        return assets.isEmpty() ? -1.0 : assets.first().toObject().value(QStringLiteral("dur")).toDouble();
+    };
+    QVERIFY(std::abs(importedDuration() - 2.0) < 0.05);
+
+    QVERIFY(tone(4));
+    QVERIFY2(std::abs(importedDuration() - 4.0) < 0.05, "re-import kept the duration of the old file");
+    QCOMPARE(library.count(), 1);
 }
 
 // duck_min_gap do assemble_video chega ao duck e volta no resultado; sem ele, 0,12.

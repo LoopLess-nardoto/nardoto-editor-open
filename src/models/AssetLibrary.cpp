@@ -1024,6 +1024,51 @@ void AssetLibrary::startImportJob(const QString &assetId, const QString &absolut
     });
 }
 
+void AssetLibrary::startReprobeJob(const QString &assetId, const QString &absolutePath, bool imageOnly)
+{
+    if (assetId.isEmpty() || m_importPending.contains(assetId))
+        return;
+
+    m_importPending.insert(assetId);
+
+    (void)QtConcurrent::run(&m_jobs, [this, assetId, absolutePath, imageOnly]() {
+        const std::optional<drift::MediaAsset> probed = probeAsset(absolutePath, imageOnly);
+        const drift::MediaAsset filled = probed.value_or(drift::MediaAsset{});
+        const bool ok = probed.has_value();
+
+        QMetaObject::invokeMethod(
+            this, [this, assetId, filled, ok]() { applyReprobeResult(assetId, filled, ok); },
+            Qt::QueuedConnection);
+    });
+}
+
+void AssetLibrary::applyReprobeResult(const QString &assetId, const drift::MediaAsset &filled, bool ok)
+{
+    m_importPending.remove(assetId);
+    // Unlike a first import, a failed re-read never removes the asset: clips may already use it.
+    if (!m_project || !ok)
+        return;
+    const int index = indexOfId(assetId);
+    drift::MediaAsset *asset = index < 0 ? nullptr : m_project->asset(assetId);
+    if (!asset || asset->kind != filled.kind)
+        return;
+
+    asset->durationUs = filled.durationUs;
+    asset->durationLabel = filled.durationLabel;
+    asset->width = filled.width;
+    asset->height = filled.height;
+    asset->fps = filled.fps;
+    asset->sampleRate = filled.sampleRate;
+    asset->channels = filled.channels;
+    asset->codecName = filled.codecName;
+    asset->hasAudio = filled.hasAudio;
+    asset->hasAudioKnown = filled.hasAudioKnown;
+
+    emitAssetRowChanged(index, {DurationRole, DurationSecondsRole});
+    emit assetMetadataChanged(assetId);
+    emit assetCardChanged(assetId);
+}
+
 bool AssetLibrary::startReplaceProbe(int index, const QString &absolutePath)
 {
     const drift::MediaAsset *asset = assetAtIndex(index);
@@ -1988,6 +2033,11 @@ QStringList AssetLibrary::importFilesReturningIds(const QStringList &paths,
 
         const int existingIndex = indexOfPath(absolutePath);
         if (existingIndex >= 0) {
+            // The same path can hold new bytes: a mix rendered again under the same name came back
+            // with the old duration (Nardoto Studio, 2026-11-21: a 298.6 s mix imported as the
+            // 294.17 s one it replaced, and assemble_video refused the last scene four times).
+            // Re-read the streams; the asset keeps its id, so clips that use it keep pointing at it.
+            startReprobeJob(assetIdAt(existingIndex), absolutePath, isImagePath(path));
             refreshMediaAt(existingIndex);
             ids.append(assetIdAt(existingIndex));
             continue;

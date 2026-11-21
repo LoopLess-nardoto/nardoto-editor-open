@@ -220,6 +220,8 @@ private:
     bool containsPath(const QString &path) const;
     void refreshMediaAt(int index);
     void startImportJob(const QString &assetId, const QString &absolutePath, bool imageOnly);
+    void startReprobeJob(const QString &assetId, const QString &absolutePath, bool imageOnly);
+    void applyReprobeResult(const QString &assetId, const drift::MediaAsset &filled, bool ok);
     void startThumbJob(const QString &assetId);
     void applyImportResult(const QString &assetId, const drift::MediaAsset &filled, bool ok,
                            bool suggestProxy = false, bool variableFrameRate = false);
