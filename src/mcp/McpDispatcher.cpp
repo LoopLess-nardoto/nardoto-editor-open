@@ -674,6 +674,14 @@ QJsonObject McpDispatcher::apply(const QJsonObject &args)
         return label;
     };
 
+    // get_waveform com image:true devolve uma imagem, que não cabe no resultado de um lote: recusada nos dois
+    // caminhos. O caminho só de leitura, novo no 1.2.0, chamava applyOne direto e deixava passar.
+    auto rodarOp = [this](const QString &tool, const QJsonObject &opArgs) {
+        return tool == QLatin1String("get_waveform") && jsonBool(opArgs.value(QStringLiteral("image")))
+                   ? err("bad_args", QStringLiteral("image:true cannot be batched — call get_waveform directly"))
+                   : applyOne(tool, opArgs);
+    };
+
     // Lote só de leitura não é edição. Abrir o batch copia o projeto e, ao fechar, finishEdit
     // refaz a timeline e a prévia: consultar export_status por aqui a cada segundo deixava a
     // exportação 3,6x mais lenta (30 s contra 8 s em 1080p com NVENC), disputando a thread GL.
@@ -685,7 +693,7 @@ QJsonObject McpDispatcher::apply(const QJsonObject &args)
         for (int i = 0; i < ops.size(); ++i) {
             const QJsonObject op = ops.at(i).toObject();
             const QString tool = op.value(QStringLiteral("tool")).toString();
-            const QJsonObject one = applyOne(tool, op.value(QStringLiteral("args")).toObject());
+            const QJsonObject one = rodarOp(tool, op.value(QStringLiteral("args")).toObject());
             if (!one.value(QStringLiteral("ok")).toBool())
                 return {{QStringLiteral("ok"), false},
                         {QStringLiteral("error"), QStringLiteral("apply_failed")},
@@ -706,10 +714,7 @@ QJsonObject McpDispatcher::apply(const QJsonObject &args)
         const QJsonObject op = ops.at(i).toObject();
         const QString tool = op.value(QStringLiteral("tool")).toString();
         const QJsonObject opArgs = op.value(QStringLiteral("args")).toObject();
-        const QJsonObject one =
-            tool == QLatin1String("get_waveform") && jsonBool(opArgs.value(QStringLiteral("image")))
-                ? err("bad_args", QStringLiteral("image:true cannot be batched — call get_waveform directly"))
-                : applyOne(tool, opArgs);
+        const QJsonObject one = rodarOp(tool, opArgs);
         if (!one.value(QStringLiteral("ok")).toBool()) {
             m_controller->mcpEndBatch(batchLabel(i),
                                       hadUndoable && i > 0);
