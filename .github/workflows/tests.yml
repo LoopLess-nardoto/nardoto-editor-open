@@ -261,6 +261,16 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The Translations test runs lupdate in place before comparing: on failure the checkout holds the
+      # catalogs as they should be. Uploading them lets the fix be a download, not a Skia build.
+      - name: Upload updated translation catalogs
+        if: failure() && steps.test.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: i18n-atualizado
+          path: i18n/*.ts
+          if-no-files-found: ignore
+
       - name: ccache statistics
         if: always()
         run: ccache --show-stats

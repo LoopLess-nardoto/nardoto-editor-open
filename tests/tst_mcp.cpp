@@ -308,8 +308,9 @@ void McpTest::catalogOpsIncludeWhen()
     // anterior (19.500) ficou 14 bytes curto; 20.000 dá folga para uma ou duas sem virar meta.
     const qsizetype tamanhoCompacto = QJsonDocument(compact).toJson(QJsonDocument::Compact).size();
     QVERIFY2(tamanhoCompacto < 20000, qPrintable(QStringLiteral("catálogo compacto: %1 bytes").arg(tamanhoCompacto)));
-    QVERIFY(QJsonDocument(drift::mcp::catalogPayload({{QStringLiteral("brief"), true}}))
-                .toJson(QJsonDocument::Compact).size() < 10000);
+    const qsizetype tamanhoBreve =
+        QJsonDocument(drift::mcp::catalogPayload({{QStringLiteral("brief"), true}})).toJson(QJsonDocument::Compact).size();
+    QVERIFY2(tamanhoBreve < 10000, qPrintable(QStringLiteral("catálogo breve: %1 bytes").arg(tamanhoBreve)));
 
     const QJsonObject cat = drift::mcp::catalogPayload(
         {{QStringLiteral("guide"), true}, {QStringLiteral("endpoints"), true}});
