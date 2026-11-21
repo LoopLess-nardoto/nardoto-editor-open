@@ -310,7 +310,9 @@ void McpTest::catalogOpsIncludeWhen()
     QVERIFY2(tamanhoCompacto < 20000, qPrintable(QStringLiteral("catálogo compacto: %1 bytes").arg(tamanhoCompacto)));
     const qsizetype tamanhoBreve =
         QJsonDocument(drift::mcp::catalogPayload({{QStringLiteral("brief"), true}})).toJson(QJsonDocument::Compact).size();
-    QVERIFY2(tamanhoBreve < 10000, qPrintable(QStringLiteral("catálogo breve: %1 bytes").arg(tamanhoBreve)));
+    // 10000 -> 10500 em 2026-11-21: as ops de motion do 1.2.0 (prepare_motions e a fila de renders) levaram o
+    // catálogo breve a 10013 bytes, medido no CI.
+    QVERIFY2(tamanhoBreve < 10500, qPrintable(QStringLiteral("catálogo breve: %1 bytes").arg(tamanhoBreve)));
 
     const QJsonObject cat = drift::mcp::catalogPayload(
         {{QStringLiteral("guide"), true}, {QStringLiteral("endpoints"), true}});

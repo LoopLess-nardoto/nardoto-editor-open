@@ -4269,6 +4269,26 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Na fila de renders (posição %1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Não foi possível ler %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Projeto inválido: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 guarda as mídias dentro do arquivo: abra o projeto para exportar.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 já está na fila.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Exporting…</source>
         <translation>Exportando…</translation>
     </message>
@@ -4363,10 +4383,6 @@ Moment: %3 s of the composition (%4 s on the timeline).</source>
     </message>
     <message>
         <source>Use um vídeo ou uma imagem.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Essa trilha não aceita esse tipo de mídia.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -5416,7 +5432,7 @@ Moment: %3 s of the composition (%4 s on the timeline).</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Clique para trocar a mídia desta cena</source>
+        <source>Trocar mídia</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -6183,6 +6199,10 @@ Moment: %3 s of the composition (%4 s on the timeline).</source>
         <translation>Transferências</translation>
     </message>
     <message>
+        <source>Exportar entra na fila de renders (%1 esperando)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Video</source>
         <translation>Vídeo</translation>
     </message>
@@ -6247,6 +6267,10 @@ Moment: %3 s of the composition (%4 s on the timeline).</source>
         <translation>Acesso de agente</translation>
     </message>
     <message>
+        <source>Renderizando %1 (%2%) e mais %3 na fila. Clique para ver</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Export in progress (%1%) — click to view</source>
         <translation>Exportação em andamento (%1%) — clique para ver</translation>
     </message>
@@ -6257,10 +6281,6 @@ Moment: %3 s of the composition (%4 s on the timeline).</source>
     <message>
         <source>Export</source>
         <translation>Exportar</translation>
-    </message>
-    <message>
-        <source>Export already in progress</source>
-        <translation>Exportação já em andamento</translation>
     </message>
     <message>
         <source>Multicam</source>
@@ -6811,6 +6831,10 @@ Moment: %3 s of the composition (%4 s on the timeline).</source>
         <translation>Exportar vídeo</translation>
     </message>
     <message>
+        <source>Na fila de renders (posição %1). Pode abrir outro projeto e mandar mais.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Export started…</source>
         <translation>Exportação iniciada…</translation>
     </message>
@@ -6970,10 +6994,6 @@ Moment: %3 s of the composition (%4 s on the timeline).</source>
         <translation>Fechar</translation>
     </message>
     <message>
-        <source>Preparando o projeto e abrindo o codificador…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Finalizando o arquivo de vídeo…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -7024,6 +7044,22 @@ Moment: %3 s of the composition (%4 s on the timeline).</source>
     <message>
         <source>Export finished.</source>
         <translation>Exportação concluída.</translation>
+    </message>
+    <message>
+        <source>Renderizando: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preparando os motions e abrindo o codificador…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Na fila (%1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tirar da fila</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Took %1</source>
@@ -10265,6 +10301,10 @@ Se a reprodução travar, experimente outro.</translation>
         <translation>Não foi possível criar o contêiner do proxy</translation>
     </message>
     <message>
+        <source>ProRes encoder not available</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>H.264 encoder not available</source>
         <translation>Codificador H.264 não disponível</translation>
     </message>
@@ -10363,10 +10403,6 @@ Se a reprodução travar, experimente outro.</translation>
     <message>
         <source>The clip has no usable video size</source>
         <translation>O clipe não tem um tamanho de vídeo utilizável</translation>
-    </message>
-    <message>
-        <source>Clips with transparency can&apos;t use a proxy</source>
-        <translation>Clipes com transparência não podem usar proxy</translation>
     </message>
     <message>
         <source>Could not allocate decode buffers</source>
@@ -11971,6 +12007,22 @@ Se a reprodução travar, experimente outro.</translation>
 <context>
     <name>StartScreen</name>
     <message>
+        <source>1 vídeo na fila de render</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 vídeos na fila de render</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Renderizando %1%</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Na fila · %1º</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Hoje, %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12043,6 +12095,42 @@ Se a reprodução travar, experimente outro.</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>1 vídeo marcado</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 vídeos marcados</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>· o MP4 sai na pasta de cada vídeo, com as escolhas do último export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Limpar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Renderizar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Renderizar os %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Renderizando %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1% · %2 na fila</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1%</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Novo projeto</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12064,6 +12152,10 @@ Se a reprodução travar, experimente outro.</translation>
     </message>
     <message>
         <source>Abrir projeto do computador...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Marcar para renderizar</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -14623,7 +14715,39 @@ Se a reprodução travar, experimente outro.</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>A loja de mídia não está disponível nesta versão do editor.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A loja não tem este tipo de mídia agora.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O Pexels e o Pixabay não estão disponíveis na loja agora.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O limite diário de downloads desta fonte acabou. Tente outra mídia ou volte amanhã.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>na cena hoje</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O que a produção encontrou para esta cena. Buscar procura de novo em todos os bancos.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A imagem não foi gerada.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Nada encontrado no YouTube. Tente outra busca.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>O arquivo baixado não foi encontrado.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -14671,6 +14795,10 @@ Se a reprodução travar, experimente outro.</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Tudo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Vídeos</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14680,6 +14808,22 @@ Se a reprodução travar, experimente outro.</translation>
     </message>
     <message>
         <source>Buscar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sem o Nardoto Studio: Pexels e Pixabay. Abra o Studio para buscar em mais de 30 acervos.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Buscando em todos os acervos do Nardoto Studio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Os bancos grátis vêm de terceiros, com limite diário de downloads e sem garantia de disponibilidade. Você é responsável por ter o direito de usar o que baixar.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Entendi, buscar</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -14696,6 +14840,38 @@ Se a reprodução travar, experimente outro.</translation>
     </message>
     <message>
         <source>Buscar no YouTube</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Prévia indisponível para este vídeo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Carregando prévia...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pausar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tocar</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sem som</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Com som</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ativar som</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Silenciar</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -14723,7 +14899,23 @@ Se a reprodução travar, experimente outro.</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Gerar com IA (pedido pronto para o VEO3 ou imagem): chega na próxima etapa.</source>
+        <source>Abra o Nardoto Studio para gerar imagens com o Codex ou o Antigravity conectado.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pedido montado a partir da ficha da cena. Ajuste se quiser; a imagem sai pelo Codex ou Antigravity conectado no Studio.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Descreva a imagem da cena (em inglês sai melhor)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gerando...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gerar imagem e usar na cena</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
