@@ -898,6 +898,16 @@ void applyVideoPreset(AVCodecContext *vctx, const VideoCodecDef &def, const Expo
     QByteArray preset = settings.videoPreset.toUtf8();
     if (preset.isEmpty() && def.defaultPreset)
         preset = def.defaultPreset;
+    // Preset de outro codificador (o "p4" do NVENC, padrão da máquina com NVIDIA, num pedido de x264)
+    // fazia o codificador recusar abrir ("Could not open the video encoder"). Fora da lista deste
+    // codificador, vale o padrão dele. Medido em 2026-11-22 numa RTX 4070.
+    if (def.presets && def.defaultPreset) {
+        bool conhecido = false;
+        for (const char *const *p = def.presets; *p; ++p)
+            conhecido = conhecido || preset == *p;
+        if (!conhecido)
+            preset = def.defaultPreset;
+    }
 
     if (def.hw == HwBackend::Amf) {
         av_opt_set(vctx->priv_data, "quality", preset.constData(), 0);
