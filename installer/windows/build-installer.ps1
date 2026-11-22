@@ -52,15 +52,17 @@ if (-not $PularDeploy) {
   & $windeployqt --release --qmldir (Join-Path $raiz 'src\qml') --no-opengl-sw (Join-Path $palco 'nardoto-editor.exe') | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "windeployqt falhou ($LASTEXITCODE)." }
 
-  # 3. Runtime do Visual C++ junto: máquina sem o redistribuível não abre o app.
-  if (-not (Test-Path (Join-Path $palco 'msvcp140.dll'))) {
-    $crt = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio', 'C:\Program Files (x86)\Microsoft Visual Studio' `
-      -Recurse -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue |
-      Where-Object FullName -match '\\x64\\' | Sort-Object FullName | Select-Object -Last 1
-    if (-not $crt) { throw "Runtime do Visual C++ (Microsoft.VC*.CRT x64) não encontrado." }
-    Get-ChildItem $crt.FullName -Filter *.dll | Copy-Item -Destination $palco
-    Write-Host "  runtime C++: $($crt.FullName)"
-  }
+}
+
+# 3. Runtime do Visual C++ junto: máquina sem o redistribuível não abre o app. Fora do
+#    -PularDeploy porque o CI monta dist\bin sozinho e não traz o runtime.
+if (-not (Test-Path (Join-Path $palco 'msvcp140.dll'))) {
+  $crt = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio', 'C:\Program Files (x86)\Microsoft Visual Studio' `
+    -Recurse -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue |
+    Where-Object FullName -match '\\x64\\' | Sort-Object FullName | Select-Object -Last 1
+  if (-not $crt) { throw "Runtime do Visual C++ (Microsoft.VC*.CRT x64) não encontrado." }
+  Get-ChildItem $crt.FullName -Filter *.dll | Copy-Item -Destination $palco
+  Write-Host "  runtime C++: $($crt.FullName)"
 }
 
 # O executável não carrega número de versão: o Studio lê este arquivo, ao lado do
@@ -73,7 +75,10 @@ Write-Host ("  empacotando: {0} arquivos, {1:N0} MB" -f $arquivos.Count, (($arqu
 # 4. NSIS do electron-builder: é o mesmo compilador que gera o instalador do Studio.
 $makensis = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'electron-builder\Cache\nsis') -Recurse -Filter 'makensis.exe' -ErrorAction SilentlyContinue |
   Where-Object FullName -match '\\Bin\\' | Select-Object -First 1 -ExpandProperty FullName
-if (-not $makensis) { throw "makensis.exe não encontrado no cache do electron-builder." }
+# Sem o cache (runner do CI), o NSIS instalado na máquina.
+if (-not $makensis) { $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source }
+if (-not $makensis -and (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) { $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe" }
+if (-not $makensis) { throw "makensis.exe não encontrado (cache do electron-builder, PATH ou Program Files (x86)\NSIS)." }
 
 New-Item -ItemType Directory -Force $saida | Out-Null
 & $makensis "/DVERSION=$Versao" "/DSOURCE_DIR=$palco" (Join-Path $PSScriptRoot 'nardoto-editor.nsi')

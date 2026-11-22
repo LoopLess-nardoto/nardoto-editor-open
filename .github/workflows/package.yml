@@ -521,7 +521,7 @@ jobs:
             -DFETCHCONTENT_BASE_DIR=${{ env.FETCHCONTENT_BASE_DIR }} `
             -DZLIB_INCLUDE_DIR=${{ github.workspace }}\vcpkg\installed\x64-windows-static-md\include `
             -DZLIB_LIBRARY="$zlib" `
-            -DDRIFT_BUNDLE_ONNXRUNTIME=OFF `
+            -DDRIFT_BUNDLE_ONNXRUNTIME=ON `
             -DDRIFT_WITH_SKIA=ON `
             -DDRIFT_DISTRIBUTION=windows `
             ${{ env.DRIFT_CHANNEL_ARGS }}
@@ -592,13 +592,15 @@ jobs:
           # and users were fixing that by deleting the DLL by hand. Do not ship it.
           # main.cpp sets QT_NO_OPENGL_BUGLIST so Qt stops picking it over a perfectly
           # good card in the first place; keep the two together.
-          & "${{ env.QT_ROOT_DIR }}\bin\windeployqt.exe" --release --no-translations `
+          # Translations and the bundled ONNX Runtime (background removal, subtitles) are what the
+          # hand-built 1.2.0 installer shipped; the CI installer carries the same tree.
+          & "${{ env.QT_ROOT_DIR }}\bin\windeployqt.exe" --release `
             --no-opengl-sw --qmldir src\qml dist\bin\nardoto-editor.exe
           Copy-Item vcpkg\installed\x64-windows\bin\*.dll dist\bin -Force
           Copy-Item .deps\ffmpeg\bin\*.dll dist\bin -Force
           # Bundled effect/transition/template packages: a POST_BUILD step already put them beside
           # the exe, and the app resolves them relative to it.
-          foreach ($dir in "effects", "transitions", "effect-templates", "audio-effects") {
+          foreach ($dir in "effects", "transitions", "effect-templates", "audio-effects", "onnxruntime") {
             Copy-Item "build\Release\$dir" dist\bin -Recurse -Force
           }
 
@@ -639,16 +641,18 @@ jobs:
             throw "the multimedia backend plugin does not load against the DLLs being shipped"
           }
 
-      - name: Build Inno Setup installer
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
-        with:
-          path: installer/windows/NardotoEditor.iss
-          # /DNightly gives the installer its own AppId, name and install directory, so it lands
-          # beside a stable install rather than upgrading it.
-          options: |
-            /DMyAppVersion=${{ inputs.version }}
-            /DMyAppSource=${{ github.workspace }}\dist\bin
-            ${{ inputs.channel == 'nightly' && '/DNightly' || '' }}
+      # The NSIS installer customers get (installer/windows/nardoto-editor.nsi), built by the same
+      # script used on a Windows workstation. It adds the VC++ runtime and versao.txt (read by the
+      # Studio to tell an outdated install) to the tree staged above. Version from package.json:
+      # inputs.version is 0.0.0-<sha> here, which VIProductVersion rejects.
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis -y --no-progress
+          }
+          pwsh installer/windows/build-installer.ps1 -Release build\Release -PularDeploy
+          if ($LASTEXITCODE -ne 0) { throw "build-installer.ps1 failed ($LASTEXITCODE)" }
 
       # Wildcard rather than a fixed name: the nightly channel's OutputBaseFilename differs, and
       # the script only ever emits one installer.
@@ -658,6 +662,34 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $built = Get-ChildItem installer\windows\output\*.exe
           Copy-Item $built.FullName "dist\NardotoEditor-Setup-${{ env.ASSET_LABEL }}-x64.exe" -Force
+
+      # Silent install on the runner, then the checks a customer machine would fail first: the
+      # files land where the Studio looks, versao.txt matches package.json, and the exe starts
+      # headless without a missing DLL (that exits at once with 0xC0000135).
+      - name: Smoke test installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\NardotoEditor-Setup-*-x64.exe | Select-Object -First 1
+          $p = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit code $($p.ExitCode)" }
+          $dir = Join-Path $env:ProgramFiles 'Nardoto Editor'
+          $exe = Join-Path $dir 'nardoto-editor.exe'
+          if (-not (Test-Path $exe)) { Get-ChildItem $dir -ErrorAction SilentlyContinue | Select-Object -First 20; throw "nardoto-editor.exe not installed in $dir" }
+          $want = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $got = (Get-Content (Join-Path $dir 'versao.txt') -Raw).Trim()
+          if ($got -ne $want) { throw "versao.txt is '$got', package.json is '$want'" }
+          foreach ($f in 'onnxruntime\lib\onnxruntime.dll', 'msvcp140.dll', 'vcruntime140.dll') {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "$f missing from the install" }
+          }
+          # stdin held open and never written: headless mode serves MCP on it, and EOF would end it.
+          $psi = New-Object System.Diagnostics.ProcessStartInfo $exe, '--headless'
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardInput = $true
+          $run = [System.Diagnostics.Process]::Start($psi)
+          Start-Sleep -Seconds 10
+          if ($run.HasExited) { throw ("headless editor exited early, code 0x{0:X}" -f $run.ExitCode) }
+          Stop-Process -Id $run.Id -Force
+          Write-Host "installed $got, headless start ok"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
