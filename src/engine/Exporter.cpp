@@ -1971,8 +1971,21 @@ ExportSettings Exporter::settingsFromMap(const QVariantMap &map)
         s.fpsNum = kMaxExportFps;
         s.fpsDen = 1;
     }
-    if (map.contains(QStringLiteral("videoCodecId")))
-        s.videoCodecId = map.value(QStringLiteral("videoCodecId")).toString();
+    if (map.contains(QStringLiteral("videoCodecId"))) {
+        const QString pedido = map.value(QStringLiteral("videoCodecId")).toString();
+        if (pedido != s.videoCodecId) {
+            // Codificador trocado sem preset ou CRF no pedido: valem os padrões dele, não os do
+            // codificador padrão da máquina. Medido em 2026-11-22 numa RTX 4070: o padrão é o NVENC
+            // ("p4"), e um pedido de h264 com CRF 18 herdava o "p4", que o x264 não abre ("Could not
+            // open the video encoder"); a volta ao software depois de o NVENC recusar caía no mesmo.
+            const QVariantMap def = videoCodecById(pedido);
+            s.videoPreset = def.value(QStringLiteral("defaultPreset")).toString();
+            if (s.videoPreset.isEmpty())
+                s.videoPreset = QStringLiteral("medium");
+            s.crf = def.value(QStringLiteral("defaultCrf"), 18).toInt();
+        }
+        s.videoCodecId = pedido;
+    }
     if (map.contains(QStringLiteral("rateControl")))
         s.rateControl = map.value(QStringLiteral("rateControl")).toString();
     if (map.contains(QStringLiteral("crf")))

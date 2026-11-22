@@ -344,6 +344,7 @@ private slots:
     void exporterDefaultCrfIsNearLosslessForH264();
     void exporterHardwareCodecsListedForThisOs();
     void exporterHardwarePreferredContainerIsMp4();
+    void exporterSettingsFromMapCodecWithoutPresetTakesItsDefaults();
     void exporterSettingsFromMapRoundTripsHardwareCodec();
     void exporterVideoToolboxQualityRisesAsCrfDrops();
     void exporterHardwareEncodeProducesPlayableFile();
@@ -10242,6 +10243,30 @@ void EngineTest::exporterHardwarePreferredContainerIsMp4()
              QStringLiteral("mp4"));
     QCOMPARE(Exporter::preferredContainer(QStringLiteral("h264_videotoolbox"), QStringLiteral("aac")),
              QStringLiteral("mp4"));
+}
+
+void EngineTest::exporterSettingsFromMapCodecWithoutPresetTakesItsDefaults()
+{
+    // O padrão da máquina pode ser um codificador de hardware (NVENC "p4"): trocar só o codificador
+    // não pode herdar o preset dele, que o x264 não abre.
+    const QVariantMap h264 = Exporter::videoCodecById(QStringLiteral("h264"));
+    const QString presetDoH264 = h264.value(QStringLiteral("defaultPreset"), QStringLiteral("medium")).toString();
+    const ExportSettings comCrf = Exporter::settingsFromMap(
+        {{QStringLiteral("videoCodecId"), QStringLiteral("h264")},
+         {QStringLiteral("rateControl"), QStringLiteral("crf")},
+         {QStringLiteral("crf"), 18}});
+    QCOMPARE(comCrf.videoCodecId, QStringLiteral("h264"));
+    QCOMPARE(comCrf.crf, 18);
+    QCOMPARE(comCrf.videoPreset, presetDoH264.isEmpty() ? QStringLiteral("medium") : presetDoH264);
+
+    const ExportSettings soCodec = Exporter::settingsFromMap({{QStringLiteral("videoCodecId"), QStringLiteral("h264")}});
+    QCOMPARE(soCodec.crf, h264.value(QStringLiteral("defaultCrf"), 18).toInt());
+    QCOMPARE(soCodec.videoPreset, presetDoH264.isEmpty() ? QStringLiteral("medium") : presetDoH264);
+
+    // Preset pedido junto vale mais que o padrão do codificador.
+    const ExportSettings comPreset = Exporter::settingsFromMap(
+        {{QStringLiteral("videoCodecId"), QStringLiteral("h264")}, {QStringLiteral("videoPreset"), QStringLiteral("slow")}});
+    QCOMPARE(comPreset.videoPreset, QStringLiteral("slow"));
 }
 
 void EngineTest::exporterSettingsFromMapRoundTripsHardwareCodec()
