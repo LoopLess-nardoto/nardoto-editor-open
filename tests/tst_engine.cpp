@@ -4466,6 +4466,13 @@ void EngineTest::alphaVideoCompositesOverLowerTrack()
     QVERIFY(qAlpha(frame.pixel(8, 32)) > 240);
     QVERIFY(qAlpha(frame.pixel(56, 32)) < 16);
 
+    // A composição com a trilha de forma embaixo passa pelo compositor de GPU: sem contexto OpenGL
+    // (runner do Windows no CI) compositeAt devolve imagem vazia, como nos outros testes de composição.
+    if (!GpuCompositor::isAvailable()) {
+        ClipReaderPool::instance().releaseAll();
+        QSKIP("OpenGL offscreen context unavailable");
+    }
+
     drift::Project project;
     project.setResolution(64, 64);
     project.setFps(25);

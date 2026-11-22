@@ -59,13 +59,18 @@ if ($Build -or -not (Test-Path $editorExe)) {
         throw 'Skia não foi encontrado no vcpkg. Rode: vcpkg install zlib "skia[gl,harfbuzz,icu,freetype,png]" --triplet x64-windows-static-md'
     }
 
+    # zlib do vcpkg muda o nome da biblioteca estática entre versões (zs.lib na 1.3.2, libzs.lib na 1.4).
+    $zlib = @('zs.lib', 'libzs.lib', 'zlibstatic.lib', 'zlib.lib', 'z.lib') | ForEach-Object { Join-Path $vcpkgStatic "lib\$_" } |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $zlib) { throw "zlib estática não encontrada em $(Join-Path $vcpkgStatic 'lib')." }
+
     if (-not (Test-Path (Join-Path $buildDir 'CMakeCache.txt'))) {
         & $cmake -S $repoRoot -B $buildDir -A x64 `
             "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
             "-DCMAKE_PREFIX_PATH=$qtRoot;$ffmpegRoot;$vcpkgStatic" `
             "-DFFMPEG_ROOT=$ffmpegRoot" `
             "-DZLIB_INCLUDE_DIR=$(Join-Path $vcpkgStatic 'include')" `
-            "-DZLIB_LIBRARY=$(Join-Path $vcpkgStatic 'lib\zs.lib')" `
+            "-DZLIB_LIBRARY=$zlib" `
             '-DDRIFT_WITH_SKIA=ON' `
             "-DFETCHCONTENT_BASE_DIR=$(Join-Path $repoRoot '.tools\fetchcontent')" `
             '-DDRIFT_AUTO_UPDATE_TRANSLATIONS=OFF'
