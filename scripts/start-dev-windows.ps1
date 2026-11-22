@@ -79,7 +79,8 @@ if ($Build -or -not (Test-Path $editorExe)) {
         }
     }
 
-    & $cmake --build $buildDir --config Release --target drift --parallel
+    # Compilação paralela por arquivo dentro do projeto: do zero, o alvo drift cai de 15,5 min para 3,6 min (12 threads).
+    & $cmake --build $buildDir --config Release --target drift --parallel -- /p:UseMultiToolTask=true /p:EnforceProcessCountAcrossBuilds=true
     if ($LASTEXITCODE -ne 0 -or $NoLaunch) {
         exit $LASTEXITCODE
     }

@@ -535,9 +535,15 @@ jobs:
       # alongside the QML cache TUs exhausted the compiler heap (C1060). The job has a 120
       # minute budget and was failing 15 minutes in, so the headroom is worth more than the
       # wall-clock. Raise it only with evidence from a green run.
+      #
+      # MultiToolTask compiles the files of a project in parallel (by default MSBuild hands cl one
+      # file at a time: the 398 QML cache units took ~22 of the 29.5 minutes of this step), and
+      # EnforceProcessCountAcrossBuilds makes MultiProcMaxCount a cap on cl processes across both
+      # projects, so the heavy units stay bounded at 3. Measured on a 12-thread workstation,
+      # target drift from scratch: 15.5 min serial, 9.4 min capped at 3, 3.6 min uncapped.
       - name: Build
         shell: pwsh
-        run: cmake --build build --config Release --parallel 2
+        run: cmake --build build --config Release --parallel 2 -- /p:UseMultiToolTask=true /p:EnforceProcessCountAcrossBuilds=true /p:MultiProcMaxCount=3
 
       # Visual Studio is a multi-config generator, hence -C Release.
       #
